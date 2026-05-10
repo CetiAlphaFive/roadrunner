@@ -381,3 +381,28 @@ test_that("v0.0.0.9022: balanced fk_grid drops 0 on high-p, keeps 0 on low-p", {
   fk_lo <- sort(unique(fit_lo$autotune$grid$fast_k))
   expect_setequal(fk_lo, c(0L, 10L, 25L))
 })
+
+test_that("v0.0.0.9023: nfold defaults to 3 on high-p, 5 on low-p", {
+  # p = 20 -> high-p -> nfold default = 3
+  set.seed(20260510)
+  n <- 250; p <- 20
+  x <- matrix(stats::runif(n * p), n, p)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
+  fit_hi <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+                 seed.cv = 1, nthreads = 2)
+  expect_equal(fit_hi$autotune$nfold, 3L)
+
+  # p = 5 -> low-p -> nfold default = 5
+  set.seed(20260510)
+  x_lo <- matrix(stats::runif(180 * 5), 180, 5)
+  y_lo <- 5 * x_lo[, 1] + 3 * x_lo[, 2] + stats::rnorm(180)
+  fit_lo <- ares(x_lo, y_lo, autotune = TRUE, autotune.warmstart = FALSE,
+                 seed.cv = 1, nthreads = 2)
+  expect_equal(fit_lo$autotune$nfold, 5L)
+
+  # User-supplied nfold always overrides default, even on high-p.
+  set.seed(20260510)
+  fit_user <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+                   nfold = 5L, seed.cv = 1, nthreads = 2)
+  expect_equal(fit_user$autotune$nfold, 5L)
+})

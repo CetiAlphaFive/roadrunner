@@ -1,3 +1,50 @@
+# ares 0.0.0.9023 (development)
+
+## Phase 4 (cont.) -- nfold default = 3 on high-p autotune
+
+Third piece of the high-p autotune speedup track. When `autotune = TRUE`
+and the user did not explicitly set `nfold`, the inner-CV default is now
+`nfold = 3` (not `5`) on high-p problems (`p >= 15`). On low-p problems
+the default remains `nfold = 5`.
+
+Rationale: per-fold cost dominates autotune wall-clock on high-p, and
+inner-CV variance from 3 vs 5 folds is within wash on the standard
+mlbench DGPs (Friedman-1, additive, interaction at p = 20: holdout-MSE
+shift <2.5%). Cutting fold count gives ~40% extra wall-clock reduction.
+
+### Behaviour change
+- On high-p problems (`p >= 15`), `nfold` defaults to `3` when user did
+  not specify. User can still pass `nfold = 5` (or any value) to keep
+  the old behaviour.
+- On low-p problems, `nfold` defaults to `5` (unchanged).
+- `fit$autotune$nfold` reports the actual fold count used.
+
+### Effect (Friedman-1 p=20, 8 threads, balanced)
+- n = 500:  v0.0.0.9020 138s -> v0.0.0.9022 17.6s -> v0.0.0.9023 **9.3s**
+  (cumulative **14.9x**). MSE 10.26 -> **8.70** (better; nk=41 deg=3).
+- n = 1500: v0.0.0.9020 136s -> v0.0.0.9022 21s -> v0.0.0.9023 **13.9s**
+  (cumulative **9.8x**). MSE 8.04 -> **8.20** (+2.0%, within wash).
+
+### Effect (additive p=20)
+- n = 500: v0.0.0.9020 104s -> v0.0.0.9023 **8.8s** (cumulative **11.8x**).
+  MSE 0.084 unchanged.
+
+### Low-p preserved
+- All p < 15 DGPs: identical timings, identical winners, identical CV
+  fold count (5) to v0.0.0.9022.
+
+### Determinism
+- Within a given (p, nfold, seed.cv), CV-MSE values are byte-identical
+  across thread counts. Changing the default nfold from 5 to 3 changes
+  the fold partitioning seed-state on high-p calls vs v0.0.0.9022, so
+  cross-version determinism only holds when nfold is explicitly passed.
+
+### Tests
+- 162/162 testthat green. New test verifies the nfold default split:
+  p = 20 -> autotune defaults to nfold = 3; p = 5 -> nfold = 5; and the
+  user-supplied nfold always overrides the default.
+
+
 # ares 0.0.0.9022 (development)
 
 ## Phase 4 (cont.) -- drop fast.k = 0 from balanced sweep on high-p

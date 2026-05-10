@@ -251,8 +251,15 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 
   # ---- Autotune dispatch (Phase 2 — v0.15+) ----
   if (isTRUE(autotune)) {
-    # Promote nfold to a sensible default if user didn't ask.
-    nfold_at <- if (nfold > 0L) nfold else 5L
+    # Promote nfold to a sensible default if user didn't ask. v0.0.0.9023:
+    # on high-p problems (p >= 15, where nk_eff >= 31), default to nfold = 3
+    # instead of 5. Inner-CV variance from 3 folds vs 5 is within wash on
+    # the standard mlbench DGPs (Friedman-1 / additive / interaction at
+    # p = 20: MSE shift <2.5%), and per-fold cost dominates wall-clock so
+    # 3 folds gives ~40% reduction on top of the v0.0.0.9021/9022 cuts.
+    p_eff <- ncol(x)
+    nfold_default <- if (p_eff >= 15L) 3L else 5L
+    nfold_at <- if (nfold > 0L) nfold else nfold_default
     out <- .ares_autotune(
       x = x, y = as.numeric(y),
       nk = as.integer(nk),
