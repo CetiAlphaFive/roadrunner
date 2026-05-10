@@ -145,6 +145,9 @@ struct Candidate {
   int parent     = -1;
   int var        = -1;
   double cut     =  0.0;
+  bool is_boundary = false;     // best knot was at the leftmost or rightmost
+                                // eligible position — Auto.linpreds substitutes
+                                // a linear basis here.
 };
 
 inline bool better(const Candidate& a, const Candidate& b) {
@@ -221,6 +224,11 @@ struct KnotScanner {
       last_pos = k;
     }
     if (knot_pos.empty()) return;
+
+    // Boundary-knot values: leftmost = xj at knot_pos.front(); rightmost at back().
+    // Used at end of scan to flag is_boundary for Auto.linpreds.
+    double leftmost_t  = xj[idx[knot_pos.front()]];
+    double rightmost_t = xj[idx[knot_pos.back()]];
 
     // ---- Precompute totals over the eligible (parent_col != 0) rows --------
     // T_*: scalar sums; T_Q*: per-Q-column sums (length Mq each).
@@ -342,6 +350,10 @@ struct KnotScanner {
         S_Qpx[q] += Qiq * p * xv;
       }
     }
+    if (local_best.parent >= 0) {
+      local_best.is_boundary = (local_best.cut == leftmost_t ||
+                                local_best.cut == rightmost_t);
+    }
     if (better(local_best, best)) best = local_best;
   }
 };
@@ -354,28 +366,32 @@ struct ForwardWorker : public RcppParallel::Worker {
   int Mq;
   const std::vector<std::pair<int,int>>* pairs;  // (parent_local_idx, var_idx)
   const std::vector<int>* parent_global_idx;
+  const std::vector<int>* pair_endspans;          // per-pair endspan (Adjust.endspan applied)
   int n, p;
-  int minspan_user, endspan;     // minspan_user <=0 ⇒ auto per parent
+  int minspan_user;             // minspan_user <=0 ⇒ auto per parent
   std::vector<Candidate>* out;  // size = pairs->size()
 
   ForwardWorker(const double* x_, const double* B_, const double* r_,
                 const double* Q_, int Mq_,
                 const std::vector<std::pair<int,int>>& pairs_,
                 const std::vector<int>& parent_global_,
-                int n_, int p_, int ms_, int es_,
+                const std::vector<int>& pair_endspans_,
+                int n_, int p_, int ms_,
                 std::vector<Candidate>& out_)
     : x(x_), B_cols(B_), resid(r_), Qmat(Q_), Mq(Mq_),
       pairs(&pairs_), parent_global_idx(&parent_global_),
-      n(n_), p(p_), minspan_user(ms_), endspan(es_), out(&out_) {}
+      pair_endspans(&pair_endspans_),
+      n(n_), p(p_), minspan_user(ms_), out(&out_) {}
 
   void operator()(std::size_t begin, std::size_t end) override {
     for (std::size_t i = begin; i < end; ++i) {
       int parent_local = (*pairs)[i].first;
       int var_idx     = (*pairs)[i].second;
+      int es_pair     = (*pair_endspans)[i];
       KnotScanner sc{
         B_cols + size_t(parent_local) * n,
         x      + size_t(var_idx)     * n,
-        resid, Qmat, n, Mq, minspan_user, endspan, p, Candidate{}
+        resid, Qmat, n, Mq, minspan_user, es_pair, p, Candidate{}
       };
       sc.run((*parent_global_idx)[parent_local], var_idx);
       (*out)[i] = sc.best;
@@ -584,7 +600,9 @@ static bool term_uses_var(const int* dirs_row, int j) {
 List mars_fit_cpp(const NumericMatrix& x_in,
                   const NumericVector& y_in,
                   int degree, int nk, double penalty, double thresh,
-                  int minspan_in, int endspan_in, int nprune,
+                  int minspan_in, int endspan_in,
+                  int adjust_endspan, int auto_linpreds,
+                  int nprune,
                   int pmethod, int trace, int nthreads) {
   using namespace ares;
   int n = x_in.nrow();
@@ -638,13 +656,13 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   while (M < nk_cap - 1) {
     // Build candidate (parent, var) pairs
     std::vector<std::pair<int,int>> pairs;
+    std::vector<int> pair_endspans;     // per-pair endspan (Adjust.endspan applied)
     std::vector<int> parent_global_idx; // for each local parent index, its M-index
-    std::vector<int> parent_locals;     // dedup locals
     // We need to iterate over current M parent terms; for each parent, exclude
     // variables already used in that parent (so depth doesn't exceed `degree`).
     pairs.reserve(size_t(M) * p);
+    pair_endspans.reserve(size_t(M) * p);
     int parent_local_counter = 0;
-    std::vector<int> parent_local_for_global(M, -1);
     // Pre-stack parent columns
     std::vector<double> B_cols_flat;
     B_cols_flat.reserve(size_t(M) * n);
@@ -652,12 +670,17 @@ List mars_fit_cpp(const NumericMatrix& x_in,
       int* dr = &dirs[size_t(parent_idx) * p];
       int td = term_degree(dr, p);
       if (td >= degree) continue;
+      // Adjust.endspan: when adding a hinge would create a deg>=2 term, scale
+      // up the endspan to keep candidate knots away from variable boundaries.
+      // Earth default `Adjust.endspan = 2`. Setting it to 1 disables.
+      int eff_es = (td >= 1) ? adjust_endspan * es : es;
       // candidate vars: those not already used in this parent term
       bool any_var = false;
       int local = parent_local_counter;
       for (int j = 0; j < p; ++j) {
         if (term_uses_var(dr, j)) continue;
         pairs.emplace_back(local, j);
+        pair_endspans.push_back(eff_es);
         any_var = true;
       }
       if (any_var) {
@@ -678,7 +701,8 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     std::vector<Candidate> out(pairs.size());
     ForwardWorker w(X.data(), B_cols_flat.data(), resid.data(),
                     Q.data(), Mq,
-                    pairs, parent_global_idx, n, p, ms, es, out);
+                    pairs, parent_global_idx, pair_endspans,
+                    n, p, ms, out);
     if (nthreads <= 1) {
       // serial
       w(0, pairs.size());
@@ -690,31 +714,51 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     for (auto& c : out) if (better(c, best)) best = c;
     if (best.rss_red <= 0.0 || best.parent < 0) break;
 
-    // Add the hinge pair (-1 first then +1) — earth's order is "-" then "+"
+    // Emission. Default is the hinge pair (s=+1 then s=-1). When
+    // Auto.linpreds is enabled and the best knot was at the variable's
+    // boundary (leftmost or rightmost eligible position in the parent's
+    // support), substitute a single linear term (dirs=2) instead — the
+    // hinge would degenerate to a half-line that reproduces a linear
+    // function over the parent's support.
     int parent = best.parent;
     int var = best.var;
     double cut = best.cut;
     int* dr_p = &dirs[size_t(parent) * p];
     double* cr_p = &cuts[size_t(parent) * p];
     int added = 0;
-    for (int s : {1, -1}) {
-      if (M >= nk_cap) break;
-      int* dr_new = &dirs[size_t(M) * p];
-      double* cr_new = &cuts[size_t(M) * p];
-      // copy parent's dirs/cuts rows
-      for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
-      dr_new[var] = s;
-      cr_new[var] = cut;
-      // compute new column = parent_col * max(0, s*(x_var - cut))
-      double* Bcol = &B[size_t(M) * n];
-      const double* parent_col = &B[size_t(parent) * n];
-      const double* xj = &X[size_t(var) * n];
-      for (int i = 0; i < n; ++i) {
-        double v = (s == 1) ? (xj[i] - cut) : (cut - xj[i]);
-        Bcol[i] = (v > 0.0) ? parent_col[i] * v : 0.0;
+    if (auto_linpreds && best.is_boundary) {
+      if (M < nk_cap) {
+        int* dr_new = &dirs[size_t(M) * p];
+        double* cr_new = &cuts[size_t(M) * p];
+        for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
+        dr_new[var] = 2;          // linear basis sentinel
+        cr_new[var] = 0.0;        // unused for d == 2
+        double* Bcol = &B[size_t(M) * n];
+        const double* parent_col = &B[size_t(parent) * n];
+        const double* xj = &X[size_t(var) * n];
+        for (int i = 0; i < n; ++i) Bcol[i] = parent_col[i] * xj[i];
+        ++M;
+        ++added;
       }
-      ++M;
-      ++added;
+    } else {
+      // Standard hinge pair (-1 first then +1) — earth's "-" then "+"
+      for (int s : {1, -1}) {
+        if (M >= nk_cap) break;
+        int* dr_new = &dirs[size_t(M) * p];
+        double* cr_new = &cuts[size_t(M) * p];
+        for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
+        dr_new[var] = s;
+        cr_new[var] = cut;
+        double* Bcol = &B[size_t(M) * n];
+        const double* parent_col = &B[size_t(parent) * n];
+        const double* xj = &X[size_t(var) * n];
+        for (int i = 0; i < n; ++i) {
+          double v = (s == 1) ? (xj[i] - cut) : (cut - xj[i]);
+          Bcol[i] = (v > 0.0) ? parent_col[i] * v : 0.0;
+        }
+        ++M;
+        ++added;
+      }
     }
     if (added == 0) break;
     // Recompute rss with new basis

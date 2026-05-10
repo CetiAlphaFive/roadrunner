@@ -1,3 +1,22 @@
+# ares 0.0.0.9003 (development)
+
+## Experimental earth-equivalent heuristics
+
+- New args `adjust.endspan` (integer, default `1`) and `auto.linpreds`
+  (logical, default `FALSE`) on `ares()`. Both reproduce earth's documented
+  `Adjust.endspan` / `Auto.linpreds` behaviour from scratch (no earth source
+  inspected). Earth's defaults are 2 and TRUE respectively; ares's defaults
+  are conservative because the current implementation regressed parity vs
+  earth on the inst/sims grid:
+  - Multi-seed `interaction n=5000 deg=2`: with both heuristics on, 8/8
+    cells > 1% rel-err (vs 5/8 with both off). `Auto.linpreds=TRUE` alone
+    drives all 8 seeds worse — the boundary-knot detection in ares is too
+    eager, while earth applies a stricter "linearity over parent support"
+    test that this implementation only approximates.
+  - Defaults off keep parity bit-identical to v0.0.0.9002 on benchmark cells.
+- Code paths and the `is_boundary` flag on the forward `Candidate` struct are
+  retained so a future v0.4+ can revisit with the correct linearity test.
+
 # ares 0.0.0.9002 (development)
 
 ## Numerical robustness

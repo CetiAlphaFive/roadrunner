@@ -23,6 +23,19 @@
 #' @param thresh Forward-pass relative-RSS early-stop threshold. Default 0.001.
 #' @param minspan Minimum knot span. 0 (default) selects an automatic value.
 #' @param endspan Knot offset from the data ends. 0 (default) selects automatic.
+#' @param adjust.endspan Multiplier applied to `endspan` when the candidate
+#'   hinge would deepen an existing interaction (parent term has degree
+#'   >= 1). Default `1` (no adjustment). Earth's analogous default is `2`;
+#'   ares's heuristic is empirically mixed on the inst/sims grid (helps a
+#'   few cells, hurts others), so the default is conservative. Pass `2`
+#'   to enable.
+#' @param auto.linpreds If `TRUE`, and the best forward-pass knot for a
+#'   candidate hinge sits at the boundary of its variable's eligible range,
+#'   substitutes a linear term (`dirs = 2`) for the hinge pair. **Default
+#'   `FALSE`.** Earth's analogous default is `TRUE`, but earth applies a
+#'   stricter linearity test that ares's "boundary knot" heuristic only
+#'   approximates; current ares implementation regresses parity on most
+#'   benchmark cells. Treat as experimental.
 #' @param nprune Maximum number of terms after backward pruning (default `nk`).
 #' @param pmethod Pruning method: `"backward"` (default) or `"none"`.
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
@@ -67,6 +80,7 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
 #' @export
 ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          thresh = 0.001, minspan = 0L, endspan = 0L,
+                         adjust.endspan = 1L, auto.linpreds = FALSE,
                          nprune = NULL, pmethod = c("backward", "none"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
@@ -127,6 +141,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   trace <- as.integer(trace)
   minspan <- as.integer(minspan)
   endspan <- as.integer(endspan)
+  adjust_endspan <- as.integer(adjust.endspan)
+  if (adjust_endspan < 1L) {
+    warning("ares: adjust.endspan coerced to 1 (minimum).", call. = FALSE)
+    adjust_endspan <- 1L
+  }
+  auto_linpreds <- as.integer(isTRUE(auto.linpreds))
 
   nthreads <- as.integer(nthreads)
   nthreads_eff <- if (nthreads <= 0L) RcppParallel::defaultNumThreads() else nthreads
@@ -141,7 +161,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 
   # ---- Call C++ engine ----
   out <- mars_fit_cpp(x, as.numeric(y), degree, nk, penalty, thresh,
-                      minspan, endspan, nprune, pmethod_int, trace, nthreads_eff)
+                      minspan, endspan, adjust_endspan, auto_linpreds,
+                      nprune, pmethod_int, trace, nthreads_eff)
 
   # ---- Post-process ----
   rownames(out$dirs) <- .term_labels(out$dirs, out$cuts, namesx)
