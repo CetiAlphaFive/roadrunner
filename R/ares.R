@@ -85,6 +85,15 @@
 #'     `Inf` means "no cache") inside the autotune grid and picks the
 #'     smallest `fast.k` whose mean CV-MSE is within 1% of the best.
 #'     Trades a marginal accuracy hit for a marginal speed gain.
+#' @param n.boot Number of bootstrap replicate fits for bagging. Default
+#'   `0` (no bagging). When `> 0`, the result holds a list of `n.boot` ares
+#'   fits in `$boot$fits`, each fit on a row-bootstrap sample of the data.
+#'   The augmented `predict()` averages predictions across replicates plus
+#'   the central fit and reports per-prediction standard deviation in
+#'   `attr(predictions, "sd")`. Bagging composes with `autotune` —
+#'   each replicate fits with the central fit's chosen
+#'   `(degree, penalty, nk, fast.k)` so the cost is `(n.boot + 1) * fit_cost`,
+#'   not the autotune grid times `n.boot`.
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -135,6 +144,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE,
                          autotune.speed = c("balanced", "quality", "fast"),
+                         n.boot = 0L,
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
@@ -217,6 +227,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   if (is.na(fast_k) || fast_k < 0L) fast_k <- 0L  # 0 = unlimited (no caching)
   fast_beta <- as.numeric(fast.beta)
   if (is.na(fast_beta) || fast_beta < 0) fast_beta <- 0
+  n_boot <- as.integer(n.boot)
+  if (is.na(n_boot) || n_boot < 0L) n_boot <- 0L
 
   nthreads <- as.integer(nthreads)
   nthreads_eff <- if (nthreads <= 0L) RcppParallel::defaultNumThreads() else nthreads
@@ -280,6 +292,59 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   out$call <- cl
   out$pmethod <- if (isTRUE(autotune)) "backward" else pmethod
   out$dropped <- dropped_names
+
+  # ---- Bagging (Phase 2 — v0.18+) ----
+  # Refit on n_boot row-bootstrap samples using the central fit's tuned
+  # hyperparameters. Stored in $boot$fits as plain mars_fit_cpp returns
+  # (with dirs/cuts/selected.terms suitable for predict via mars_basis_cpp).
+  if (n_boot > 0L) {
+    # Use the chosen (degree, penalty, nk, fast.k) from the central fit so
+    # bagging doesn't re-run autotune for every replicate.
+    deg_b <- if (isTRUE(autotune)) out$autotune$degree  else degree
+    pen_b <- if (isTRUE(autotune)) out$autotune$penalty else penalty
+    nk_b  <- if (isTRUE(autotune)) out$autotune$nk      else nk
+    fk_b  <- if (isTRUE(autotune)) out$autotune$fast_k  else fast_k
+    pmethod_int_b <- if (out$pmethod == "none") 1L else 0L
+
+    # RNG protection so bagging only consumes the user's RNG when seed.cv
+    # is unset.
+    has_seed <- !is.null(seed.cv)
+    if (has_seed) {
+      if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+        old_seed <- get(".Random.seed", envir = globalenv(),
+                         inherits = FALSE)
+        on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
+                add = TRUE)
+      } else {
+        on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+      }
+      # Offset by a fixed prime so bagging RNG stream is distinct from CV's.
+      set.seed(as.integer(seed.cv) + 1009L)
+    }
+    n_full <- length(y)
+    boot_fits <- vector("list", n_boot)
+    for (b in seq_len(n_boot)) {
+      idx <- sample.int(n_full, n_full, replace = TRUE)
+      x_b <- x[idx, , drop = FALSE]
+      y_b <- as.numeric(y)[idx]
+      f_b <- mars_fit_cpp(
+        x_b, y_b, as.integer(deg_b), as.integer(nk_b),
+        as.numeric(pen_b),
+        thresh, minspan, endspan, adjust_endspan, auto_linpreds,
+        as.integer(fk_b), fast_beta,
+        if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_b) else as.integer(nprune),
+        pmethod_int_b, trace, nthreads_eff, 0L, 0L
+      )
+      # Strip heavy fields that bagging doesn't need (bx is n_full × M).
+      f_b$bx <- NULL
+      boot_fits[[b]] <- f_b
+    }
+    out$boot <- list(
+      fits   = boot_fits,
+      n.boot = n_boot
+    )
+  }
+
   class(out) <- c("ares")
   out
 }

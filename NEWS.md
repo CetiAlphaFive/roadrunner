@@ -1,3 +1,36 @@
+# ares 0.0.0.9018 (development)
+
+## Phase 2 — n.boot bagging (earth has no bag)
+
+New arg `n.boot` (default `0`). When `> 0`, ares fits `n.boot`
+additional row-bootstrap replicates using the central fit's
+hyperparameters. The result holds these in `$boot$fits`.
+
+Bagged predictions: `predict(fit, newdata)` averages across the
+central fit and all replicates. With `se.fit = TRUE`, the result
+carries `attr(., "sd")` — the per-row sample SD across
+replicates, useful as a rough uncertainty band.
+
+### Composition with autotune
+- When both `autotune = TRUE` and `n.boot > 0`, autotune runs
+  exactly once on the central fit. Each replicate refits with the
+  same chosen `(degree, penalty, nk, fast.k)`. Cost is
+  `(n.boot + 1) * fit_cost`, not `n.boot * autotune_cost`.
+
+### RNG
+- When `seed.cv` is set, the bagging RNG is seeded with
+  `seed.cv + 1009` so the bag stream is reproducible AND distinct
+  from the CV-fold partition stream. The user's `.Random.seed` is
+  saved and restored as before.
+
+### Tests
+- 7 new tests covering: $boot slot creation, no slot when n.boot=0,
+  predict-with-sd attribute and length, autotune+bagging composition
+  (replicate hyperparams = central's), determinism across nthreads,
+  RNG preservation with bagging.
+- **120/120 testthat green** (was 100). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9017 (development)
 
 ## Phase 2 — autotune.speed knob

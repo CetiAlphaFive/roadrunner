@@ -4,7 +4,7 @@
 \alias{predict.ares}
 \title{Predictions from an \code{ares} fit}
 \usage{
-\method{predict}{ares}(object, newdata = NULL, ...)
+\method{predict}{ares}(object, newdata = NULL, se.fit = FALSE, ...)
 }
 \arguments{
 \item{object}{An object of class \code{"ares"}.}
@@ -12,10 +12,16 @@
 \item{newdata}{A numeric matrix or data frame of new predictors. If \code{NULL}
 (default), returns \code{object$fitted.values}.}
 
+\item{se.fit}{If \code{TRUE} and \code{object} was fit with \code{n.boot > 0}, the
+returned vector carries an \code{"sd"} attribute holding the per-prediction
+bag standard deviation. Default \code{FALSE} (plain numeric vector).}
+
 \item{...}{Additional arguments. Currently unused.}
 }
 \value{
-A numeric vector of length \code{nrow(newdata)}.
+A numeric vector of length \code{nrow(newdata)}. When \code{se.fit = TRUE}
+and bag fits are present, the result is the bag mean prediction with
+\code{attr(., "sd")} set to the per-row sample SD across replicates.
 }
 \description{
 Predictions from an \code{ares} fit

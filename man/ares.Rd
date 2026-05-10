@@ -32,6 +32,7 @@ ares(x, ...)
   cv.1se = FALSE,
   autotune = FALSE,
   autotune.speed = c("balanced", "quality", "fast"),
+  n.boot = 0L,
   trace = 0L,
   nthreads = 0L,
   ...
@@ -132,6 +133,16 @@ Matches v0.10 quality at v0.10 wall-clock cost.
 smallest \code{fast.k} whose mean CV-MSE is within 1\% of the best.
 Trades a marginal accuracy hit for a marginal speed gain.
 }}
+
+\item{n.boot}{Number of bootstrap replicate fits for bagging. Default
+\code{0} (no bagging). When \verb{> 0}, the result holds a list of \code{n.boot} ares
+fits in \verb{$boot$fits}, each fit on a row-bootstrap sample of the data.
+The augmented \code{predict()} averages predictions across replicates plus
+the central fit and reports per-prediction standard deviation in
+\code{attr(predictions, "sd")}. Bagging composes with \code{autotune} —
+each replicate fits with the central fit's chosen
+\verb{(degree, penalty, nk, fast.k)} so the cost is \code{(n.boot + 1) * fit_cost},
+not the autotune grid times \code{n.boot}.}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 
