@@ -8,7 +8,7 @@
 
 **Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
 
-## Current state — v0.0.0.9005
+## Current state — v0.0.0.9007
 
 - `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
   - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
@@ -48,16 +48,26 @@
 ### v0.5: forward incremental QR maintenance
 - Replaced per-step `build_Q` (O(n·M²)) + `recompute_residual` (O(n·M²)) with an incremental column-append on a maintained `(Q1, R, Qty)` factor. Each append is O(n·M); over M forward steps the cost drops from O(n·M³) to O(n·M²).
 - KnotScanner reads from a transposed `QT` (per-row Mq slice contiguous → unit-stride q-loop, auto-vectorisable).
-- Worst-cell rss_rel_err vs earth across the 18-cell grid: **71.7% → 3.65%** (max). Cells > 1%: 7/18 → 5/18. Cells > 5%: 3/18 → 0/18.
-- Median 1t wall-clock ratio vs earth: 6.6× → **5.8×**.
-- 2t median: 0.076s → 0.062s (18% faster). 4t median: 0.080s → 0.048s (40% faster).
-- Determinism preserved (RSS=1796.11037133069 byte-identical 1t vs 4t on Friedman fixed seed).
-- Backward still does fresh Householder for its initial state (rank-deficient zero columns in the maintained R can't be downdated cleanly; the 0.8% qrinit cost is negligible vs the parity damage avoided).
+- Worst-cell rss_rel_err vs earth: **71.7% → 3.65%** (max).
+
+### v0.6: rank-deficient col rejection + periodic backward refresh
+- `qr_append_col` returns bool; rejects rank-deficient columns at append time. Maintained R has no zero diagonals.
+- Backward Householder commit reduced from every step to every 4 steps (Givens downdate handles the intervening commits). Per-step cost drops from O(n·M²) to O(M²) most of the time.
+- Best 4t cell vs earth: 1.41× → **1.08×** (within 8% of parity).
+
+### v0.7: AVX2 SIMD on KnotScanner inner loops
+- Manually vectorised the three q-inner prefix-sum loops (initial totals, per-knot scoring with reduction, S_* update) with AVX2 `__m256d` 256-bit double intrinsics. Four lanes per iteration; scalar fallback for Mq-mod-4 tail. Compile-guarded by `__AVX2__`.
+- inst/sims grid (median across 18 cells):
+  - 1t ratio vs earth: 5.3× → **3.8×**.
+  - 4t median wall: 0.040s → 0.030s (25% faster).
+  - 4t best cell vs earth: 1.08× → **0.84×** — **first cell where ares-4t beats earth wall-clock** (additive n=5000 deg=2: 107ms ares vs 128ms earth).
+  - friedman n=500 deg=1 at 4t: 1.03× of earth (within 3%).
+- Determinism preserved. AVX2 mul/add (no FMA) keeps `-ffp-contract=off` contract intact.
 
 ## Outstanding vs user objectives
 
-- **"Complete parity (no divergences)"**: not met but materially closer. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth (and to earth's `Adjust.endspan` / `Auto.linpreds` which ares does not implement faithfully).
-- **"Must be faster than earth"**: not met yet but within sight. 0/18 grid cells faster at 1t (median 5.8×); at 4t the best cell is 1.41× of earth, median 2.4×. Forward pass (`KnotScanner`) is now the dominant cost at ~70% of wall and remains the next single-target. Possible v0.6 directions: explicit SIMD/AVX2 intrinsics on the q-inner loops if compiler auto-vec is insufficient; reduce Householder backward-commit refresh (currently 7-8% of wall, can be replaced by trusting the downdate every K steps + occasional refresh); track rank-deficient columns separately to allow forward-maintained R to drive backward init too.
+- **"Complete parity (no divergences)"**: still not zero. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth and to earth's `Adjust.endspan` / `Auto.linpreds` heuristics ares does not faithfully reproduce.
+- **"Must be faster than earth"**: partially met. **1/18 cells faster than earth at 4t** (additive n=5000 deg=2 at 0.84×); median 1.5× at 4t; median 3.8× at 1t. To make more cells beat earth, smaller cells (where fixed overhead dominates) need attention: SIMD the n-loops in `qr_append_col` (currently scalar inner loops over n for `c_norm2` / `u_norm2` / `c_perp`); reduce per-pair scanner setup cost (sort, allocations); push parallelism into the per-pair worker (currently each pair is sequential within its own thread).
 - See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.1-bench.csv` (latest grid) for raw numbers.
 
 ## CRAN gotcha
