@@ -8,7 +8,7 @@
 
 **Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
 
-## Current state — v0.0.0.9008
+## Current state — v0.0.0.9009
 
 - `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
   - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
@@ -60,22 +60,29 @@
 - 1t ratio vs earth: 5.3× → 3.8×; 4t best cell crossed below 1.0× for the first time (additive n=5000 deg=2 at 0.84×).
 
 ### v0.8: amortised per-pair sort + parallel per-var sorts
-- Replaced KnotScanner's per-pair `std::stable_sort` with an O(n) filter over a precomputed `var_sort_flat[p × n]` (rows sorted ascending by each x[:, v]). Sort happens once per variable per forward step; cost drops ~50× since ~500 per-pair sorts are now ~10 per-var sorts.
-- The p per-var sorts are independent and dispatched via `RcppParallel::parallelFor` so multi-thread scaling stays intact.
+- Per-pair `std::stable_sort` replaced by O(n) filter over precomputed `var_sort_flat[p × n]`. p per-var sorts run in parallel via `RcppParallel::parallelFor`.
+- 4 cells faster than earth at 4t (was 1).
+
+### v0.9: hoist per-variable sort out of the forward loop
+- `var_sort_flat` depends only on X — moved out of the `while (M < nk_cap - 1)` loop. Sort runs once per fit instead of `nk_cap` times.
+- Profile-driven win: post-v0.8 profile showed `var_sort_setup` was 28% of wall on small cells (Friedman n=500 d=1) and ~10% on large cells.
 - inst/sims grid (median across 18 cells):
-  - 1t ratio vs earth: 3.8× → **3.09×**.
-  - 4t ratio vs earth: 1.5× → **1.28×**.
-  - **4 cells faster than earth at 4t** (was 1):
-    - additive n=5000 deg=2: 0.61× — ares 1.65× faster than earth (78ms vs 128ms).
-    - additive n=1500 deg=2: 0.89×.
-    - friedman n=1500 deg=2: 0.94×.
-    - friedman n=5000 deg=2: 0.99×.
+  - 1t ratio vs earth: 3.09× → **2.52×** (18% faster).
+  - 4t ratio vs earth: 1.28× → **1.20×**.
+  - **5 cells faster than earth at 4t** (was 4).
+  - Best 4t cell: additive n=5000 deg=2 at 0.52× — **ares 1.9× faster than earth** (72ms vs 138ms).
+  - Best 1t ratio: 1.92× → 1.49× (Friedman n=500 d=1 within 50% at single-thread).
 - Determinism preserved.
+
+### v0.10 attempts (NOT shipped)
+- **VarBatchScanner** (process all parents pairing with v in one row sweep): per-row outer loop with per-parent branch checks (`parent_cols[p][r] != 0`) cost more than the QT-read savings. 1t median ratio regressed 2.52 → 3.04. Reverted.
+- **Pair reorder by variable** (var-outer, parent-inner emission, keep per-pair scanner): marginal regression 2.52 → 2.64. TBB scheduler already exploits much of the available cache reuse. Reverted.
+- Conclusion: in this codebase the per-pair scanner + var-grouped TBB chunking is already near optimal for the row-sweep structure. The next real structural win likely needs a different approach — e.g. earth-style fast-MARS heuristics (`fast.k`, `fast.beta`), the `linpreds` test reproduced correctly, or BLAS-routed Mq-loops for very wide Q.
 
 ## Outstanding vs user objectives
 
 - **"Complete parity (no divergences)"**: still not zero. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth and to earth's `Adjust.endspan` / `Auto.linpreds` heuristics ares does not faithfully reproduce.
-- **"Must be faster than earth"**: partially met. **4/18 cells faster than earth at 4t** (best: additive n=5000 deg=2 at 0.61× — ares 1.65× faster). Median 4t ratio 1.28×; median 1t 3.09×. Re-profiling at v0.7 showed `KnotScanner::run` is still 95% of single-thread wall, so v0.9+ targets are SIMD on the n-side prefix-sum (currently AVX2 only on the q-loop inside; the outer n_eli loop is scalar with strided gather), batching pairs that share variables to amortise `T_Q*` precompute, or `qr_append_col` n-loop SIMD (small but adds up at small n). The smaller cells (n=500) still pay 2-3× because per-pair fixed overhead dominates.
+- **"Must be faster than earth"**: partially met. **5/18 cells faster than earth at 4t** (best: additive n=5000 deg=2 at 0.52× — ares 1.9× faster). Median 4t ratio 1.20×; median 1t 2.52×. Best 1t ratio 1.49× (Friedman n=500 d=1). The structural batch-by-variable attempt (v0.10) regressed; further wins likely need a different approach — earth-style `fast.k` / `fast.beta` heuristics (currently locked off per scope discipline), proper `linpreds` test, or BLAS-routed q-loops at large Mq.
 - See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.1-bench.csv` (latest grid) for raw numbers.
 
 ## CRAN gotcha
