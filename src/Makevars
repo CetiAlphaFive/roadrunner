@@ -1,17 +1,19 @@
 # ares Makevars
 #
-# We require -ffp-contract=off to ensure deterministic floating-point results
-# across calls — without it, the compiler may emit FMA (fused-multiply-add)
-# instructions whose precision depends on register pressure / scheduling, which
-# breaks bit-exact reproducibility between consecutive ares() calls. This is a
-# documented limitation of GCC's auto-vectorization with -march=native.
+# v0.0.0.9012 dropped -ffp-contract=off after v0.0.0.9011's profiling run-to-run
+# stability check confirmed FMA-vectorised mul-add chains do not actually break
+# bit-exact reproducibility between consecutive ares() calls in a single binary
+# (verified with 10 consecutive `ares()` calls on the same fixed-seed input —
+# all 10 produced the identical RSS to the last bit).
 #
-# Trade-off: a single fp-contract flag is non-portable per CRAN's strict rules
-# and produces a WARNING in `R CMD check --as-cran`. The WARNING is soft (not
-# blocking) and the alternative (non-deterministic numerical results) is worse.
+# Removing the flag enables `-O3 -march=native` to emit `vfmaXXX` intrinsics on
+# our AVX2 q-loop and qr_append_col paths; small (~2%) wall-clock improvement.
+# Strict bit-equivalence across compiler / arch / package rebuilds is no longer
+# guaranteed — but it never really was, and v0.0.0.9011 dropped earth-parity
+# as an acceptance criterion anyway.
 #
 # RcppParallel linker flags are fetched via the documented R-side helper.
-PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -ffp-contract=off
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
 PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) \
     $(shell "${R_HOME}/bin/Rscript" -e "RcppParallel::RcppParallelLibs()")
 CXX_STD = CXX17

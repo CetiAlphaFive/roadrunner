@@ -1,3 +1,47 @@
+# ares 0.0.0.9012 (development)
+
+## Autoresearch session — 5 iterations, 1 keeper
+
+User asked for 5 attempts at speed improvement that don't harm fit.
+Run-to-run determinism check confirmed `-ffp-contract=off` (which we'd
+been carrying since v0.0.0.9000) is no longer earning its keep:
+10 consecutive `ares()` calls on the same fixed-seed input produced
+RSS that was bit-identical to the last bit, even with FMA enabled.
+
+### Kept: re-enable FMA (`-ffp-contract=on`)
+- Removed `-ffp-contract=off` from `src/Makevars`.
+- `-O3 -march=native` now emits `vfmadd*` intrinsics on the AVX2 q-loop
+  in `KnotScanner::run` and on `qr_append_col`'s c_perp loop.
+- Modest measured speed-up (~2%) and cleaner Makevars.
+- Determinism preserved: byte-identical 1t / 4t fits across 10 reruns.
+- 38/38 tests pass.
+
+### Tried, reverted (no robust grid win):
+- **Iter 2 — backward init from forward-maintained (R, Qty) instead
+  of a fresh Householder QR.** Saves ~0.8% of wall in the Householder
+  init, but on the 18-cell grid the 4t cells-faster-than-earth count
+  dropped from 11/18 to 10/18 — backward picks tightly-tied drops
+  slightly differently when seeded from the maintained R, and the
+  resulting model rebuild cost ate the qrinit savings.
+- **Iter 3 — small-problem fast path (`n < 1000` ⇒ force serial in
+  the rescore-pair worker).** Marginal effect dominated by run-to-run
+  TBB scheduling jitter. Reverted; the existing `nthreads <= 1`
+  guard is sufficient.
+- **Iter 4 — skip the per-step Householder refresh in backward
+  (trust Givens downdate forever).** Improved 1t median by ~6% but
+  4t median regressed and 2 cells crossed back above earth. The
+  "every 4 steps" refresh is the right cadence.
+- **Iter 5 — pack `parent_col[idx[*]]` into a per-pair sequential
+  array.** `bench_iter` showed a 22% 4t improvement on the 3-cell
+  micro bench but the full 18-cell grid showed a regression to 8/18
+  cells faster (vs 11/18 baseline). Pack overhead (~1 double per row)
+  dominates on cells where parent support is sparse.
+
+### Net effect
+- Same v0.0.0.9011 grid numbers, 2% faster on per-call timing tests.
+- Median 1t ratio vs earth: 1.51× (= v0.11). 4t median: 0.93× (=v0.11).
+  4t cells faster than earth: 11/18 (= v0.11). Best 4t cell: 0.35× (=v0.11).
+
 # ares 0.0.0.9011 (development)
 
 ## Fast MARS priority cache (fast.k / fast.beta) — first ares-faster-than-earth median
