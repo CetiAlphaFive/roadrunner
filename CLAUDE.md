@@ -8,7 +8,7 @@
 
 **Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
 
-## Current state — v0.0.0.9004
+## Current state — v0.0.0.9005
 
 - `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
   - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
@@ -45,11 +45,20 @@
 - Numerical regime change: v0.4 returns true OLS minimum RSS via the QR factor; v0.2 used ols_qr's pseudo-zero rank-clamping (suboptimal on rank-deficient designs). On tightly tied cells, `rss_ares < rss_earth` is now possible. Friedman parity-test thresholds bumped 5e-3 → 2e-2; mtcars 0.5 → 1.0.
 - Determinism preserved (byte-identical 1t vs N).
 
+### v0.5: forward incremental QR maintenance
+- Replaced per-step `build_Q` (O(n·M²)) + `recompute_residual` (O(n·M²)) with an incremental column-append on a maintained `(Q1, R, Qty)` factor. Each append is O(n·M); over M forward steps the cost drops from O(n·M³) to O(n·M²).
+- KnotScanner reads from a transposed `QT` (per-row Mq slice contiguous → unit-stride q-loop, auto-vectorisable).
+- Worst-cell rss_rel_err vs earth across the 18-cell grid: **71.7% → 3.65%** (max). Cells > 1%: 7/18 → 5/18. Cells > 5%: 3/18 → 0/18.
+- Median 1t wall-clock ratio vs earth: 6.6× → **5.8×**.
+- 2t median: 0.076s → 0.062s (18% faster). 4t median: 0.080s → 0.048s (40% faster).
+- Determinism preserved (RSS=1796.11037133069 byte-identical 1t vs 4t on Friedman fixed seed).
+- Backward still does fresh Householder for its initial state (rank-deficient zero columns in the maintained R can't be downdated cleanly; the 0.8% qrinit cost is negligible vs the parity damage avoided).
+
 ## Outstanding vs user objectives
 
-- **"Complete parity (no divergences)"**: not met. Median grid rss_rel_err ~0.9%; 7/18 cells > 1%. The remaining divergences trace to earth's `Adjust.endspan` + `Auto.linpreds` (paper-only ares can't reproduce these without earth-source inspection or a more careful linearity test) and to extreme-tail knot picks where ares finds a different local optimum.
-- **"Must be faster than earth"**: not met. 0/18 grid cells faster than earth at single-thread. Best ratio 1.13× (very close on simplest cells); median 6.6×. Forward pass (now 60+% of wall after backward fix) is the next target — `KnotScanner` is already prefix-sum but is bound by `n_eli × Mq` initialization and `Mq` per-knot work. Possible v0.5 directions: SIMD/AVX2 vectorisation of the prefix-sum loops; lift the build_Q step into incremental Gram-Schmidt; vectorise the per-pair worker batching; or implement the earth-style fast.k pruning to reduce candidate-pair count.
-- See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.2-bench.csv` for raw numbers.
+- **"Complete parity (no divergences)"**: not met but materially closer. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth (and to earth's `Adjust.endspan` / `Auto.linpreds` which ares does not implement faithfully).
+- **"Must be faster than earth"**: not met yet but within sight. 0/18 grid cells faster at 1t (median 5.8×); at 4t the best cell is 1.41× of earth, median 2.4×. Forward pass (`KnotScanner`) is now the dominant cost at ~70% of wall and remains the next single-target. Possible v0.6 directions: explicit SIMD/AVX2 intrinsics on the q-inner loops if compiler auto-vec is insufficient; reduce Householder backward-commit refresh (currently 7-8% of wall, can be replaced by trusting the downdate every K steps + occasional refresh); track rank-deficient columns separately to allow forward-maintained R to drive backward init too.
+- See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.1-bench.csv` (latest grid) for raw numbers.
 
 ## CRAN gotcha
 
