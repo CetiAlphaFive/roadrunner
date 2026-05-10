@@ -541,11 +541,17 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   deg_grid <- c(1L, 2L)
   if (nk_eff >= 31L) deg_grid <- c(deg_grid, 3L)
 
-  # (degree, penalty) cells.
+  # (degree, penalty, nk) cells. nk multipliers are 1, 2, 4 of the default,
+  # capped at 200. The default value (nk_default) is the user's nk if pinned,
+  # else min(200, max(20, 2*p)) + 1.
+  nk_grid <- unique(pmin(c(nk_eff, 2L * nk_eff, 4L * nk_eff), 200L))
   cells <- list()
   for (d in deg_grid)
     for (mult in c(0.5, 1.0, 2.0, 3.0))
-      cells[[length(cells) + 1L]] <- list(degree = d, penalty = mult * d)
+      for (nk_c in nk_grid)
+        cells[[length(cells) + 1L]] <- list(degree  = d,
+                                            penalty = mult * d,
+                                            nk      = as.integer(nk_c))
 
   # Build a single shared fold partition (function of seed.cv + stratify) so
   # all cells score on the same folds. This is critical for fair comparison
@@ -576,38 +582,76 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     fold_lists[[r]] <- fid
   }
 
-  # Score one cell. For each fold: GCV-backward fit on train, predict on
-  # holdout, fold MSE. Mean over (nfold * ncross) folds is the cell score.
-  score_cell <- function(d, pen) {
-    mses <- numeric(0)
-    for (r in seq_len(ncross)) {
-      fid <- fold_lists[[r]]
-      for (k in seq_len(nfold)) {
-        tr <- which(fid != k); te <- which(fid == k)
-        if (length(te) < 1L) next
-        fit_k <- mars_fit_cpp(
-          x[tr, , drop = FALSE], as.numeric(y[tr]),
-          as.integer(d), nk_eff, as.numeric(pen),
-          thresh, minspan, endspan, adjust_endspan, auto_linpreds,
-          fast_k, fast_beta,
-          if (length(nprune) == 0L || is.na(nprune[1])) nk_eff else as.integer(nprune),
-          0L, trace, nthreads, 0L, 0L
-        )
-        bx_te <- mars_basis_cpp(x[te, , drop = FALSE],
-                                fit_k$dirs, fit_k$cuts,
-                                as.integer(fit_k$selected.terms))
-        yhat <- drop(bx_te %*% as.numeric(fit_k$coefficients))
-        r_te <- y[te] - yhat
-        mses <- c(mses, mean(r_te * r_te))
-      }
-    }
-    if (!length(mses)) return(Inf)
-    mean(mses)
+  # Score one fold for one cell. Returns NA on failure.
+  score_one <- function(d, pen, nk_c, tr, te) {
+    fit_k <- mars_fit_cpp(
+      x[tr, , drop = FALSE], as.numeric(y[tr]),
+      as.integer(d), as.integer(nk_c), as.numeric(pen),
+      thresh, minspan, endspan, adjust_endspan, auto_linpreds,
+      fast_k, fast_beta,
+      if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_c) else as.integer(nprune),
+      0L, trace, nthreads, 0L, 0L
+    )
+    bx_te <- mars_basis_cpp(x[te, , drop = FALSE],
+                            fit_k$dirs, fit_k$cuts,
+                            as.integer(fit_k$selected.terms))
+    yhat <- drop(bx_te %*% as.numeric(fit_k$coefficients))
+    r_te <- y[te] - yhat
+    mean(r_te * r_te)
   }
 
-  scores <- vapply(cells,
-                   function(ce) score_cell(ce$degree, ce$penalty),
-                   numeric(1L))
+  # Successive-halving: score every cell on fold 1, build a running best;
+  # any cell whose fold-1 MSE exceeds halving_factor * running_best is
+  # eliminated and gets cv_mse = Inf (and no further folds). The halving
+  # factor of 1.5 is empirical (loose enough not to drop close runners,
+  # tight enough to drop wildly bad combos like deg=1 on a clear
+  # interaction DGP).
+  halving_factor <- 1.5
+  ncell <- length(cells)
+  fold_pairs <- list()  # ordered list of (rep_idx, k) folds
+  for (r in seq_len(ncross)) {
+    for (k in seq_len(nfold)) {
+      fold_pairs[[length(fold_pairs) + 1L]] <- c(r, k)
+    }
+  }
+  fold_mse <- matrix(NA_real_, nrow = ncell, ncol = length(fold_pairs))
+  alive <- rep(TRUE, ncell)
+  for (fp_i in seq_along(fold_pairs)) {
+    r_idx <- fold_pairs[[fp_i]][1]
+    k_idx <- fold_pairs[[fp_i]][2]
+    fid <- fold_lists[[r_idx]]
+    tr <- which(fid != k_idx); te <- which(fid == k_idx)
+    if (length(te) < 1L) next
+    for (i in seq_len(ncell)) {
+      if (!alive[i]) next
+      ce <- cells[[i]]
+      m <- tryCatch(
+        score_one(ce$degree, ce$penalty, ce$nk, tr, te),
+        error = function(e) NA_real_
+      )
+      fold_mse[i, fp_i] <- m
+    }
+    # Halving check after fold 1 only (fp_i == 1).
+    if (fp_i == 1L) {
+      f1 <- fold_mse[, 1]
+      ok <- alive & is.finite(f1)
+      if (any(ok)) {
+        run_best <- min(f1[ok])
+        cutoff <- halving_factor * run_best
+        elim <- alive & (!is.finite(f1) | f1 > cutoff)
+        if (any(elim)) alive[elim] <- FALSE
+      }
+    }
+  }
+
+  # Cell score: mean over the folds that actually got run (alive cells get
+  # all folds; eliminated cells get only fold 1).
+  scores <- numeric(ncell)
+  for (i in seq_len(ncell)) {
+    v <- fold_mse[i, ]
+    v <- v[is.finite(v)]
+    scores[i] <- if (length(v)) mean(v) else Inf
+  }
   if (!any(is.finite(scores)))
     stop("ares: autotune found no finite CV-MSE on any grid cell.")
 
@@ -615,24 +659,29 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # then smaller penalty.
   ord_cells <- order(scores,
                      vapply(cells, function(c) c$degree, integer(1L)),
+                     vapply(cells, function(c) c$nk, integer(1L)),
                      vapply(cells, function(c) c$penalty, numeric(1L)))
   best <- ord_cells[1]
   best_d   <- cells[[best]]$degree
   best_pen <- cells[[best]]$penalty
 
-  # Refit winner on the full data, GCV-backward, with the chosen (d, pen).
+  best_nk  <- cells[[best]]$nk
+  # Refit winner on the full data, GCV-backward, with the chosen
+  # (degree, penalty, nk).
   fit_full <- mars_fit_cpp(
-    x, y, as.integer(best_d), nk_eff, as.numeric(best_pen),
+    x, y, as.integer(best_d), as.integer(best_nk), as.numeric(best_pen),
     thresh, minspan, endspan, adjust_endspan, auto_linpreds,
     fast_k, fast_beta,
-    if (length(nprune) == 0L || is.na(nprune[1])) nk_eff else as.integer(nprune),
+    if (length(nprune) == 0L || is.na(nprune[1])) as.integer(best_nk) else as.integer(nprune),
     0L, trace, nthreads, 0L, 0L
   )
 
   grid_df <- data.frame(
-    degree   = vapply(cells, function(c) c$degree, integer(1L)),
-    penalty  = vapply(cells, function(c) c$penalty, numeric(1L)),
-    cv_mse   = scores,
+    degree     = vapply(cells, function(c) c$degree, integer(1L)),
+    penalty    = vapply(cells, function(c) c$penalty, numeric(1L)),
+    nk         = vapply(cells, function(c) c$nk, integer(1L)),
+    cv_mse     = scores,
+    eliminated = !alive,
     stringsAsFactors = FALSE
   )
   fit_full$autotune <- list(
@@ -640,10 +689,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     best     = best,
     degree   = best_d,
     penalty  = best_pen,
+    nk       = best_nk,
     cv_mse   = scores[best],
     nfold    = nfold,
     ncross   = ncross,
-    stratify = stratify
+    stratify = stratify,
+    n_eliminated = sum(!alive)
   )
   fit_full
 }

@@ -1,3 +1,36 @@
+# ares 0.0.0.9016 (development)
+
+## Phase 2 — autotune extensions: nk grid + successive halving
+
+### Grid extended
+- `nk` now in the autotune sweep: `{1, 2, 4} * nk_default`, deduped
+  and capped at 200. Default grid grows from 12 cells (3 deg x 4 pen)
+  to up to 36 cells (3 deg x 4 pen x 3 nk).
+
+### Successive halving
+- After scoring all cells on fold 1, ares computes the running best
+  fold-1 MSE and eliminates any cell whose fold-1 MSE exceeds
+  `1.5 * running_best`. Eliminated cells get `cv_mse = mean(fold-1)`
+  and skip the remaining `nfold * ncross - 1` folds. On strongly
+  interaction-y DGPs this drops every degree-1 cell after the first
+  fold, cutting autotune wall-clock by ~40-60%.
+- Halving is empirical (factor 1.5); cells within 50% of the leader
+  on fold 1 always survive.
+
+### Result additions
+- `$autotune$grid` gains an `nk` column and an `eliminated` boolean.
+- `$autotune` gains `nk` (winner's nk) and `n_eliminated` (count).
+
+### Tie-break
+- Cell ordering: smallest `cv_mse` first, then smaller degree
+  (parsimony), then smaller nk (parsimony), then smaller penalty.
+
+### Tests
+- 3 new tests covering: nk multipliers in grid, halving drops
+  clearly-bad cells, determinism across threads with the v0.16 grid.
+- **88/88 testthat green** (was 79). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9015 (development)
 
 ## Phase 2 — autotune (`autotune = TRUE`)
