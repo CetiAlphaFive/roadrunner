@@ -1,5 +1,6 @@
 ^LICENSE\.md$
 ^ARCHITECTURE\.md$
+^CLAUDE\.md$
 ^cran-comments\.md$
 ^_pkgdown\.yml$
 ^docs$

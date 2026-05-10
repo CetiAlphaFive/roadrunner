@@ -108,15 +108,18 @@ ares/
   `ares.default()` before entering C++; the C++ code observes the count via
   the `nthreads` parameter to choose serial vs parallel paths.
 
-## Performance characteristics (v0.0.0.9000)
+## Performance characteristics (v0.0.0.9001)
 
 - Forward pass dominates runtime.
-- Per-step cost: O(n × M²) for Q construction + O(npairs × K × n × M_q) for
-  knot scoring, where K = #eligible knots per pair (typically ~50), M_q = rank
-  of Q (typically ≤ M).
-- For Friedman-1 n=1500 deg=2: ares-1t ~22s, ares-2t ~6.6s, earth ~0.09s.
-- The 60–80× wall-clock gap vs earth is dominated by the per-knot inner loop;
-  earth's O(1)-per-knot Givens update is a **v0.1 roadmap item**.
+- Per-step cost: O(n × M²) for Q construction + O(npairs × (n + K) × M_q) for
+  knot scoring (Friedman fast-LS prefix sums), where K = #eligible knots per
+  pair (typically ~50), M_q = rank of Q (typically ≤ M).
+- For Friedman-1 n=1500 deg=2: ares-1t ~1.1s (was ~22s in v0.0.0.9000),
+  earth ~0.05s. Median single-thread ratio vs earth across the
+  inst/sims grid: ~28× (was ~152×).
+- The remaining wall-clock gap is now dominated by serial parts (build_Q,
+  ols_qr) rather than the per-knot inner loop. Parallel scaling has shrunk
+  for the same reason and is a **v0.2 roadmap item**.
 
 ## Design decisions worth knowing
 

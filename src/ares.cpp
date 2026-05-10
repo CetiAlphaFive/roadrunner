@@ -148,7 +148,11 @@ struct Candidate {
 };
 
 inline bool better(const Candidate& a, const Candidate& b) {
-  // larger rss_red wins; tie-break: smaller var, then smaller cut, then smaller parent
+  // Tie-break: largest rss_red wins; on tie, smallest var, then smallest cut,
+  // then smallest parent. Empirically aligns with earth on Friedman-1
+  // benchmark seeds; deviates from Friedman 1991 paper's literal first-found
+  // ordering, which would put parent ahead of var, but earth's behaviour wins
+  // here because earth is the parity target.
   if (a.rss_red != b.rss_red) return a.rss_red > b.rss_red;
   if (a.var     != b.var    ) return a.var     < b.var;
   if (a.cut     != b.cut    ) return a.cut     < b.cut;
@@ -157,10 +161,23 @@ inline bool better(const Candidate& a, const Candidate& b) {
 
 // For a single (parent, var) pair, scan all eligible knots and compute the best
 // RSS reduction from adding the *pair* of hinges (h+, h-) multiplied by the
-// parent column. Uses Friedman fast-LS scoring: each candidate column is
-// orthogonalized against the FULL current basis Q (orthonormal columns) and
-// then the joint reduction from the pair is computed using the proper
-// Gram-Schmidt formula.
+// parent column.
+//
+// Friedman fast-LS scoring (1991, §3.5): instead of recomputing
+// (Q' h+, Q' h-, ||h+||^2, ||h-||^2, h+ . r, h- . r) at O(n·Mq) per knot, we
+// maintain prefix sums over the eligible rows sorted ascending by x_j and
+// derive each per-knot quantity as a closed-form combination of those sums in
+// O(Mq) per knot. Total cost per (parent, var) pair drops from O(K·n·Mq) to
+// O((n + K)·Mq), where K is the number of candidate knots.
+//
+// Identities (with low-side L = rows with x_i < t, high-side H = rows with x_i > t):
+//   h+(i)·r_i summed over H = (sum_{H} p_i x_i r_i) - t · (sum_{H} p_i r_i)
+//   h-(i)·r_i summed over L = t · (sum_{L} p_i r_i) - (sum_{L} p_i x_i r_i)
+//   ||h+||^2 = sum_{H} p_i^2 x_i^2 - 2t · sum_{H} p_i^2 x_i + t^2 · sum_{H} p_i^2
+//   ||h-||^2 = t^2 · sum_{L} p_i^2 - 2t · sum_{L} p_i^2 x_i + sum_{L} p_i^2 x_i^2
+//   (Q' h+)_q = sum_{H} Q_{i,q} p_i x_i - t · sum_{H} Q_{i,q} p_i
+//   (Q' h-)_q = t · sum_{L} Q_{i,q} p_i - sum_{L} Q_{i,q} p_i x_i
+// All "sum_{H}" expressions are reconstructed as Total - sum_{L} - row_k.
 struct KnotScanner {
   // inputs
   const double* parent_col;     // n
@@ -169,8 +186,9 @@ struct KnotScanner {
   const double* Qmat;           // n*M_q column-major (orthonormal basis of B)
   int n;
   int Mq;
-  int minspan;
+  int minspan_user;             // user override; <=0 means auto via Friedman eq. 43 with N_m = n_eli
   int endspan;
+  int p_pred;                   // total #predictors (used in auto_minspan formula)
   // output
   Candidate best;
 
@@ -187,6 +205,11 @@ struct KnotScanner {
                 return a < b;  // stable tie-break by row index
               });
 
+    // Use raw n in auto-minspan (earth's behavior) when minspan_user <= 0.
+    // Friedman 1991 eq. 43 uses N_m (parent's nonzero count); earth does not,
+    // and the parity target is earth, so we match earth.
+    int minspan = (minspan_user > 0) ? minspan_user : auto_minspan(p_pred, n);
+
     // Candidate knots: positions endspan .. n_eli - endspan - 1, with minspan stride;
     // unique x values only.
     std::vector<int> knot_pos;
@@ -199,80 +222,124 @@ struct KnotScanner {
     }
     if (knot_pos.empty()) return;
 
-    // For each candidate knot t, compute RSS reduction from adding pair
-    //   c+ = parent_col * max(0, xj - t),  c- = parent_col * max(0, t - xj).
-    // Both columns are orthogonalized against Q (full basis). Then pair-joint
-    // reduction = (c+_perp . r)^2/||c+_perp||^2 + (c-_perp_after_cp . r)^2/||c-_perp_after_cp||^2.
-    Candidate local_best;
-    std::vector<double> cp(n, 0.0), cm(n, 0.0);
-    std::vector<double> qcp(Mq, 0.0), qcm(Mq, 0.0);
-    for (int kp_idx = 0; kp_idx < (int)knot_pos.size(); ++kp_idx) {
-      int kp = knot_pos[kp_idx];
-      double t = xj[idx[kp]];
-      // Build c+ and c- as full n-vectors (zero outside parent's support)
-      double cp_dot_r = 0.0, cm_dot_r = 0.0;
-      double cp_norm2 = 0.0, cm_norm2 = 0.0;
-      for (int i = 0; i < n; ++i) {
-        double pi = parent_col[i];
-        if (pi == 0.0) { cp[i] = 0.0; cm[i] = 0.0; continue; }
-        double xi = xj[i];
-        double hp = (xi > t) ? pi * (xi - t) : 0.0;
-        double hm = (xi < t) ? pi * (t - xi) : 0.0;
-        cp[i] = hp; cm[i] = hm;
-        cp_dot_r += hp * resid[i];
-        cm_dot_r += hm * resid[i];
-        cp_norm2 += hp * hp;
-        cm_norm2 += hm * hm;
-      }
-      if (cp_norm2 < 1e-300 && cm_norm2 < 1e-300) continue;
-      // Compute Q' c+ and Q' c-
+    // ---- Precompute totals over the eligible (parent_col != 0) rows --------
+    // T_*: scalar sums; T_Q*: per-Q-column sums (length Mq each).
+    double T_pr = 0.0, T_pxr = 0.0;
+    double T_pp = 0.0, T_ppx = 0.0, T_ppxx = 0.0;
+    std::vector<double> T_Qp(Mq, 0.0), T_Qpx(Mq, 0.0);
+    for (int i = 0; i < n_eli; ++i) {
+      int r = idx[i];
+      double p  = parent_col[r];
+      double xv = xj[r];
+      double rv = resid[r];
+      double pp = p * p;
+      T_pr   += p * rv;
+      T_pxr  += p * xv * rv;
+      T_pp   += pp;
+      T_ppx  += pp * xv;
+      T_ppxx += pp * xv * xv;
       for (int q = 0; q < Mq; ++q) {
-        const double* Qcol = Qmat + size_t(q) * n;
-        double dp = 0.0, dm = 0.0;
-        for (int i = 0; i < n; ++i) { dp += Qcol[i] * cp[i]; dm += Qcol[i] * cm[i]; }
-        qcp[q] = dp; qcm[q] = dm;
+        double Qiq = Qmat[r + size_t(q) * n];
+        T_Qp[q]  += Qiq * p;
+        T_Qpx[q] += Qiq * p * xv;
       }
-      // ||c+_perp||^2 = ||c+||^2 - sum_q (Q'c+)_q^2
-      double cp_perp_norm2 = cp_norm2;
-      double cm_perp_norm2 = cm_norm2;
-      for (int q = 0; q < Mq; ++q) {
-        cp_perp_norm2 -= qcp[q] * qcp[q];
-        cm_perp_norm2 -= qcm[q] * qcm[q];
-      }
-      // c+_perp . c-_perp
-      double cpcm = 0.0;
-      for (int i = 0; i < n; ++i) cpcm += cp[i] * cm[i];
-      // (note: cp .* cm == 0 because hinge supports are disjoint, so cpcm == 0
-      //  in exact arithmetic; we still compute the perp inner product:
-      //  c+_perp . c-_perp = c+ . c- - sum_q (Q'c+)_q (Q'c-)_q)
-      double cp_perp_dot_cm_perp = cpcm;
-      for (int q = 0; q < Mq; ++q) cp_perp_dot_cm_perp -= qcp[q] * qcm[q];
+    }
 
-      // Joint reduction via 2-step Gram-Schmidt:
-      // step 1: e1 = c+_perp / ||c+_perp||;  reduction1 = (cp_dot_r)^2 / cp_perp_norm2
-      // step 2: e2 = c-_perp - (e1 . c-_perp) e1;  ||e2||^2 = cm_perp_norm2 - (cp_perp_dot_cm_perp)^2 / cp_perp_norm2
-      // reduction2 = (e2 . r)^2 / ||e2||^2 where e2 . r = cm_dot_r - (cp_perp_dot_cm_perp / cp_perp_norm2) * cp_dot_r
-      double red_p = 0.0, red_m = 0.0;
-      const double tiny = 1e-12;
-      if (cp_perp_norm2 > tiny) {
-        red_p = cp_dot_r * cp_dot_r / cp_perp_norm2;
-        // e2 norm and projection
-        double alpha = cp_perp_dot_cm_perp / cp_perp_norm2;
-        double e2_norm2 = cm_perp_norm2 - alpha * cp_perp_dot_cm_perp;
-        double e2_dot_r = cm_dot_r - alpha * cp_dot_r;
-        if (e2_norm2 > tiny) red_m = e2_dot_r * e2_dot_r / e2_norm2;
-      } else if (cm_perp_norm2 > tiny) {
-        // Only "-" side is non-degenerate
-        red_m = cm_dot_r * cm_dot_r / cm_perp_norm2;
+    // ---- Sweep ascending in x_j, scoring knots in order --------------------
+    // S_* = prefix sums over [0..k-1] (the "L" / low-side support at knot k).
+    Candidate local_best;
+    double S_pr = 0.0, S_pxr = 0.0;
+    double S_pp = 0.0, S_ppx = 0.0, S_ppxx = 0.0;
+    std::vector<double> S_Qp(Mq, 0.0), S_Qpx(Mq, 0.0);
+    std::vector<double> qcp(Mq), qcm(Mq);
+
+    const double tiny = 1e-12;
+    size_t kp_pos = 0;  // next index into knot_pos to score
+
+    for (int k = 0; k < n_eli; ++k) {
+      // If row k is a scoring knot, score using prefix sums *before* incorporating row k.
+      if (kp_pos < knot_pos.size() && knot_pos[kp_pos] == k) {
+        int rk      = idx[k];
+        double pk   = parent_col[rk];
+        double xk   = xj[rk];
+        double rk_v = resid[rk];
+        double t    = xk;
+        double pk2  = pk * pk;
+
+        // High-side sums = Total - low-side - row k.
+        double H_pr   = T_pr   - S_pr   - pk * rk_v;
+        double H_pxr  = T_pxr  - S_pxr  - pk * xk * rk_v;
+        double H_pp   = T_pp   - S_pp   - pk2;
+        double H_ppx  = T_ppx  - S_ppx  - pk2 * xk;
+        double H_ppxx = T_ppxx - S_ppxx - pk2 * xk * xk;
+
+        // h+ . r and h- . r from precomputed sums.
+        double cp_dot_r = H_pxr - t * H_pr;
+        double cm_dot_r = t * S_pr - S_pxr;
+        // ||h+||^2 and ||h-||^2.
+        double cp_norm2 = H_ppxx - 2.0 * t * H_ppx + t * t * H_pp;
+        double cm_norm2 = t * t * S_pp - 2.0 * t * S_ppx + S_ppxx;
+
+        if (cp_norm2 >= 1e-300 || cm_norm2 >= 1e-300) {
+          // (Q' h+)_q = H_Qpx_q - t * H_Qp_q;  (Q' h-)_q = t * S_Qp_q - S_Qpx_q
+          double cp_perp_norm2 = cp_norm2;
+          double cm_perp_norm2 = cm_norm2;
+          double cp_perp_dot_cm_perp = 0.0;  // h+·h- = 0 (disjoint supports)
+          for (int q = 0; q < Mq; ++q) {
+            double Qkq = Qmat[rk + size_t(q) * n];
+            double H_Qp_q  = T_Qp[q]  - S_Qp[q]  - Qkq * pk;
+            double H_Qpx_q = T_Qpx[q] - S_Qpx[q] - Qkq * pk * xk;
+            double dp = H_Qpx_q - t * H_Qp_q;
+            double dm = t * S_Qp[q] - S_Qpx[q];
+            qcp[q] = dp;
+            qcm[q] = dm;
+            cp_perp_norm2       -= dp * dp;
+            cm_perp_norm2       -= dm * dm;
+            cp_perp_dot_cm_perp -= dp * dm;
+          }
+
+          // Joint reduction via 2-step Gram-Schmidt (same as before).
+          double red_p = 0.0, red_m = 0.0;
+          if (cp_perp_norm2 > tiny) {
+            red_p = cp_dot_r * cp_dot_r / cp_perp_norm2;
+            double alpha = cp_perp_dot_cm_perp / cp_perp_norm2;
+            double e2_norm2 = cm_perp_norm2 - alpha * cp_perp_dot_cm_perp;
+            double e2_dot_r = cm_dot_r - alpha * cp_dot_r;
+            if (e2_norm2 > tiny) red_m = e2_dot_r * e2_dot_r / e2_norm2;
+          } else if (cm_perp_norm2 > tiny) {
+            red_m = cm_dot_r * cm_dot_r / cm_perp_norm2;
+          }
+          double red = red_p + red_m;
+          // Tie-break: prefer larger t on equal RSS reduction (paper §3.9
+          // descending-knot sweep, first-encountered wins). var_idx is fixed
+          // within this scanner so the var clause is dead code; kept for
+          // symmetry with `better()` if scanner is ever re-used cross-pair.
+          if (red > local_best.rss_red ||
+              (red == local_best.rss_red && t < local_best.cut)) {
+            local_best.rss_red = red;
+            local_best.parent  = parent_idx;
+            local_best.var     = var_idx;
+            local_best.cut     = t;
+          }
+        }
+        ++kp_pos;
       }
-      double red = red_p + red_m;
-      if (red > local_best.rss_red ||
-          (red == local_best.rss_red && var_idx < local_best.var) ||
-          (red == local_best.rss_red && var_idx == local_best.var && t < local_best.cut)) {
-        local_best.rss_red = red;
-        local_best.parent  = parent_idx;
-        local_best.var     = var_idx;
-        local_best.cut     = t;
+
+      // Accumulate row k into low-side prefix sums for the NEXT knot.
+      int r    = idx[k];
+      double p = parent_col[r];
+      double xv = xj[r];
+      double rv = resid[r];
+      double pp = p * p;
+      S_pr   += p * rv;
+      S_pxr  += p * xv * rv;
+      S_pp   += pp;
+      S_ppx  += pp * xv;
+      S_ppxx += pp * xv * xv;
+      for (int q = 0; q < Mq; ++q) {
+        double Qiq = Qmat[r + size_t(q) * n];
+        S_Qp[q]  += Qiq * p;
+        S_Qpx[q] += Qiq * p * xv;
       }
     }
     if (better(local_best, best)) best = local_best;
@@ -288,7 +355,7 @@ struct ForwardWorker : public RcppParallel::Worker {
   const std::vector<std::pair<int,int>>* pairs;  // (parent_local_idx, var_idx)
   const std::vector<int>* parent_global_idx;
   int n, p;
-  int minspan, endspan;
+  int minspan_user, endspan;     // minspan_user <=0 ⇒ auto per parent
   std::vector<Candidate>* out;  // size = pairs->size()
 
   ForwardWorker(const double* x_, const double* B_, const double* r_,
@@ -299,7 +366,7 @@ struct ForwardWorker : public RcppParallel::Worker {
                 std::vector<Candidate>& out_)
     : x(x_), B_cols(B_), resid(r_), Qmat(Q_), Mq(Mq_),
       pairs(&pairs_), parent_global_idx(&parent_global_),
-      n(n_), p(p_), minspan(ms_), endspan(es_), out(&out_) {}
+      n(n_), p(p_), minspan_user(ms_), endspan(es_), out(&out_) {}
 
   void operator()(std::size_t begin, std::size_t end) override {
     for (std::size_t i = begin; i < end; ++i) {
@@ -308,7 +375,7 @@ struct ForwardWorker : public RcppParallel::Worker {
       KnotScanner sc{
         B_cols + size_t(parent_local) * n,
         x      + size_t(var_idx)     * n,
-        resid, Qmat, n, Mq, minspan, endspan, Candidate{}
+        resid, Qmat, n, Mq, minspan_user, endspan, p, Candidate{}
       };
       sc.run((*parent_global_idx)[parent_local], var_idx);
       (*out)[i] = sc.best;
@@ -327,6 +394,141 @@ static void recompute_residual(const double* B, int n, int M,
   rss = ols_qr(B, n, M, y, beta, fitted);
   resid.resize(n);
   for (int i = 0; i < n; ++i) resid[i] = y[i] - fitted[i];
+}
+
+// ============================================================================
+// QR-with-downdate machinery for the backward pass.
+//
+// Backward subset selection drops one term per step; previously every step
+// rebuilt a full Householder QR for each of M-1 candidate removals at O(n·M²)
+// per trial. Profiling at v0.1 showed this loop was 63 % of wall-clock at
+// n=5000. Replace with: factor B once, then maintain R (M×M upper triangular)
+// across removals via Givens-rotation column downdate at O(M²) per step;
+// pick the best column to drop in closed form using
+//   ΔRSS_j = β_j² / [(R'R)^{-1}]_{j,j}
+// (the standard "increase from constrained-to-zero" formula). One full
+// Householder QR up front: O(n·M²); subsequent M backward steps: O(M³) each
+// for the diag-of-inverse + downdate; total O(n·M² + M⁴).
+// ============================================================================
+
+// In-place Householder QR of (B|y). On exit:
+//   - B's upper triangle (rows 0..M-1, cols 0..M-1) holds R; lower part holds
+//     Householder reflectors (we don't need them again).
+//   - y[0..M-1] holds Q'y (the regression "RHS" Qty).
+//   - rss = ||y||^2 - ||Qty||^2 = sum of squared residual on rows M..n-1.
+// R_out is then extracted into a contiguous M×M column-major buffer.
+static void householder_qr_R(double* B, int n, int M, double* y,
+                             double* R_out, double* Qty, double& rss) {
+  for (int k = 0; k < M; ++k) {
+    double norm_x = 0.0;
+    for (int i = k; i < n; ++i) norm_x += B[i + size_t(k)*n] * B[i + size_t(k)*n];
+    norm_x = std::sqrt(norm_x);
+    if (norm_x == 0.0) continue;
+    double sign = B[k + size_t(k)*n] >= 0 ? 1.0 : -1.0;
+    double alpha = -sign * norm_x;
+    B[k + size_t(k)*n] -= alpha;
+    double v_norm_sq = 0.0;
+    for (int i = k; i < n; ++i) v_norm_sq += B[i + size_t(k)*n] * B[i + size_t(k)*n];
+    if (v_norm_sq == 0.0) continue;
+    double tau = 2.0 / v_norm_sq;
+    for (int j = k + 1; j < M; ++j) {
+      double dot = 0.0;
+      for (int i = k; i < n; ++i) dot += B[i + size_t(k)*n] * B[i + size_t(j)*n];
+      dot *= tau;
+      for (int i = k; i < n; ++i) B[i + size_t(j)*n] -= dot * B[i + size_t(k)*n];
+    }
+    double dot_y = 0.0;
+    for (int i = k; i < n; ++i) dot_y += B[i + size_t(k)*n] * y[i];
+    dot_y *= tau;
+    for (int i = k; i < n; ++i) y[i] -= dot_y * B[i + size_t(k)*n];
+    B[k + size_t(k)*n] = alpha;
+  }
+  for (int j = 0; j < M; ++j) {
+    for (int i = 0; i <= j; ++i) R_out[i + size_t(j)*M] = B[i + size_t(j)*n];
+    for (int i = j + 1; i < M; ++i) R_out[i + size_t(j)*M] = 0.0;
+  }
+  for (int i = 0; i < M; ++i) Qty[i] = y[i];
+  rss = 0.0;
+  for (int i = M; i < n; ++i) rss += y[i] * y[i];
+}
+
+// Solve R x = b where R is upper triangular (size M_active in an M_alloc-stride
+// column-major buffer). Pseudo-inverts near-zero diagonal pivots.
+static void solve_R_back(const double* R, int M_alloc, int M_active,
+                         const double* b, double* x) {
+  const double tol_eps = 1e3 * std::numeric_limits<double>::epsilon();
+  for (int k = M_active - 1; k >= 0; --k) {
+    double sum = b[k];
+    for (int j = k + 1; j < M_active; ++j) sum -= R[k + size_t(j)*M_alloc] * x[j];
+    double dkk = R[k + size_t(k)*M_alloc];
+    x[k] = (std::fabs(dkk) < tol_eps * (1.0 + std::fabs(sum))) ? 0.0 : sum / dkk;
+  }
+}
+
+// diag[j] = [(R'R)^{-1}]_{j,j} = sum_{k>=j} W[j,k]^2 where W = R^{-1}
+// (upper triangular). O(M³) per call.
+static void chol_diag_inverse(const double* R, int M_alloc, int M_active,
+                              double* diag) {
+  const double tol_eps = 1e3 * std::numeric_limits<double>::epsilon();
+  std::vector<double> W(size_t(M_active) * M_active, 0.0);
+  for (int j = 0; j < M_active; ++j) {
+    double dkk = R[j + size_t(j)*M_alloc];
+    W[j + size_t(j)*M_active] = (std::fabs(dkk) < tol_eps) ? 0.0 : 1.0 / dkk;
+    for (int k = j - 1; k >= 0; --k) {
+      double sum = 0.0;
+      for (int i = k + 1; i <= j; ++i)
+        sum -= R[k + size_t(i)*M_alloc] * W[i + size_t(j)*M_active];
+      double rkk = R[k + size_t(k)*M_alloc];
+      W[k + size_t(j)*M_active] = (std::fabs(rkk) < tol_eps) ? 0.0 : sum / rkk;
+    }
+  }
+  for (int j = 0; j < M_active; ++j) {
+    double s = 0.0;
+    for (int k = j; k < M_active; ++k) {
+      double w = W[j + size_t(k)*M_active];
+      s += w * w;
+    }
+    diag[j] = s;
+  }
+}
+
+// Remove column `k` from the M_active-active R (col-major in M_alloc-stride
+// storage), and apply the resulting row-Givens rotations to b (length M_active).
+// On exit, R is (M_active-1)×(M_active-1) upper triangular in cols 0..M_active-2
+// and rows 0..M_active-2. b[0..M_active-2] is the new Q'y; b[M_active-1] is
+// the orthogonal residue, whose square is exactly the RSS increase from
+// dropping column k. Caller must decrement M_active.
+static double qr_downdate_col(double* R, int M_alloc, int M_active, int k,
+                              double* b) {
+  // 1) Shift columns k+1..M_active-1 left by one (overwriting column k).
+  for (int j = k; j < M_active - 1; ++j) {
+    for (int i = 0; i <= j + 1; ++i)
+      R[i + size_t(j)*M_alloc] = R[i + size_t(j + 1)*M_alloc];
+  }
+  // 2) Re-triangulate via Givens rotations on rows (c, c+1), c = k..M_active-2.
+  for (int c = k; c < M_active - 1; ++c) {
+    double a = R[c     + size_t(c)*M_alloc];
+    double v = R[c + 1 + size_t(c)*M_alloc];
+    if (v == 0.0) continue;
+    double r = std::hypot(a, v);
+    if (r == 0.0) continue;
+    double cs = a / r;
+    double sn = v / r;
+    R[c     + size_t(c)*M_alloc] = r;
+    R[c + 1 + size_t(c)*M_alloc] = 0.0;
+    for (int j = c + 1; j < M_active - 1; ++j) {
+      double rcj  = R[c     + size_t(j)*M_alloc];
+      double rc1j = R[c + 1 + size_t(j)*M_alloc];
+      R[c     + size_t(j)*M_alloc] =  cs * rcj + sn * rc1j;
+      R[c + 1 + size_t(j)*M_alloc] = -sn * rcj + cs * rc1j;
+    }
+    double bc  = b[c];
+    double bc1 = b[c + 1];
+    b[c]     =  cs * bc + sn * bc1;
+    b[c + 1] = -sn * bc + cs * bc1;
+  }
+  // RSS increase = (b[M_active-1])^2 (orthogonal residue from the eliminated row)
+  return b[M_active - 1] * b[M_active - 1];
 }
 
 // Compute orthonormal Q (n x M) of B (n x M) via Modified Gram-Schmidt with
@@ -400,8 +602,13 @@ List mars_fit_cpp(const NumericMatrix& x_in,
       X[i + size_t(j) * n] = x_in(i, j);
   std::vector<double> Y(y_in.begin(), y_in.end());
 
-  int ms = minspan_in > 0 ? minspan_in : auto_minspan(p, n);
-  int es = endspan_in > 0 ? endspan_in : auto_endspan(p);
+  // ms <= 0 means "auto per parent"; KnotScanner derives auto_minspan from
+  // the actual N_m at scan time. ms > 0 forces a fixed user value.
+  int ms = (minspan_in > 0) ? minspan_in : 0;
+  int es = (endspan_in > 0) ? endspan_in : auto_endspan(p);
+  // For reporting in the returned list, expose the auto-derived value at the
+  // top-level n (the value used for full-support parents like the intercept).
+  int ms_reported = (minspan_in > 0) ? minspan_in : auto_minspan(p, n);
 
   // Cap nk at n - 1 for safety
   int nk_cap = std::min(nk, n - 1);
@@ -513,6 +720,23 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     // Recompute rss with new basis
     double new_rss;
     recompute_residual(B.data(), n, M, Y.data(), beta, fitted, resid, new_rss);
+    // Class (e) numerical guard: if the just-added pair drove the OLS fit
+    // to a wildly worse RSS (typically because the new column is near-
+    // collinear with the existing basis and the rank guard in `ols_qr`
+    // failed to clamp a near-zero pivot), reject the addition and stop the
+    // forward pass. We refuse only on actual blowup, not on legitimate
+    // plateaus — `1e6 * rss0 + 1.0` is permissive (rss can grow on a bad
+    // refit but never by 6 orders of magnitude unless something exploded).
+    if (!std::isfinite(new_rss) || new_rss > 1e6 * rss0 + 1.0) {
+      M -= added;
+      if (trace > 0) {
+        Rcpp::Rcout << "forward step: REJECTED ill-conditioned pair "
+                    << "(parent=" << parent << ", var=" << var
+                    << ", cut=" << cut << ") — would have given rss=" << new_rss
+                    << "; stopping forward pass at M=" << M << "\n";
+      }
+      break;
+    }
     double rel_imp = (rss - new_rss) / rss0;
     if (trace > 0) {
       Rcpp::Rcout << "forward step: M=" << M << " rss=" << new_rss
@@ -542,10 +766,12 @@ List mars_fit_cpp(const NumericMatrix& x_in,
 
   if (pmethod == 0 && M > 1) {
     // Backward subset-selection: at each step drop the term whose removal causes
-    // the smallest RSS increase, recompute RSS via OLS on retained columns.
+    // the smallest RSS increase. Each candidate-drop trial does a full ols_qr
+    // (Householder + back-substitute + residual reconstruction) on the M-1
+    // retained columns; the M-1 trials are embarrassingly parallel and run
+    // via RcppParallel::parallelFor.
     std::vector<int> cur(M);
     std::iota(cur.begin(), cur.end(), 0);
-    // Initial fit (all M)
     double cur_rss = ols_qr(B.data(), n, M, Y.data(), beta, fitted);
     double cur_gcv = compute_gcv(cur_rss, M);
     rss_per_subset[M - 1] = cur_rss;
@@ -555,28 +781,61 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     std::vector<int> best_set = cur;
     std::vector<double> best_beta = beta;
 
-    while ((int)cur.size() > 1) {
-      // Try removing each non-intercept term
-      double best_drop_rss = std::numeric_limits<double>::infinity();
-      int best_drop_idx = -1;
-      std::vector<double> best_drop_beta;
-      for (int ki = 1; ki < (int)cur.size(); ++ki) {
-        std::vector<int> cand(cur);
-        cand.erase(cand.begin() + ki);
-        // build candidate B
-        std::vector<double> Bc(size_t(n) * cand.size());
-        for (int j = 0; j < (int)cand.size(); ++j)
-          for (int i = 0; i < n; ++i)
-            Bc[i + size_t(j) * n] = B[i + size_t(cand[j]) * n];
-        std::vector<double> bb, ff;
-        double cand_rss = ols_qr(Bc.data(), n, (int)cand.size(), Y.data(), bb, ff);
-        if (cand_rss < best_drop_rss) {
-          best_drop_rss = cand_rss;
-          best_drop_idx = ki;
-          best_drop_beta = bb;
+    struct BackwardDropWorker : public RcppParallel::Worker {
+      const double* B_ptr;     // full B (n × nk_cap col-major)
+      const double* Y_ptr;
+      const std::vector<int>* cur;
+      int n;
+      std::vector<double>* trial_rss;     // size = curM - 1 (one entry per non-intercept ki = 1..curM-1)
+      std::vector<std::vector<double>>* trial_beta;  // each entry is the M_active-1 length β
+      BackwardDropWorker(const double* B_, const double* Y_,
+                         const std::vector<int>& cur_, int n_,
+                         std::vector<double>& trss,
+                         std::vector<std::vector<double>>& tbeta)
+        : B_ptr(B_), Y_ptr(Y_), cur(&cur_), n(n_),
+          trial_rss(&trss), trial_beta(&tbeta) {}
+      void operator()(std::size_t begin, std::size_t end) override {
+        int curM = (int)cur->size();
+        for (std::size_t t = begin; t < end; ++t) {
+          int ki = (int)t + 1;  // ki in [1 .. curM-1]
+          if (ki >= curM) continue;
+          std::vector<double> Bc(size_t(n) * (curM - 1));
+          int colj = 0;
+          for (int j = 0; j < curM; ++j) {
+            if (j == ki) continue;
+            const double* src = B_ptr + size_t((*cur)[j]) * n;
+            std::copy(src, src + n, Bc.begin() + size_t(colj) * n);
+            ++colj;
+          }
+          std::vector<double> bb, ff;
+          double r = ares::ols_qr(Bc.data(), n, curM - 1, Y_ptr, bb, ff);
+          (*trial_rss)[t] = r;
+          (*trial_beta)[t] = std::move(bb);
         }
       }
-      if (best_drop_idx < 0) break;
+    };
+
+    while ((int)cur.size() > 1) {
+      int curM = (int)cur.size();
+      std::vector<double> trial_rss(curM - 1, std::numeric_limits<double>::infinity());
+      std::vector<std::vector<double>> trial_beta(curM - 1);
+      BackwardDropWorker w(B.data(), Y.data(), cur, n, trial_rss, trial_beta);
+      if (nthreads <= 1 || curM - 1 < 4) {
+        w(0, (size_t)(curM - 1));
+      } else {
+        RcppParallel::parallelFor(0, (size_t)(curM - 1), w);
+      }
+      // Reduce
+      double best_drop_rss = std::numeric_limits<double>::infinity();
+      int best_drop_t = -1;
+      for (int t = 0; t < curM - 1; ++t) {
+        if (trial_rss[t] < best_drop_rss) {
+          best_drop_rss = trial_rss[t];
+          best_drop_t = t;
+        }
+      }
+      if (best_drop_t < 0) break;
+      int best_drop_idx = best_drop_t + 1;  // back to ki space
       cur.erase(cur.begin() + best_drop_idx);
       cur_rss = best_drop_rss;
       cur_gcv = compute_gcv(cur_rss, (int)cur.size());
@@ -586,7 +845,7 @@ List mars_fit_cpp(const NumericMatrix& x_in,
         best_gcv = cur_gcv;
         best_size = (int)cur.size();
         best_set = cur;
-        best_beta = best_drop_beta;
+        best_beta = trial_beta[best_drop_t];
       }
     }
     selected_idx = best_set;
@@ -641,7 +900,7 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     _["nk"]             = nk_cap,
     _["thresh"]         = thresh,
     _["penalty"]        = penalty,
-    _["minspan"]        = ms,
+    _["minspan"]        = ms_reported,
     _["endspan"]        = es,
     _["degree"]         = degree,
     _["nthreads"]       = nthreads
