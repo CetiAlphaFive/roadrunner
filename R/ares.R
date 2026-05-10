@@ -640,7 +640,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # the full-data grid. Disabled when n < 200 (subsample would be tiny).
   warm_winner <- NULL
   if (warmstart && n >= 200L) {
-    n_sub <- min(200L, max(60L, as.integer(round(0.15 * n))))
+    n_sub <- min(200L, max(100L, as.integer(round(0.20 * n))))
     has_seed <- !is.null(seed_cv)
     if (has_seed) {
       if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
@@ -687,8 +687,11 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
           ord <- order(best_per_deg)
           best_score   <- as.numeric(best_per_deg[ord[1]])
           runner_score <- as.numeric(best_per_deg[ord[2]])
+          # Require >=10% gap on subsample to commit to early-exit; 5% was
+          # empirically too lax (committed to deg=1 on a 75-row subsample of
+          # a friedman-1 design where deg=2 wins on full data).
           if (is.finite(best_score) && is.finite(runner_score) &&
-              best_score < 0.95 * runner_score) decisive <- TRUE
+              best_score < 0.90 * runner_score) decisive <- TRUE
         }
         if (decisive) {
           warm_winner <- list(
