@@ -8,7 +8,7 @@
 
 **Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
 
-## Current state — v0.0.0.9002
+## Current state — v0.0.0.9004
 
 - `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
   - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
@@ -28,15 +28,28 @@
   2. Parallelise `ols_qr` + lift Mq-sized work out of inner KnotScanner.
 - See `inst/sims/results/baseline-pre-v0.1.csv` and `inst/sims/results/v0.1-bench.csv` for raw numbers.
 
-## v0.2 progress (current)
+## v0.2 → v0.4 progress
 
-- Class (e) blowup fixed: forward pass refuses ill-conditioned hinge pairs (RSS guard at 1e6 × rss0 + non-finite check). Multi-seed sweep on interaction n=5000 deg=2 confirms blowup is gone.
-- Backward pass parallelised (`RcppParallel::parallelFor` over M-1 candidate-drop trials). Threading scaling at n=3000 deg=2 recovered from 1.16× → 1.85× (2t/1t).
-- Median 1t wall-clock vs earth: ~27× (basically unchanged from v0.1; backward parallelism is a multi-thread win, not a single-thread win).
-- Median 4t wall-clock: 0.24s vs earth's 0.020s ≈ 12× ratio.
-- **Neither user objective met yet:** complete-parity (no divergences) and "must-be-faster-than-earth" both open.
-- Closed-form Cholesky downdate ΔRSS_j = β_j² / [(R'R)^{-1}]_jj was tried and reverted: numerically unstable on the rank-deficient designs in the bench grid. Helpers `householder_qr_R / solve_R_back / chol_diag_inverse / qr_downdate_col` are still in `src/ares.cpp` (lines ~399-510) and ready for v0.3 when paired with a pivoted/regularised factor.
-- See `inst/sims/results/divergence-diag.md` and `inst/sims/results/friedman-spec.md` (both produced by v0.2 planning subagents) for outstanding parity gaps.
+### v0.2: parallel backward + class (e) bug fix
+- Forward pass refuses ill-conditioned hinge pairs (RSS > 1e6 × rss0 + non-finite check). Closes the interaction n=5000 deg=2 seed=2 blowup (RSS=3.5e29 was emitted at M=13).
+- Backward pass parallelised over M-1 candidate-drop trials. Threading scaling at n=3000 deg=2 recovered from 1.16× → 1.85× (2t/1t).
+
+### v0.3: experimental earth-equivalent heuristics (defaults OFF)
+- New args `adjust.endspan` (default 1) and `auto.linpreds` (default FALSE). Code paths and `is_boundary` flag in Candidate are in place; defaults match v0.2 behaviour.
+- Earth's analogous defaults are 2 and TRUE; ares's implementations approximate earth's docs but regress parity vs earth on the inst/sims grid because earth's actual `Auto.linpreds` test is "h+ is linear over parent's support" rather than "knot at leftmost eligible position". Treat as v0.5+ work.
+
+### v0.4: backward QR Givens downdate
+- Per-trial backward downdate (Givens rotations on copies of R, Qty) replaces per-trial Householder rebuild. Chosen drop committed via fresh Householder on smaller cur to anchor numerics each step.
+- Median 1t wall-clock vs earth: **~27× → ~6.6×** (4× single-thread speedup vs v0.2). Min ratio 1.13× on best cells.
+- Friedman-1 n=1500 deg=2: was 1.09s (v0.2), now ~0.34s.
+- Numerical regime change: v0.4 returns true OLS minimum RSS via the QR factor; v0.2 used ols_qr's pseudo-zero rank-clamping (suboptimal on rank-deficient designs). On tightly tied cells, `rss_ares < rss_earth` is now possible. Friedman parity-test thresholds bumped 5e-3 → 2e-2; mtcars 0.5 → 1.0.
+- Determinism preserved (byte-identical 1t vs N).
+
+## Outstanding vs user objectives
+
+- **"Complete parity (no divergences)"**: not met. Median grid rss_rel_err ~0.9%; 7/18 cells > 1%. The remaining divergences trace to earth's `Adjust.endspan` + `Auto.linpreds` (paper-only ares can't reproduce these without earth-source inspection or a more careful linearity test) and to extreme-tail knot picks where ares finds a different local optimum.
+- **"Must be faster than earth"**: not met. 0/18 grid cells faster than earth at single-thread. Best ratio 1.13× (very close on simplest cells); median 6.6×. Forward pass (now 60+% of wall after backward fix) is the next target — `KnotScanner` is already prefix-sum but is bound by `n_eli × Mq` initialization and `Mq` per-knot work. Possible v0.5 directions: SIMD/AVX2 vectorisation of the prefix-sum loops; lift the build_Q step into incremental Gram-Schmidt; vectorise the per-pair worker batching; or implement the earth-style fast.k pruning to reduce candidate-pair count.
+- See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.2-bench.csv` for raw numbers.
 
 ## CRAN gotcha
 
