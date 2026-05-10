@@ -81,6 +81,7 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
 ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          thresh = 0.001, minspan = 0L, endspan = 0L,
                          adjust.endspan = 1L, auto.linpreds = FALSE,
+                         fast.k = 10L, fast.beta = 1.0,
                          nprune = NULL, pmethod = c("backward", "none"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
@@ -147,6 +148,10 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     adjust_endspan <- 1L
   }
   auto_linpreds <- as.integer(isTRUE(auto.linpreds))
+  fast_k <- as.integer(fast.k)
+  if (is.na(fast_k) || fast_k < 0L) fast_k <- 0L  # 0 = unlimited (no caching)
+  fast_beta <- as.numeric(fast.beta)
+  if (is.na(fast_beta) || fast_beta < 0) fast_beta <- 0
 
   nthreads <- as.integer(nthreads)
   nthreads_eff <- if (nthreads <= 0L) RcppParallel::defaultNumThreads() else nthreads
@@ -162,6 +167,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # ---- Call C++ engine ----
   out <- mars_fit_cpp(x, as.numeric(y), degree, nk, penalty, thresh,
                       minspan, endspan, adjust_endspan, auto_linpreds,
+                      fast_k, fast_beta,
                       nprune, pmethod_int, trace, nthreads_eff)
 
   # ---- Post-process ----

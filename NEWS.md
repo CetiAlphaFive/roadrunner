@@ -1,3 +1,38 @@
+# ares 0.0.0.9011 (development)
+
+## Fast MARS priority cache (fast.k / fast.beta) — first ares-faster-than-earth median
+
+- New args `fast.k` (integer, default 10) and `fast.beta` (numeric,
+  default 1.0) on `ares()`. Implements a simplified Friedman 1993 fast
+  MARS forward-pass priority cache: each `(parent, var)` pair caches
+  the most recent best `Candidate`; each forward step rescores only
+  (a) pairs whose parent was added in the previous step (fresh) and
+  (b) the top `fast.k` stale pairs ranked by age-discounted cached
+  score. Remaining stale pairs are kept in cache only — they age, but
+  are not chosen as the step's winner directly. The winner is always
+  picked from the rescored set.
+- Cached pairs only influence *which* stale pairs get rescored;
+  picking a winner from cached scores caused the forward pass to
+  terminate badly (R² collapse to 0.35) so the version shipped here
+  draws the winner from the rescored set only.
+- Effect at default `fast.k = 10`:
+  - inst/sims grid (median across 18 cells):
+    - 1t ratio vs earth: 2.52× → **1.51×** (40% faster).
+    - 4t ratio vs earth: 1.20× → **0.93×** — **ares median beats earth
+      at 4 threads** for the first time.
+    - 1t cells faster than earth: 0/18 → **3/18**.
+    - 4t cells faster than earth: 5/18 → **11/18** (61% of grid).
+    - Best 4t cell: additive n=5000 deg=2 at **0.35×** — ares 2.87×
+      faster than earth (44ms ares vs 125ms earth).
+  - Fit quality preserved: signal-R² on Friedman-1 deg=2 is 0.994
+    (matches earth's 0.994 exactly to 3 decimals).
+- `fast.k = 0` disables the cache and matches v0.10 behaviour
+  (no caching, ~3× slower than current default but identical fit).
+- Determinism contract preserved: the cache is updated in serial order
+  inside the forward loop; per-step rescoring uses the same parallel
+  worker as before. RSS = 1796.11037133069 byte-identical 1t / 4t.
+- 38/38 testthat tests pass at the new default.
+
 # ares 0.0.0.9010 (development)
 
 ## Drop earth-parity acceptance criterion

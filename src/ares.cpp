@@ -208,16 +208,23 @@ struct KnotScanner {
   int minspan_user;             // user override; <=0 means auto via Friedman eq. 43 with N_m = n_eli
   int endspan;
   int p_pred;                   // total #predictors (used in auto_minspan formula)
+  // Scratch buffers owned by the caller (ForwardWorker) and reused across
+  // pairs in the same thread to avoid per-pair allocator churn. KnotScanner
+  // clears them at the start of run().
+  std::vector<int>*    scr_idx;
+  std::vector<int>*    scr_knot_pos;
+  std::vector<double>* scr_TQp;
+  std::vector<double>* scr_TQpx;
+  std::vector<double>* scr_SQp;
+  std::vector<double>* scr_SQpx;
   // output
   Candidate best;
 
   void run(int parent_idx, int var_idx) {
     // Filter the precomputed `var_sort` (rows sorted by xj) down to those
-    // also in this parent's support (parent_col[r] != 0). Linear pass; the
-    // O(n_eli log n_eli) sort that this used to do per-pair is now amortised
-    // across every parent that shares this variable.
-    std::vector<int> idx;
-    idx.reserve(n);
+    // also in this parent's support (parent_col[r] != 0). Linear pass.
+    std::vector<int>& idx = *scr_idx;
+    idx.clear();
     for (int i = 0; i < n; ++i) {
       int r = var_sort[i];
       if (parent_col[r] != 0.0) idx.push_back(r);
@@ -225,14 +232,12 @@ struct KnotScanner {
     int n_eli = (int)idx.size();
     if (n_eli < 2 * endspan + 3) return;
 
-    // Use raw n in auto-minspan (earth's behavior) when minspan_user <= 0.
-    // Friedman 1991 eq. 43 uses N_m (parent's nonzero count); earth does not,
-    // and the parity target is earth, so we match earth.
+    // Auto-minspan via Friedman/earth conventions.
     int minspan = (minspan_user > 0) ? minspan_user : auto_minspan(p_pred, n);
 
-    // Candidate knots: positions endspan .. n_eli - endspan - 1, with minspan stride;
-    // unique x values only.
-    std::vector<int> knot_pos;
+    // Candidate knots.
+    std::vector<int>& knot_pos = *scr_knot_pos;
+    knot_pos.clear();
     int last_pos = -1;
     for (int k = endspan; k < n_eli - endspan; ++k) {
       if (last_pos >= 0 && (k - last_pos) < minspan) continue;
@@ -248,10 +253,12 @@ struct KnotScanner {
     double rightmost_t = xj[idx[knot_pos.back()]];
 
     // ---- Precompute totals over the eligible (parent_col != 0) rows --------
-    // T_*: scalar sums; T_Q*: per-Q-column sums (length Mq each).
     double T_pr = 0.0, T_pxr = 0.0;
     double T_pp = 0.0, T_ppx = 0.0, T_ppxx = 0.0;
-    std::vector<double> T_Qp(Mq, 0.0), T_Qpx(Mq, 0.0);
+    std::vector<double>& T_Qp  = *scr_TQp;
+    std::vector<double>& T_Qpx = *scr_TQpx;
+    T_Qp.assign(Mq, 0.0);
+    T_Qpx.assign(Mq, 0.0);
     for (int i = 0; i < n_eli; ++i) {
       int r = idx[i];
       double p  = parent_col[r];
@@ -291,7 +298,10 @@ struct KnotScanner {
     Candidate local_best;
     double S_pr = 0.0, S_pxr = 0.0;
     double S_pp = 0.0, S_ppx = 0.0, S_ppxx = 0.0;
-    std::vector<double> S_Qp(Mq, 0.0), S_Qpx(Mq, 0.0);
+    std::vector<double>& S_Qp  = *scr_SQp;
+    std::vector<double>& S_Qpx = *scr_SQpx;
+    S_Qp.assign(Mq, 0.0);
+    S_Qpx.assign(Mq, 0.0);
 
     const double tiny = 1e-12;
     size_t kp_pos = 0;  // next index into knot_pos to score
@@ -468,6 +478,14 @@ struct ForwardWorker : public RcppParallel::Worker {
       n(n_), p(p_), minspan_user(ms_), out(&out_) {}
 
   void operator()(std::size_t begin, std::size_t end) override {
+    // Per-thread scratch buffers, reused across pairs in this thread to
+    // eliminate the per-pair allocator churn.
+    std::vector<int>    sc_idx; sc_idx.reserve(n);
+    std::vector<int>    sc_knot_pos; sc_knot_pos.reserve(n / 2 + 1);
+    std::vector<double> sc_TQp; sc_TQp.reserve(Mq);
+    std::vector<double> sc_TQpx; sc_TQpx.reserve(Mq);
+    std::vector<double> sc_SQp; sc_SQp.reserve(Mq);
+    std::vector<double> sc_SQpx; sc_SQpx.reserve(Mq);
     for (std::size_t i = begin; i < end; ++i) {
       int parent_local = (*pairs)[i].first;
       int var_idx     = (*pairs)[i].second;
@@ -477,7 +495,9 @@ struct ForwardWorker : public RcppParallel::Worker {
         x      + size_t(var_idx)     * n,
         resid, QT,
         var_sort_flat + size_t(var_idx) * n,
-        n, Mq, QT_stride, minspan_user, es_pair, p, Candidate{}
+        n, Mq, QT_stride, minspan_user, es_pair, p,
+        &sc_idx, &sc_knot_pos, &sc_TQp, &sc_TQpx, &sc_SQp, &sc_SQpx,
+        Candidate{}
       };
       sc.run((*parent_global_idx)[parent_local], var_idx);
       (*out)[i] = sc.best;
@@ -690,6 +710,7 @@ List mars_fit_cpp(const NumericMatrix& x_in,
                   int degree, int nk, double penalty, double thresh,
                   int minspan_in, int endspan_in,
                   int adjust_endspan, int auto_linpreds,
+                  int fast_k, double fast_beta,
                   int nprune,
                   int pmethod, int trace, int nthreads) {
   using namespace ares;
@@ -856,6 +877,24 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     }
   }
 
+  // ---- Fast-MARS score cache (fast.k / fast.beta) -----------------------
+  // For each (parent_global, var) pair we cache the most-recent best
+  // Candidate (rss_red, cut, ...) and the number of forward steps since
+  // it was last fully rescored. Each forward step:
+  //   1. "fresh" pairs — those whose parent_global was added in the
+  //      *previous* step — are always rescored.
+  //   2. From the remaining (stale) pairs, the top `fast_k` ranked by
+  //      discounted cached score (`rss_red / (1 + fast_beta * age)`) are
+  //      also rescored.
+  //   3. The remaining stale pairs contribute their cached Candidate
+  //      directly to the per-step reduction.
+  // fast_k <= 0 disables the cache (every pair is rescored every step,
+  // matching pre-fast-MARS behaviour). fast_beta = 0 means "trust the
+  // raw cached score, no age penalty" — useful for testing.
+  std::vector<Candidate> cache_cand(size_t(nk_cap) * p);
+  std::vector<int>       cache_age(size_t(nk_cap) * p, -1);   // -1 = never scored
+  std::vector<int>       last_added_global = { 0 };           // intercept = "freshly added"
+
   // --- Forward pass ---
   while (M < nk_cap - 1) {
     // Build candidate (parent, var) pairs
@@ -898,27 +937,99 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     }
     if (pairs.empty()) break;
 
-    // QT, resid, rss are maintained incrementally across forward steps via
-    // qr_append_col below (replacing the per-step build_Q + ols_qr cost).
-    // Mq == M because we always append a column on each emission (zeroing
-    // it instead of dropping when rank-deficient — keeps M_q in sync).
     int Mq = M;
 
-    std::vector<Candidate> out(pairs.size());
-    ForwardWorker w(X.data(), B_cols_flat.data(), resid.data(),
-                    QT.data(), Mq, nk_cap,
-                    pairs, parent_global_idx, pair_endspans,
-                    var_sort_flat.data(),
-                    n, p, ms, out);
-    if (nthreads <= 1) {
-      // serial
-      w(0, pairs.size());
-    } else {
-      RcppParallel::parallelFor(0, pairs.size(), w);
+    // ---- Fast-MARS pair classification: fresh vs stale, top-K rescore ----
+    // Build a fast lookup of "fresh" parent_globals (just-added in previous step).
+    std::vector<unsigned char> is_fresh(M, 0);
+    for (int pg : last_added_global) if (pg >= 0 && pg < M) is_fresh[pg] = 1;
+
+    std::vector<size_t> rescore_idx;   // indices into `pairs` to rescore
+    std::vector<size_t> cache_only_idx;
+    rescore_idx.reserve(pairs.size());
+    cache_only_idx.reserve(pairs.size());
+    for (size_t i = 0; i < pairs.size(); ++i) {
+      int parent_global = parent_global_idx[pairs[i].first];
+      int var_j = pairs[i].second;
+      int ci = parent_global * p + var_j;
+      bool fresh = is_fresh[parent_global] || cache_age[ci] < 0;
+      if (fresh) {
+        rescore_idx.push_back(i);
+      } else {
+        cache_only_idx.push_back(i);
+      }
     }
-    // reduce
+    // Stale pairs: pick top fast_k by discounted cached score for additional rescore.
+    if (fast_k <= 0 || (int)cache_only_idx.size() <= fast_k) {
+      // Either caching disabled or stale set fits within rescore budget:
+      // rescore all stale pairs (no cached-only fall-through).
+      for (size_t i : cache_only_idx) rescore_idx.push_back(i);
+      cache_only_idx.clear();
+    } else {
+      // More stale pairs than fast_k: prioritise by discounted cached score.
+      std::stable_sort(cache_only_idx.begin(), cache_only_idx.end(),
+                       [&](size_t a, size_t b) {
+                         int ca = parent_global_idx[pairs[a].first] * p + pairs[a].second;
+                         int cb = parent_global_idx[pairs[b].first] * p + pairs[b].second;
+                         double sa = cache_cand[ca].rss_red /
+                                     (1.0 + fast_beta * cache_age[ca]);
+                         double sb = cache_cand[cb].rss_red /
+                                     (1.0 + fast_beta * cache_age[cb]);
+                         return sa > sb;
+                       });
+      for (int k = 0; k < fast_k; ++k) rescore_idx.push_back(cache_only_idx[k]);
+      cache_only_idx.erase(cache_only_idx.begin(),
+                           cache_only_idx.begin() + fast_k);
+    }
+
+    // Build sub-pair vectors for the worker (only the rescored set).
+    std::vector<std::pair<int,int>> rescore_pairs;
+    std::vector<int> rescore_endspans;
+    rescore_pairs.reserve(rescore_idx.size());
+    rescore_endspans.reserve(rescore_idx.size());
+    for (size_t i : rescore_idx) {
+      rescore_pairs.push_back(pairs[i]);
+      rescore_endspans.push_back(pair_endspans[i]);
+    }
+
+    std::vector<Candidate> rescore_out(rescore_pairs.size());
+    if (!rescore_pairs.empty()) {
+      ForwardWorker w(X.data(), B_cols_flat.data(), resid.data(),
+                      QT.data(), Mq, nk_cap,
+                      rescore_pairs, parent_global_idx, rescore_endspans,
+                      var_sort_flat.data(),
+                      n, p, ms, rescore_out);
+      if (nthreads <= 1) {
+        w(0, rescore_pairs.size());
+      } else {
+        RcppParallel::parallelFor(0, rescore_pairs.size(), w);
+      }
+    }
+
+    // Update cache for rescored pairs and reduce. The winner is picked
+    // ONLY from the rescored set — cached scores are stale (computed against
+    // an earlier residual) and using them directly to pick the winner caused
+    // forward to terminate with bad picks (R²-on-signal collapsing to ~0.35
+    // at fast.k=20). Cached scores are kept solely to *prioritise* which
+    // stale pairs get re-scored.
     Candidate best;
-    for (auto& c : out) if (better(c, best)) best = c;
+    for (size_t k = 0; k < rescore_idx.size(); ++k) {
+      const Candidate& c = rescore_out[k];
+      int parent_global = parent_global_idx[pairs[rescore_idx[k]].first];
+      int var_j = pairs[rescore_idx[k]].second;
+      int ci = parent_global * p + var_j;
+      cache_cand[ci] = c;
+      cache_age[ci] = 0;
+      if (better(c, best)) best = c;
+    }
+    // Age the un-rescored stale pairs by 1 (they'll get picked into the
+    // top-K rescore set sooner if their (discounted) cached score climbs).
+    for (size_t i : cache_only_idx) {
+      int parent_global = parent_global_idx[pairs[i].first];
+      int var_j = pairs[i].second;
+      int ci = parent_global * p + var_j;
+      if (cache_age[ci] >= 0) cache_age[ci]++;
+    }
     if (best.rss_red <= 0.0 || best.parent < 0) break;
 
     // Emission. Default is the hinge pair (s=+1 then s=-1). When
@@ -933,6 +1044,7 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     int* dr_p = &dirs[size_t(parent) * p];
     double* cr_p = &cuts[size_t(parent) * p];
     int added = 0;
+    int M_before_emit = M;
     double rss_before = rss;
     if (auto_linpreds && best.is_boundary) {
       if (M < nk_cap) {
@@ -995,6 +1107,10 @@ List mars_fit_cpp(const NumericMatrix& x_in,
                   << " rel_imp=" << rel_imp << " (parent=" << parent
                   << ", var=" << var << ", cut=" << cut << ")\n";
     }
+    // Update fast-MARS fresh set: parents added this step are fresh next step.
+    last_added_global.clear();
+    for (int p_g = M_before_emit; p_g < M; ++p_g) last_added_global.push_back(p_g);
+
     if (rel_imp < thresh) break;
   }
 
