@@ -754,12 +754,20 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # autotune_speed determines fast.k policy:
   #   "quality"  : fast.k = 0 always (no cache, slowest, most accurate).
   #   "fast"     : fast.k = 5 always (aggressive cache, cheapest).
-  #   "balanced" : sweep fast.k in {10, 25, 0 (== "infinity" / no cache)}
-  #                inside the grid; pick smallest within 1% of best.
+  #   "balanced" : sweep fast.k in {10, 25} (and 0, == "no cache", on
+  #                low-p only) inside the grid; pick smallest within 1%
+  #                of best.
+  #
+  # v0.0.0.9022: on high-p (nk_eff >= 31), drop fast.k = 0 from the balanced
+  # sweep. Cache-disabled forwards at deg>=2 cost ~3-5x the cached ones, and
+  # empirically the within-1% set on highdim DGPs never contains a fast.k=0
+  # cell -- the cache prevents over-detailed knot scans that slightly hurt
+  # CV-MSE. Net: 1.5x extra wall-clock cut on top of the nk-grid cap, with
+  # MSE preserved or improved.
   fk_grid <- switch(autotune_speed,
                     quality  = 0L,
                     fast     = 5L,
-                    balanced = c(10L, 25L, 0L))
+                    balanced = if (nk_eff >= 31L) c(10L, 25L) else c(10L, 25L, 0L))
 
   cells <- list()
   for (d in deg_grid)

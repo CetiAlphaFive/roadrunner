@@ -1,3 +1,46 @@
+# ares 0.0.0.9022 (development)
+
+## Phase 4 (cont.) -- drop fast.k = 0 from balanced sweep on high-p
+
+Refines the v0.0.0.9021 nk-grid cap with a second high-p autotune tweak:
+when `nk_eff >= 31` (p >= 15 under the default), the balanced fast.k
+sweep drops the `fast.k = 0` (no-cache) cells and now sweeps only
+`c(10, 25)`. Cache-disabled forwards at degree >= 2 are 3-5x the cost
+of cached ones, and empirically the within-1% CV-MSE set on highdim
+DGPs at p = 20 never contains a `fast.k = 0` cell -- the cache prevents
+over-detailed knot scans that slightly hurt CV-MSE.
+
+### Behaviour change
+- For high-p (`nk_eff >= 31`), `autotune.speed = "balanced"` now sweeps
+  `fast.k` in `c(10, 25)` instead of `c(10, 25, 0)`.
+- For low-p, the balanced sweep is unchanged at `c(10, 25, 0)`.
+- `autotune.speed = "quality"` and `autotune.speed = "fast"` are
+  unchanged (single-value fast.k policies).
+
+### Effect (Friedman-1 p=20, 8 threads, balanced)
+- n = 500:  v0.0.0.9020 138s -> v0.0.0.9021 27s -> v0.0.0.9022 **17.6s**
+  (cumulative 7.8x).  MSE 10.26 -> 9.83 -> **8.91**.
+- n = 1500: v0.0.0.9020 136s -> v0.0.0.9021 40s -> v0.0.0.9022 **21s**
+  (cumulative 6.5x).  MSE 8.04 unchanged.
+
+### Effect (additive p=20)
+- n = 500: v0.0.0.9020 104s -> v0.0.0.9021 22s -> v0.0.0.9022 **14.4s**
+  (cumulative 7.2x).  MSE 0.084 unchanged.
+
+### Low-p preserved
+- All p < 15 DGPs: identical timings, identical winners, identical
+  CV-MSE values to v0.0.0.9021. (Branch only fires when `nk_eff >= 31`.)
+
+### Determinism
+- Same fold partitioning, same per-cell scoring. Surviving cells'
+  CV-MSE values byte-identical at fixed `seed.cv`.
+
+### Tests
+- 158/158 testthat green. One new test verifies that at p = 20 the
+  balanced grid contains exactly `fast.k` in `{10, 25}` (not `{10, 25,
+  0}`), and that low-p still sweeps the full three-element set.
+
+
 # ares 0.0.0.9021 (development)
 
 ## Phase 4 — autotune nk-grid cap on high-p

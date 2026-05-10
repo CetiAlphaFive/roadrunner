@@ -359,3 +359,25 @@ test_that("autotune keeps the 4x nk multiplier when nk_eff < 31 (low-p)", {
   expect_true(21L %in% nk_vals)
   expect_true(84L %in% nk_vals)  # 4x kept since nk_eff < 31
 })
+
+test_that("v0.0.0.9022: balanced fk_grid drops 0 on high-p, keeps 0 on low-p", {
+  # p = 20 -> nk_eff = 41 (>=31) -> fk_grid = c(10, 25), no 0.
+  set.seed(20260510)
+  n <- 250; p <- 20
+  x <- matrix(stats::runif(n * p), n, p)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
+  fit_hi <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
+                 autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
+  fk_hi <- sort(unique(fit_hi$autotune$grid$fast_k))
+  expect_setequal(fk_hi, c(10L, 25L))
+  expect_false(0L %in% fk_hi)
+
+  # p = 5 -> nk_eff = 21 (<31) -> fk_grid = c(10, 25, 0).
+  set.seed(20260510)
+  x_lo <- matrix(stats::runif(180 * 5), 180, 5)
+  y_lo <- 5 * x_lo[, 1] + 3 * x_lo[, 2] + stats::rnorm(180)
+  fit_lo <- ares(x_lo, y_lo, autotune = TRUE, autotune.speed = "balanced",
+                 autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
+  fk_lo <- sort(unique(fit_lo$autotune$grid$fast_k))
+  expect_setequal(fk_lo, c(0L, 10L, 25L))
+})
