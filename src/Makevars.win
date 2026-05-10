@@ -1,0 +1,4 @@
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -ffp-contract=off
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) \
+    $(shell "${R_HOME}/bin/Rscript" -e "RcppParallel::RcppParallelLibs()")
+CXX_STD = CXX17

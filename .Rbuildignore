@@ -1,0 +1,12 @@
+^LICENSE\.md$
+^ARCHITECTURE\.md$
+^cran-comments\.md$
+^_pkgdown\.yml$
+^docs$
+^\.github$
+^inst/sims/results$
+^.*\.Rproj$
+^\.Rproj\.user$
+^README\.Rmd$
+^ares\.Rcheck$
+^ares_.*\.tar\.gz$

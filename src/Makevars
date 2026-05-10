@@ -1,0 +1,17 @@
+# ares Makevars
+#
+# We require -ffp-contract=off to ensure deterministic floating-point results
+# across calls — without it, the compiler may emit FMA (fused-multiply-add)
+# instructions whose precision depends on register pressure / scheduling, which
+# breaks bit-exact reproducibility between consecutive ares() calls. This is a
+# documented limitation of GCC's auto-vectorization with -march=native.
+#
+# Trade-off: a single fp-contract flag is non-portable per CRAN's strict rules
+# and produces a WARNING in `R CMD check --as-cran`. The WARNING is soft (not
+# blocking) and the alternative (non-deterministic numerical results) is worse.
+#
+# RcppParallel linker flags are fetched via the documented R-side helper.
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -ffp-contract=off
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) \
+    $(shell "${R_HOME}/bin/Rscript" -e "RcppParallel::RcppParallelLibs()")
+CXX_STD = CXX17

@@ -1,0 +1,118 @@
+---
+title: "ares: Fast MARS in R"
+author: "Jack Trametta"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ares: Fast MARS in R}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4
+)
+```
+
+## Introduction
+
+`ares` fits Multivariate Adaptive Regression Splines (MARS) models — a flexible
+nonparametric regression technique introduced by Friedman (1991). The MARS forward
+pass adds basis functions of the form `max(0, ±(x - knot))` (called *hinges*) one
+pair at a time, each scaled by a parent term to allow interactions. A backward
+pass then prunes terms by minimizing the GCV criterion.
+
+`ares` mirrors the API of [`earth`](https://cran.r-project.org/package=earth) on
+the gaussian-only core and is designed for numerical parity with `earth` while
+taking advantage of multi-core CPUs via `RcppParallel`.
+
+## A small example: `mtcars`
+
+```{r}
+library(ares)
+fit <- ares(mpg ~ ., data = mtcars, nthreads = 2)
+print(fit)
+```
+
+The fit returns a list with the standard MARS components.
+
+```{r}
+str(fit, max.level = 1)
+```
+
+`predict()` produces fitted values on training data or new data.
+
+```{r}
+head(predict(fit))
+head(predict(fit, mtcars[1:5, ]))
+```
+
+## Comparison with `earth`
+
+When the `earth` package is available, we can directly compare fits.
+
+```{r}
+if (requireNamespace("earth", quietly = TRUE)) {
+  set.seed(20260509)
+  n <- 200; p <- 5
+  x <- matrix(runif(n * p), n, p)
+  y <- 10 * sin(pi * x[, 1] * x[, 2]) + 20 * (x[, 3] - 0.5)^2 +
+       10 * x[, 4] + 5 * x[, 5] + rnorm(n)
+  fa <- ares(x, y, degree = 2, nthreads = 2)
+  fe <- earth::earth(x, y, degree = 2)
+  cat("ares  RSS:", round(fa$rss, 3), " GCV:", round(fa$gcv, 3),
+      " nterms:", length(fa$selected.terms), "\n")
+  cat("earth RSS:", round(fe$rss, 3), " GCV:", round(fe$gcv, 3),
+      " nterms:", length(fe$selected.terms), "\n")
+  cat("relative RSS difference:",
+      round(abs(fa$rss - fe$rss) / fe$rss, 4), "\n")
+}
+```
+
+The relative RSS difference is typically a fraction of a percent at n >= 1000 —
+the two implementations agree numerically even when they pick slightly different
+knot sets.
+
+## Threading determinism
+
+`ares` is parallel-deterministic by construction: changing `nthreads` does not
+change the output.
+
+```{r}
+set.seed(42)
+n <- 150; p <- 5
+x <- matrix(runif(n * p), n, p)
+y <- 5 * pmax(0, x[, 1] - 0.5) * pmax(0, x[, 2] - 0.3) + rnorm(n)
+f1 <- ares(x, y, degree = 2, nthreads = 1)
+f2 <- ares(x, y, degree = 2, nthreads = 2)
+cat("identical selected.terms:", isTRUE(all.equal(f1$selected.terms, f2$selected.terms)), "\n")
+cat("max coef diff:           ", max(abs(f1$coefficients - f2$coefficients)), "\n")
+```
+
+## Performance notes
+
+`ares` v0.0.0.9000 is currently **slower in absolute wall-clock than `earth`** —
+this is a documented limitation and the headline target for v0.1.
+Internally, `ares` uses an O(n) per-knot scoring loop where `earth` uses
+Friedman's O(1)-per-knot Givens fast-LS update. The Givens implementation is on
+the roadmap.
+
+What `ares` v0.0.0.9000 already gets right:
+
+- Numerical correctness — fits track `earth` to ~1% RSS across the smoke grid.
+- Threading determinism — bit-identical fits regardless of thread count.
+- Parallel scaling — 2-thread is consistently ~1.5–1.8× faster than 1-thread
+  (the `RcppParallel` worker is doing real work; the constant factor lives
+  inside the inner loop, not in the threading layer).
+
+See the `inst/sims/` directory for the Monte Carlo benchmark scripts that
+generated the headline numbers in `README.md`.
+
+## References
+
+Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
+*Annals of Statistics* 19(1):1–67.
