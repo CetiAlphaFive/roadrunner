@@ -1,3 +1,44 @@
+# ares 0.0.0.9020 (development)
+
+## Phase 3 — shared forward pass across autotune grid
+
+Forward-pass output (`dirs`, `cuts`) is independent of `penalty`, so for
+each fold we now run the forward pass ONCE per `(degree, nk, fast.k)`
+group, and replay GCV-backward inside that group with each cell's
+penalty using a new C++ entry, `mars_backward_only_cpp()`.
+
+### New C++ function
+- `mars_backward_only_cpp(x, y, dirs, cuts, penalty, nprune, nthreads,
+  force_size, return_path)`. Builds B from dirs/cuts on the given x,
+  runs the same Householder QR + Givens downdate as the regular
+  backward block, returns `coefficients`, `bx`, `selected.terms`,
+  `rss`, `gcv`, `rss.per.subset`, `gcv.per.subset`, plus optional
+  per-size path. Cost: O(n*M^2 + M^4) — same complexity as
+  `mars_fit_cpp`'s backward block, no forward.
+
+### Effect
+- Strong-interaction DGP n=600 p=6 (full autotune grid, no warmstart):
+  v0.19 ~2.5s -> v0.20 **~1.1s** (2.3x faster).
+- Linear DGP n=600 p=6 (warm-start fires): unchanged at ~0.7s.
+- Linear DGP n=600 p=6 (warmstart=FALSE, full grid): v0.19 ~15.1s
+  -> v0.20 ~10.4s (1.5x faster).
+- Sub-second autotune target met for the warm-start path; full-grid
+  path benefits 1.5-2.3x depending on cell composition.
+
+### Determinism
+- Fold-level CV-MSE values are byte-identical to v0.19 because
+  `mars_backward_only_cpp` runs exactly the same numerical algorithm
+  (Householder QR + Givens downdate + periodic refresh) against the
+  same B matrix that the per-cell `mars_fit_cpp` would have built.
+
+### Tests
+- 3 new tests covering: shared-forward CV-MSE varies meaningfully
+  with penalty within each (deg, nk, fk) group; `mars_backward_only_cpp`
+  numerically matches `mars_fit_cpp`'s backward block at the same
+  penalty; v0.20 autotune determinism across nthreads.
+- **155/155 testthat green** (was 131). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9019 (development)
 
 ## Phase 3 — autotune.warmstart (subsample pre-fit)

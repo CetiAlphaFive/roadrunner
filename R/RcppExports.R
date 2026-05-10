@@ -9,3 +9,7 @@ mars_basis_cpp <- function(xnew, dirs, cuts, selected) {
     .Call(`_ares_mars_basis_cpp`, xnew, dirs, cuts, selected)
 }
 
+mars_backward_only_cpp <- function(x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path) {
+    .Call(`_ares_mars_backward_only_cpp`, x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path)
+}
+

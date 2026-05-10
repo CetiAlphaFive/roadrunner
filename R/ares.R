@@ -803,20 +803,35 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     mean(r_te * r_te)
   }
 
-  # Successive-halving: score every cell on fold 1, build a running best;
-  # any cell whose fold-1 MSE exceeds halving_factor * running_best is
-  # eliminated and gets cv_mse = Inf (and no further folds). The halving
-  # factor of 1.5 is empirical (loose enough not to drop close runners,
-  # tight enough to drop wildly bad combos like deg=1 on a clear
-  # interaction DGP).
+  # Successive-halving + shared forward pass (v0.20+).
+  # Cells are grouped by (degree, nk, fast.k): the forward pass output is
+  # independent of penalty, so for each fold we run forward ONCE per group
+  # and call mars_backward_only_cpp() per cell within the group with its
+  # specific penalty. mars_backward_only_cpp builds B from dirs/cuts on the
+  # fold's training rows and replays GCV-backward — same numerical path as
+  # mars_fit_cpp's backward block. Halving factor 1.5 (eliminate cells whose
+  # fold-1 MSE exceeds 1.5 x running_best).
   halving_factor <- 1.5
   ncell <- length(cells)
-  fold_pairs <- list()  # ordered list of (rep_idx, k) folds
-  for (r in seq_len(ncross)) {
-    for (k in seq_len(nfold)) {
+  fold_pairs <- list()
+  for (r in seq_len(ncross))
+    for (k in seq_len(nfold))
       fold_pairs[[length(fold_pairs) + 1L]] <- c(r, k)
-    }
+
+  # Group cells by (degree, nk, fast_k). cell_group[i] gives the group index.
+  group_key <- vapply(cells, function(c)
+    sprintf("%d|%d|%d", c$degree, c$nk, c$fast_k), character(1L))
+  group_levels <- unique(group_key)
+  cell_group <- match(group_key, group_levels)
+  groups <- vector("list", length(group_levels))
+  for (g in seq_along(group_levels)) {
+    members <- which(cell_group == g)
+    first <- cells[[members[1]]]
+    groups[[g]] <- list(degree = first$degree, nk = first$nk,
+                         fast_k = first$fast_k,
+                         members = members)
   }
+
   fold_mse <- matrix(NA_real_, nrow = ncell, ncol = length(fold_pairs))
   alive <- rep(TRUE, ncell)
   for (fp_i in seq_along(fold_pairs)) {
@@ -825,16 +840,68 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     fid <- fold_lists[[r_idx]]
     tr <- which(fid != k_idx); te <- which(fid == k_idx)
     if (length(te) < 1L) next
-    for (i in seq_len(ncell)) {
-      if (!alive[i]) next
-      ce <- cells[[i]]
-      m <- tryCatch(
-        score_one(ce$degree, ce$penalty, ce$nk, ce$fast_k, tr, te),
-        error = function(e) NA_real_
+    x_tr <- x[tr, , drop = FALSE]
+    y_tr <- as.numeric(y[tr])
+    x_te <- x[te, , drop = FALSE]
+    y_te <- y[te]
+
+    for (g in seq_along(groups)) {
+      gi <- groups[[g]]
+      # Skip group if all members are eliminated.
+      if (!any(alive[gi$members])) next
+
+      # Use the smallest penalty (within members) for the forward fit so the
+      # forward pass terminates only on rss-improvement / nk, not on GCV
+      # (which doesn't gate the forward anyway). Penalty has no effect on
+      # forward, so any value works.
+      pen0 <- min(vapply(cells[gi$members], function(c) c$penalty, numeric(1L)))
+      ff <- tryCatch(
+        mars_fit_cpp(
+          x_tr, y_tr, as.integer(gi$degree), as.integer(gi$nk),
+          as.numeric(pen0), thresh, minspan, endspan,
+          adjust_endspan, auto_linpreds,
+          as.integer(gi$fast_k), fast_beta,
+          if (length(nprune) == 0L || is.na(nprune[1])) {
+            as.integer(gi$nk)
+          } else as.integer(nprune),
+          0L,           # pmethod=backward (need a forward pass)
+          trace, nthreads, 0L, 0L
+        ),
+        error = function(e) NULL
       )
-      fold_mse[i, fp_i] <- m
+      if (is.null(ff)) {
+        for (mi in gi$members)
+          if (alive[mi]) fold_mse[mi, fp_i] <- NA_real_
+        next
+      }
+      dirs_full <- ff$dirs
+      cuts_full <- ff$cuts
+
+      # Per-cell backward replay with its own penalty.
+      for (mi in gi$members) {
+        if (!alive[mi]) next
+        ce <- cells[[mi]]
+        bk <- tryCatch(
+          mars_backward_only_cpp(
+            x_tr, y_tr, dirs_full, cuts_full,
+            as.numeric(ce$penalty),
+            if (length(nprune) == 0L || is.na(nprune[1])) {
+              as.integer(ce$nk)
+            } else as.integer(nprune),
+            nthreads, 0L, 0L
+          ),
+          error = function(e) NULL
+        )
+        if (is.null(bk)) { fold_mse[mi, fp_i] <- NA_real_; next }
+        bx_te <- mars_basis_cpp(x_te, dirs_full, cuts_full,
+                                as.integer(bk$selected.terms))
+        yhat <- drop(bx_te %*% as.numeric(bk$coefficients))
+        r_te <- y_te - yhat
+        fold_mse[mi, fp_i] <- mean(r_te * r_te)
+      }
     }
-    # Halving check after fold 1 only (fp_i == 1).
+
+    # Halving check after fold 1 only.
     if (fp_i == 1L) {
       f1 <- fold_mse[, 1]
       ok <- alive & is.finite(f1)

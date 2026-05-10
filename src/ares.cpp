@@ -1411,3 +1411,248 @@ NumericMatrix mars_basis_cpp(const NumericMatrix& xnew,
   }
   return bx;
 }
+
+// ============================================================================
+// Backward-only entry: replay GCV-backward selection on a pre-computed forward
+// term set (dirs, cuts, M rows). Used by R-side autotune (v0.20+) to share
+// one forward pass across all (penalty, nprune) cells in a (degree, nk,
+// fast.k) group. Forward output is independent of penalty, so this skips
+// the expensive forward-pass repetition.
+//
+// Returns the GCV-best subset's coefficients, bx, selected.terms, plus rss /
+// gcv / per-size paths — same shape as mars_fit_cpp's pmethod="backward"
+// output. force_size > 0 picks that exact size from the path; 0 = GCV-best.
+// ============================================================================
+
+// [[Rcpp::export]]
+List mars_backward_only_cpp(const NumericMatrix& x_in,
+                            const NumericVector& y_in,
+                            const IntegerMatrix& dirs_in,
+                            const NumericMatrix& cuts_in,
+                            double penalty,
+                            int nprune,
+                            int nthreads,
+                            int force_size,
+                            int return_path) {
+  using namespace ares;
+  int n = x_in.nrow();
+  int p = x_in.ncol();
+  int M = dirs_in.nrow();
+  if (dirs_in.ncol() != p || cuts_in.ncol() != p || cuts_in.nrow() != M)
+    stop("ares: dirs/cuts shape does not match x.");
+  if (y_in.size() != n) stop("ares: length(y) must equal nrow(x).");
+  if (M < 1) stop("ares: dirs has zero rows.");
+
+  // Flatten inputs.
+  std::vector<double> X(size_t(n) * p);
+  for (int j = 0; j < p; ++j)
+    for (int i = 0; i < n; ++i)
+      X[i + size_t(j) * n] = x_in(i, j);
+  std::vector<double> Y(y_in.begin(), y_in.end());
+  std::vector<int>    dirs(size_t(M) * p);
+  std::vector<double> cuts(size_t(M) * p);
+  for (int t = 0; t < M; ++t)
+    for (int j = 0; j < p; ++j) {
+      dirs[size_t(t) * p + j] = dirs_in(t, j);
+      cuts[size_t(t) * p + j] = cuts_in(t, j);
+    }
+
+  // Build B (n x M) from dirs/cuts.
+  std::vector<double> B(size_t(n) * M, 0.0);
+  for (int t = 0; t < M; ++t) {
+    build_term_column(X.data(), n, p,
+                      &dirs[size_t(t) * p], &cuts[size_t(t) * p],
+                      B.data() + size_t(t) * n);
+  }
+
+  // Set thread options (caller passes the effective count).
+  (void)nthreads;
+
+  std::vector<int> selected_idx;
+  std::vector<double> rss_per_subset(M, NA_REAL);
+  std::vector<double> gcv_per_subset(M, NA_REAL);
+  double final_rss, final_gcv;
+  std::vector<double> final_beta;
+  std::vector<std::vector<int>>    path_subsets_outer;
+  std::vector<std::vector<double>> path_betas_outer;
+
+  auto compute_gcv = [&](double rss_val, int n_terms) {
+    double C = double(n_terms) + penalty * (double(n_terms) - 1.0) / 2.0;
+    double denom = 1.0 - C / double(n);
+    if (denom <= 0.0) return std::numeric_limits<double>::infinity();
+    return rss_val / (double(n) * denom * denom);
+  };
+
+  if (M > 1) {
+    std::vector<int> cur(M);
+    std::iota(cur.begin(), cur.end(), 0);
+    int M_alloc = M;
+    std::vector<double> R_b(size_t(M_alloc) * M_alloc, 0.0);
+    std::vector<double> Qty_b(M_alloc, 0.0);
+    double cur_rss;
+    {
+      std::vector<double> Bw(B.begin(), B.begin() + size_t(M) * n);
+      std::vector<double> yw(Y.begin(), Y.end());
+      ares::householder_qr_R(Bw.data(), n, M, yw.data(),
+                             R_b.data(), M_alloc, Qty_b.data(), cur_rss);
+    }
+    int M_active = M;
+    std::vector<double> beta_active(M_active, 0.0);
+    ares::solve_R_back(R_b.data(), M_alloc, M_active,
+                       Qty_b.data(), beta_active.data());
+
+    double cur_gcv = compute_gcv(cur_rss, M_active);
+    rss_per_subset[M_active - 1] = cur_rss;
+    gcv_per_subset[M_active - 1] = cur_gcv;
+    int best_size = M_active;
+    double best_gcv = cur_gcv;
+    std::vector<int> best_set = cur;
+    std::vector<double> best_beta = beta_active;
+
+    std::vector<std::vector<int>>    path_subsets(M);
+    std::vector<std::vector<double>> path_betas(M);
+    path_subsets[M_active - 1] = cur;
+    path_betas[M_active - 1] = beta_active;
+
+    while (M_active > 1) {
+      // Per-trial Givens downdate is fast enough serial for this entry —
+      // most uses (autotune inner-CV cells) are already wrapped in a
+      // parallel-friendly loop at the R level.
+      double best_inc = std::numeric_limits<double>::infinity();
+      int best_t = -1;
+      std::vector<double> R_trial(size_t(M_alloc) * M_active);
+      std::vector<double> Qty_trial(M_active);
+      for (int ki = 1; ki < M_active; ++ki) {
+        for (int j = 0; j < M_active; ++j)
+          for (int i = 0; i <= j && i < M_active; ++i)
+            R_trial[i + size_t(j) * M_alloc] =
+              R_b[i + size_t(j) * M_alloc];
+        for (int i = 0; i < M_active; ++i) Qty_trial[i] = Qty_b[i];
+        double inc = ares::qr_downdate_col(R_trial.data(), M_alloc,
+                                           M_active, ki,
+                                           Qty_trial.data());
+        if (inc < best_inc) { best_inc = inc; best_t = ki; }
+      }
+      if (best_t < 0) break;
+      int drop_ki = best_t;
+      double commit_inc = ares::qr_downdate_col(R_b.data(), M_alloc,
+                                                M_active, drop_ki,
+                                                Qty_b.data());
+      cur.erase(cur.begin() + drop_ki);
+      cur_rss += commit_inc;
+      --M_active;
+
+      static const int REFRESH_EVERY = 4;
+      bool need_refresh = (M_active >= 2) &&
+                          ((M - M_active) % REFRESH_EVERY == 0);
+      if (need_refresh) {
+        std::vector<double> Bw_re(size_t(n) * M_active);
+        for (int j = 0; j < M_active; ++j)
+          for (int i = 0; i < n; ++i)
+            Bw_re[i + size_t(j) * n] =
+              B[i + size_t(cur[j]) * n];
+        std::vector<double> yw_re(Y.begin(), Y.end());
+        std::fill(R_b.begin(), R_b.end(), 0.0);
+        std::fill(Qty_b.begin(), Qty_b.end(), 0.0);
+        ares::householder_qr_R(Bw_re.data(), n, M_active, yw_re.data(),
+                               R_b.data(), M_alloc, Qty_b.data(),
+                               cur_rss);
+      }
+
+      beta_active.assign(M_active, 0.0);
+      ares::solve_R_back(R_b.data(), M_alloc, M_active,
+                         Qty_b.data(), beta_active.data());
+
+      cur_gcv = compute_gcv(cur_rss, M_active);
+      rss_per_subset[M_active - 1] = cur_rss;
+      gcv_per_subset[M_active - 1] = cur_gcv;
+      path_subsets[M_active - 1] = cur;
+      path_betas[M_active - 1] = beta_active;
+      if (cur_gcv < best_gcv) {
+        best_gcv = cur_gcv;
+        best_size = M_active;
+        best_set = cur;
+        best_beta = beta_active;
+      }
+    }
+
+    if (force_size > 0 && force_size <= M &&
+        !path_subsets[force_size - 1].empty()) {
+      selected_idx = path_subsets[force_size - 1];
+      final_beta   = path_betas[force_size - 1];
+      final_rss    = rss_per_subset[force_size - 1];
+      final_gcv    = compute_gcv(final_rss, force_size);
+    } else {
+      selected_idx = best_set;
+      final_beta = best_beta;
+      final_rss = rss_per_subset[best_size - 1];
+      final_gcv = best_gcv;
+    }
+    path_subsets_outer = std::move(path_subsets);
+    path_betas_outer   = std::move(path_betas);
+  } else {
+    // M == 1: only intercept.
+    selected_idx = {0};
+    double sum_y = 0.0;
+    for (int i = 0; i < n; ++i) sum_y += Y[i];
+    double mean_y = sum_y / double(n);
+    final_beta = {mean_y};
+    double rss = 0.0;
+    for (int i = 0; i < n; ++i) rss += (Y[i] - mean_y) * (Y[i] - mean_y);
+    final_rss = rss;
+    final_gcv = compute_gcv(rss, 1);
+    rss_per_subset[0] = rss;
+    gcv_per_subset[0] = final_gcv;
+  }
+
+  // Build outputs.
+  int L = (int)selected_idx.size();
+  NumericMatrix bx_out(n, L);
+  for (int j = 0; j < L; ++j)
+    for (int i = 0; i < n; ++i)
+      bx_out(i, j) = B[i + size_t(selected_idx[j]) * n];
+  NumericVector coefs(final_beta.begin(), final_beta.end());
+
+  IntegerVector sel(L);
+  for (int j = 0; j < L; ++j) sel[j] = selected_idx[j] + 1;
+  NumericVector rss_ps(rss_per_subset.begin(), rss_per_subset.end());
+  NumericVector gcv_ps(gcv_per_subset.begin(), gcv_per_subset.end());
+
+  List path_subs_R = List::create();
+  List path_coefs_R = List::create();
+  if (return_path != 0 && !path_subsets_outer.empty()) {
+    path_subs_R  = List(path_subsets_outer.size());
+    path_coefs_R = List(path_betas_outer.size());
+    for (size_t s = 0; s < path_subsets_outer.size(); ++s) {
+      const auto& subs = path_subsets_outer[s];
+      const auto& bets = path_betas_outer[s];
+      if (subs.empty()) {
+        path_subs_R[s]  = IntegerVector::create();
+        path_coefs_R[s] = NumericVector::create();
+      } else {
+        IntegerVector iv(subs.size());
+        for (size_t k = 0; k < subs.size(); ++k) iv[k] = subs[k] + 1;
+        path_subs_R[s] = iv;
+        NumericVector nv(bets.begin(), bets.end());
+        path_coefs_R[s] = nv;
+      }
+    }
+  }
+  (void)nprune;  // Reserved: caps not enforced at this level (caller may
+                 // restrict by post-filtering); current autotune does not
+                 // need it.
+
+  return List::create(
+    _["coefficients"]   = coefs,
+    _["bx"]             = bx_out,
+    _["selected.terms"] = sel,
+    _["rss"]            = final_rss,
+    _["gcv"]            = final_gcv,
+    _["rss.per.subset"] = rss_ps,
+    _["gcv.per.subset"] = gcv_ps,
+    _["path.subsets"]   = path_subs_R,
+    _["path.coefs"]     = path_coefs_R,
+    _["penalty"]        = penalty
+  );
+}
+

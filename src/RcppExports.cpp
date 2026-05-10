@@ -52,10 +52,30 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// mars_backward_only_cpp
+List mars_backward_only_cpp(const NumericMatrix& x_in, const NumericVector& y_in, const IntegerMatrix& dirs_in, const NumericMatrix& cuts_in, double penalty, int nprune, int nthreads, int force_size, int return_path);
+RcppExport SEXP _ares_mars_backward_only_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP dirs_inSEXP, SEXP cuts_inSEXP, SEXP penaltySEXP, SEXP npruneSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const NumericMatrix& >::type x_in(x_inSEXP);
+    Rcpp::traits::input_parameter< const NumericVector& >::type y_in(y_inSEXP);
+    Rcpp::traits::input_parameter< const IntegerMatrix& >::type dirs_in(dirs_inSEXP);
+    Rcpp::traits::input_parameter< const NumericMatrix& >::type cuts_in(cuts_inSEXP);
+    Rcpp::traits::input_parameter< double >::type penalty(penaltySEXP);
+    Rcpp::traits::input_parameter< int >::type nprune(npruneSEXP);
+    Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
+    Rcpp::traits::input_parameter< int >::type force_size(force_sizeSEXP);
+    Rcpp::traits::input_parameter< int >::type return_path(return_pathSEXP);
+    rcpp_result_gen = Rcpp::wrap(mars_backward_only_cpp(x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_ares_mars_fit_cpp", (DL_FUNC) &_ares_mars_fit_cpp, 18},
     {"_ares_mars_basis_cpp", (DL_FUNC) &_ares_mars_basis_cpp, 4},
+    {"_ares_mars_backward_only_cpp", (DL_FUNC) &_ares_mars_backward_only_cpp, 9},
     {NULL, NULL, 0}
 };
 
