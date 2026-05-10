@@ -1,3 +1,28 @@
+# ares 0.0.0.9009 (development)
+
+## Hoist per-variable sort out of the forward loop
+
+- The `var_sort_flat[p × n]` precompute (rows sorted by each predictor)
+  depends only on X, not on residuals or basis state. v0.8 ran it once
+  per forward step (~10 times per fit). v0.9 hoists it to a single call
+  before the forward loop — sort cost drops `nk_cap`-fold.
+- Profile post-v0.8 had `var_sort_setup` at 28% of wall on small cells
+  (Friedman n=500 d=1) and ~10% on large cells. v0.9 effectively
+  eliminates it.
+
+## Effect
+
+- inst/sims grid (median across 18 cells):
+  - 1t median ratio vs earth: 3.09× → **2.52×** (18% faster).
+  - 4t median ratio vs earth: 1.28× → **1.20×**.
+  - 4t cells faster than earth: 4/18 → **5/18**.
+  - Best 4t cell: additive n=5000 deg=2 at 0.52× — **ares 1.9× faster
+    than earth** (72ms vs 138ms). Was 1.65× faster in v0.8.
+  - Best 1t ratio: 1.92× → **1.49×** (Friedman n=500 d=1 within 50% at
+    single-thread).
+- Determinism preserved (RSS=1796.11037133069 byte-identical 1t/4t).
+- 38/38 tests pass.
+
 # ares 0.0.0.9008 (development)
 
 ## Per-variable sort amortised across forward-step pairs

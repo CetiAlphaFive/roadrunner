@@ -826,6 +826,39 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   // Thread count is set from the R-side wrapper via RcppParallel::setThreadOptions.
   (void)nthreads;
 
+  // Per-variable row-sort: rows sorted ascending by x[:, v] (stable on row
+  // index for ties). Depends only on X, so build once before the forward
+  // loop and reuse across every forward step. The p sorts are independent
+  // → dispatched in parallel via RcppParallel::parallelFor.
+  std::vector<int> var_sort_flat(size_t(p) * n);
+  {
+    struct VarSortWorker : public RcppParallel::Worker {
+      const double* X_ptr;
+      int n;
+      std::vector<int>* dst;
+      VarSortWorker(const double* X_, int n_, std::vector<int>& d)
+        : X_ptr(X_), n(n_), dst(&d) {}
+      void operator()(std::size_t begin, std::size_t end) override {
+        for (std::size_t v = begin; v < end; ++v) {
+          int* d = dst->data() + size_t(v) * n;
+          const double* xv = X_ptr + size_t(v) * n;
+          for (int i = 0; i < n; ++i) d[i] = i;
+          std::stable_sort(d, d + n,
+                           [xv](int a, int b){
+                             if (xv[a] != xv[b]) return xv[a] < xv[b];
+                             return a < b;
+                           });
+        }
+      }
+    };
+    VarSortWorker vw(X.data(), n, var_sort_flat);
+    if (nthreads <= 1 || p < 2) {
+      vw(0, (size_t)p);
+    } else {
+      RcppParallel::parallelFor(0, (size_t)p, vw);
+    }
+  }
+
   // --- Forward pass ---
   while (M < nk_cap - 1) {
     // Build candidate (parent, var) pairs
@@ -873,40 +906,6 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     // Mq == M because we always append a column on each emission (zeroing
     // it instead of dropping when rank-deficient — keeps M_q in sync).
     int Mq = M;
-
-    // Per-var sorted index: rows sorted ascending by x[:, v] (stable on row
-    // index for ties). Built once per forward step and shared by all
-    // (parent, var) pairs that pick this v. KnotScanner filters this in
-    // O(n) instead of running its own O(n log n) sort per pair.
-    // The p sorts are independent → parallelise.
-    std::vector<int> var_sort_flat(size_t(p) * n);
-    {
-      struct VarSortWorker : public RcppParallel::Worker {
-        const double* X_ptr;
-        int n;
-        std::vector<int>* dst;
-        VarSortWorker(const double* X_, int n_, std::vector<int>& d)
-          : X_ptr(X_), n(n_), dst(&d) {}
-        void operator()(std::size_t begin, std::size_t end) override {
-          for (std::size_t v = begin; v < end; ++v) {
-            int* d = dst->data() + size_t(v) * n;
-            const double* xv = X_ptr + size_t(v) * n;
-            for (int i = 0; i < n; ++i) d[i] = i;
-            std::stable_sort(d, d + n,
-                             [xv](int a, int b){
-                               if (xv[a] != xv[b]) return xv[a] < xv[b];
-                               return a < b;
-                             });
-          }
-        }
-      };
-      VarSortWorker vw(X.data(), n, var_sort_flat);
-      if (nthreads <= 1 || p < 2) {
-        vw(0, (size_t)p);
-      } else {
-        RcppParallel::parallelFor(0, (size_t)p, vw);
-      }
-    }
 
     std::vector<Candidate> out(pairs.size());
     ForwardWorker w(X.data(), B_cols_flat.data(), resid.data(),
