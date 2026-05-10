@@ -327,3 +327,35 @@ test_that("v0.20 autotune determinism preserved across nthreads", {
   expect_equal(s1$autotune$grid$cv_mse, s2$autotune$grid$cv_mse,
                tolerance = 1e-10)
 })
+
+# ---- v0.0.0.9021: nk-grid cap on high-p -----------------------------------
+
+test_that("autotune drops the 4x nk multiplier when nk_eff >= 31 (high-p)", {
+  # p = 20 -> nk_eff = 2*p + 1 = 41 -> nk_grid should be c(41, 82), not
+  # c(41, 82, 164). v0.0.0.9020 included nk=164; v0.0.0.9021 caps at 2x.
+  set.seed(20260510)
+  n <- 250; p <- 20
+  x <- matrix(stats::runif(n * p), n, p)
+  y <- 10 * sin(pi * x[, 1] * x[, 2]) + 5 * x[, 3] + stats::rnorm(n)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "fast",
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
+  nk_vals <- sort(unique(fit$autotune$grid$nk))
+  expect_setequal(nk_vals, c(41L, 82L))
+  expect_false(164L %in% nk_vals)
+})
+
+test_that("autotune keeps the 4x nk multiplier when nk_eff < 31 (low-p)", {
+  # p = 6 -> nk_eff = 2*p + 1 = 13 -> bumped to 20 by max(20, ...) -> 21.
+  # Since 21 < 31, the v0.0.0.9020 three-element grid c(21, 42, 84) should
+  # still appear (capped at 200, but well under). 4x = 84.
+  set.seed(20260510)
+  n <- 250; p <- 6
+  x <- matrix(stats::runif(n * p), n, p)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "fast",
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
+  nk_vals <- sort(unique(fit$autotune$grid$nk))
+  # nk_eff for p = 6 is min(200, max(20, 12)) + 1 = 21.
+  expect_true(21L %in% nk_vals)
+  expect_true(84L %in% nk_vals)  # 4x kept since nk_eff < 31
+})

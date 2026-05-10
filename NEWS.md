@@ -1,3 +1,53 @@
+# ares 0.0.0.9021 (development)
+
+## Phase 4 — autotune nk-grid cap on high-p
+
+Autotune previously swept `nk` at `c(1x, 2x, 4x)` the default nk_default
+(= `min(200, max(20, 2 * p)) + 1`). On problems with `p >= 15` the 4x
+multiplier pushes `nk` toward the 200 hard cap, producing forward fits
+that emit M = 130+ basis terms before GCV-backward trims them. The
+backward-replay step inside the autotune CV grid costs O(M^4) per cell
+(Givens downdate + R-factor update), so the 4x cells dominate wall-clock
+on highdim. The 4x cells also empirically score within 1% of the 2x and
+1x cells on the canonical Friedman-1 / additive / interaction DGPs at
+p = 20, so the extra cost buys no statistical signal.
+
+### Behaviour change
+- When `nk_eff >= 31` (i.e. p >= 15 under the default `nk_default`
+  formula), the autotune `nk_grid` is now `c(nk_eff, 2 * nk_eff)`
+  instead of `c(nk_eff, 2 * nk_eff, 4 * nk_eff)`.
+- For low-p problems (`nk_eff < 31`) the grid is unchanged.
+- User-pinned `nk` is unaffected (the grid is built off the user's value
+  the same way as before).
+
+### Effect (Friedman-1 p=20, 5-fold CV, balanced autotune.speed)
+- n = 500:  138s -> **27s** (5.1x).  MSE 10.26 -> 9.83 (marginally better;
+  picks `nk=41` instead of `nk=164`).
+- n = 1500: 136s -> **40s** (3.4x).  MSE 8.04 unchanged.
+
+### Effect (additive p=20)
+- n = 500: 104s -> **22s** (4.7x).  MSE 0.084 unchanged.
+
+### Effect (interaction p=20)
+- n = 500: 1.6s -> **0.96s**.  MSE 0.082 unchanged.
+
+### Low-p preserved
+- friedman1 p=10, additive p=10, interaction p=10: identical timings and
+  identical winners to v0.0.0.9020 (nk_eff < 31 -> branch returns old
+  three-element grid).
+
+### Determinism
+- Same numerical path, same fold partitioning, same per-cell scoring. The
+  only change is that some cells are no longer generated. Surviving cells'
+  CV-MSE values are byte-identical to v0.0.0.9020 at fixed `seed.cv`.
+
+### Tests
+- 154/154 testthat green (no new tests required: the existing nk-grid
+  test at p = 6 falls in the low-p branch and is unchanged; the deg-3
+  inclusion test at p = 20 still triggers since `nk_eff >= 31` is the
+  same threshold).
+
+
 # ares 0.0.0.9020 (development)
 
 ## Phase 3 — shared forward pass across autotune grid

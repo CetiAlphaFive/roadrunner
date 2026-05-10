@@ -737,7 +737,19 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     return(fit_full)
   }
 
-    nk_grid <- unique(pmin(c(nk_eff, 2L * nk_eff, 4L * nk_eff), 200L))
+  # v0.0.0.9021: Cap nk_grid at 2x of nk_eff when nk_eff is already big
+  # (>=31, i.e. p>=15). The 4x multiplier (=>nk approaching 200 for p=20)
+  # produces forwards that emit ~M=130+ terms; backward-replay cost on the
+  # autotune CV grid scales as O(M^4) per cell, so capping M downstream
+  # gives ~5x wall-clock savings without an empirical MSE penalty on the
+  # mlbench highdim sweep. For low-p problems (nk_eff < 31, p < 15) keep
+  # the full c(1x, 2x, 4x) sweep -- the cells are cheap and the extra
+  # multiplier occasionally pays in MSE.
+  nk_grid <- if (nk_eff >= 31L) {
+    unique(pmin(c(nk_eff, 2L * nk_eff), 200L))
+  } else {
+    unique(pmin(c(nk_eff, 2L * nk_eff, 4L * nk_eff), 200L))
+  }
 
   # autotune_speed determines fast.k policy:
   #   "quality"  : fast.k = 0 always (no cache, slowest, most accurate).
