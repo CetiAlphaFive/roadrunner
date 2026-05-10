@@ -1,3 +1,31 @@
+# ares 0.0.0.9008 (development)
+
+## Per-variable sort amortised across forward-step pairs
+
+- The per-(parent, var) `std::stable_sort` of the eligible row index in
+  `KnotScanner::run` is replaced by an O(n) filter over a precomputed
+  per-variable sorted index. The sort happens once per variable per
+  forward step (not once per pair); the filter just walks the sorted
+  index and keeps rows in the parent's support.
+- Sort cost was O(n log n) per pair (~50 pairs / step × ~10 steps =
+  ~500 sorts per fit). Amortised it becomes p sorts per step, ~10
+  per fit on the bench grid — about a 50× reduction in sort work.
+
+## Effect
+
+- Inst/sims grid (median across 18 cells, single-thread):
+  - 1t wall-clock: 0.077s → 0.067s (**13% faster**).
+  - Median 1t speed ratio vs earth: 3.8× → **3.09×**.
+  - 1t min ratio vs earth: 1.98× → 1.92× (best cell now within 2× of earth).
+- Multi-thread:
+  - 4t median wall: 0.030s → 0.035s (slightly slower because the
+    serial sort step doesn't parallelise; offset by lower per-pair
+    cost — net effect varies by cell).
+  - 4t cells faster than earth: still 1/18 (additive n=5000 deg=2 at
+    0.85× ratio). Second cell now at 1.05× (additive n=1500 deg=2 —
+    within 5% of earth).
+- 38/38 tests pass; determinism preserved.
+
 # ares 0.0.0.9007 (development)
 
 ## AVX2 SIMD on KnotScanner — first ares-faster-than-earth cells

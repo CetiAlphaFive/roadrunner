@@ -199,6 +199,9 @@ struct KnotScanner {
   const double* QT;             // n × QT_stride row-major-over-q layout: QT[r*QT_stride + q] is Q[r,q].
                                 // Per-row Mq slice is contiguous within the QT_stride block →
                                 // unit-stride q-loop, auto-SIMD.
+  const int* var_sort;          // length-n permutation of rows sorted by xj (ascending).
+                                // Built once per variable per forward step (amortises across all
+                                // parents sharing this variable). Filter to parent's support is O(n).
   int n;
   int Mq;                       // number of valid Q-cols to scan (cols 0..Mq-1)
   int QT_stride;                // byte stride between row r and r+1 in QT (≥ Mq)
@@ -209,17 +212,18 @@ struct KnotScanner {
   Candidate best;
 
   void run(int parent_idx, int var_idx) {
-    // Sort indices of rows where parent_col != 0 by xj
+    // Filter the precomputed `var_sort` (rows sorted by xj) down to those
+    // also in this parent's support (parent_col[r] != 0). Linear pass; the
+    // O(n_eli log n_eli) sort that this used to do per-pair is now amortised
+    // across every parent that shares this variable.
     std::vector<int> idx;
     idx.reserve(n);
-    for (int i = 0; i < n; ++i) if (parent_col[i] != 0.0) idx.push_back(i);
+    for (int i = 0; i < n; ++i) {
+      int r = var_sort[i];
+      if (parent_col[r] != 0.0) idx.push_back(r);
+    }
     int n_eli = (int)idx.size();
     if (n_eli < 2 * endspan + 3) return;
-    std::stable_sort(idx.begin(), idx.end(),
-              [this](int a, int b){
-                if (xj[a] != xj[b]) return xj[a] < xj[b];
-                return a < b;  // stable tie-break by row index
-              });
 
     // Use raw n in auto-minspan (earth's behavior) when minspan_user <= 0.
     // Friedman 1991 eq. 43 uses N_m (parent's nonzero count); earth does not,
@@ -447,6 +451,7 @@ struct ForwardWorker : public RcppParallel::Worker {
   const std::vector<std::pair<int,int>>* pairs;  // (parent_local_idx, var_idx)
   const std::vector<int>* parent_global_idx;
   const std::vector<int>* pair_endspans;          // per-pair endspan (Adjust.endspan applied)
+  const int* var_sort_flat;     // p * n ints, [v*n + i] = rows sorted by x[:, v] ascending
   int n, p;
   int minspan_user;             // minspan_user <=0 ⇒ auto per parent
   std::vector<Candidate>* out;  // size = pairs->size()
@@ -456,11 +461,13 @@ struct ForwardWorker : public RcppParallel::Worker {
                 const std::vector<std::pair<int,int>>& pairs_,
                 const std::vector<int>& parent_global_,
                 const std::vector<int>& pair_endspans_,
+                const int* var_sort_flat_,
                 int n_, int p_, int ms_,
                 std::vector<Candidate>& out_)
     : x(x_), B_cols(B_), resid(r_), QT(QT_), Mq(Mq_), QT_stride(QT_stride_),
       pairs(&pairs_), parent_global_idx(&parent_global_),
       pair_endspans(&pair_endspans_),
+      var_sort_flat(var_sort_flat_),
       n(n_), p(p_), minspan_user(ms_), out(&out_) {}
 
   void operator()(std::size_t begin, std::size_t end) override {
@@ -471,7 +478,9 @@ struct ForwardWorker : public RcppParallel::Worker {
       KnotScanner sc{
         B_cols + size_t(parent_local) * n,
         x      + size_t(var_idx)     * n,
-        resid, QT, n, Mq, QT_stride, minspan_user, es_pair, p, Candidate{}
+        resid, QT,
+        var_sort_flat + size_t(var_idx) * n,
+        n, Mq, QT_stride, minspan_user, es_pair, p, Candidate{}
       };
       sc.run((*parent_global_idx)[parent_local], var_idx);
       (*out)[i] = sc.best;
@@ -865,10 +874,45 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     // it instead of dropping when rank-deficient — keeps M_q in sync).
     int Mq = M;
 
+    // Per-var sorted index: rows sorted ascending by x[:, v] (stable on row
+    // index for ties). Built once per forward step and shared by all
+    // (parent, var) pairs that pick this v. KnotScanner filters this in
+    // O(n) instead of running its own O(n log n) sort per pair.
+    // The p sorts are independent → parallelise.
+    std::vector<int> var_sort_flat(size_t(p) * n);
+    {
+      struct VarSortWorker : public RcppParallel::Worker {
+        const double* X_ptr;
+        int n;
+        std::vector<int>* dst;
+        VarSortWorker(const double* X_, int n_, std::vector<int>& d)
+          : X_ptr(X_), n(n_), dst(&d) {}
+        void operator()(std::size_t begin, std::size_t end) override {
+          for (std::size_t v = begin; v < end; ++v) {
+            int* d = dst->data() + size_t(v) * n;
+            const double* xv = X_ptr + size_t(v) * n;
+            for (int i = 0; i < n; ++i) d[i] = i;
+            std::stable_sort(d, d + n,
+                             [xv](int a, int b){
+                               if (xv[a] != xv[b]) return xv[a] < xv[b];
+                               return a < b;
+                             });
+          }
+        }
+      };
+      VarSortWorker vw(X.data(), n, var_sort_flat);
+      if (nthreads <= 1 || p < 2) {
+        vw(0, (size_t)p);
+      } else {
+        RcppParallel::parallelFor(0, (size_t)p, vw);
+      }
+    }
+
     std::vector<Candidate> out(pairs.size());
     ForwardWorker w(X.data(), B_cols_flat.data(), resid.data(),
                     QT.data(), Mq, nk_cap,
                     pairs, parent_global_idx, pair_endspans,
+                    var_sort_flat.data(),
                     n, p, ms, out);
     if (nthreads <= 1) {
       // serial
