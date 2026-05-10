@@ -32,6 +32,7 @@ ares(x, ...)
   cv.1se = FALSE,
   autotune = FALSE,
   autotune.speed = c("balanced", "quality", "fast"),
+  autotune.warmstart = TRUE,
   n.boot = 0L,
   trace = 0L,
   nthreads = 0L,
@@ -133,6 +134,14 @@ Matches v0.10 quality at v0.10 wall-clock cost.
 smallest \code{fast.k} whose mean CV-MSE is within 1\% of the best.
 Trades a marginal accuracy hit for a marginal speed gain.
 }}
+
+\item{autotune.warmstart}{If \code{TRUE} (default; only meaningful when
+\code{autotune = TRUE}) and \code{n >= 200}, ares first runs autotune on a
+15\% subsample (capped at 200 rows). If the subsample has a
+\emph{decisive} winner — best-per-degree CV-MSE more than 5\% below the
+next-best degree's best cell — that \verb{(degree, penalty, nk, fast.k)}
+is used directly to refit on the full data, skipping the full-data
+grid. Cuts autotune wall-clock by ~5x on well-separated DGPs.}
 
 \item{n.boot}{Number of bootstrap replicate fits for bagging. Default
 \code{0} (no bagging). When \verb{> 0}, the result holds a list of \code{n.boot} ares

@@ -5,7 +5,8 @@ test_that("autotune = TRUE returns $autotune slot with grid + winner", {
   n <- 200; p <- 5
   x <- matrix(stats::runif(n * p), n, p)
   y <- 10 * sin(pi * x[, 1]) + 3 * x[, 2] + stats::rnorm(n, sd = 1.5)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 1, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 1, nthreads = 2)
   expect_true("autotune" %in% names(fit))
   expect_true(is.data.frame(fit$autotune$grid))
   expect_true(all(c("degree", "penalty", "cv_mse") %in% names(fit$autotune$grid)))
@@ -24,7 +25,8 @@ test_that("autotune chooses degree 2 on a clearly-interaction DGP", {
   # Strong x1*x2 interaction; deg=1 cannot capture it.
   y <- 10 * sin(pi * x[, 1] * x[, 2]) +
        20 * (x[, 3] - 0.5)^2 + stats::rnorm(n)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 7, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 7, nthreads = 2)
   expect_gte(fit$autotune$degree, 2L)
 })
 
@@ -32,8 +34,10 @@ test_that("autotune is deterministic at fixed seed.cv across nthreads", {
   set.seed(20260510)
   x <- matrix(stats::runif(200 * 5), 200, 5)
   y <- 5 * x[, 1] + stats::rnorm(200)
-  s1 <- ares(x, y, autotune = TRUE, seed.cv = 42, nthreads = 1)
-  s2 <- ares(x, y, autotune = TRUE, seed.cv = 42, nthreads = 4)
+  s1 <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+             seed.cv = 42, nthreads = 1)
+  s2 <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+             seed.cv = 42, nthreads = 4)
   expect_equal(s1$rss, s2$rss, tolerance = 1e-10)
   expect_equal(s1$autotune$degree, s2$autotune$degree)
   expect_equal(s1$autotune$penalty, s2$autotune$penalty)
@@ -45,7 +49,8 @@ test_that("autotune is non-blocking on small n / few features", {
   set.seed(20260510)
   x <- matrix(stats::runif(80 * 3), 80, 3)
   y <- 5 * x[, 1] + stats::rnorm(80)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 1, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 1, nthreads = 2)
   expect_s3_class(fit, "ares")
   # Should not include degree=3 (nk_eff is small for p=3).
   expect_true(all(fit$autotune$grid$degree <= 2L))
@@ -55,7 +60,8 @@ test_that("autotune predict round-trips and pmethod is reported", {
   set.seed(20260510)
   x <- matrix(stats::runif(150 * 4), 150, 4)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(150)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 11, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 11, nthreads = 2)
   expect_equal(fit$pmethod, "backward")
   yhat <- predict(fit, x[1:5, ])
   expect_length(yhat, 5L)
@@ -67,7 +73,8 @@ test_that("autotune grid includes nk multipliers when nk_eff is large enough", {
   set.seed(20260510)
   x <- matrix(stats::runif(200 * 6), 200, 6)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(200)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 1, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 1, nthreads = 2)
   expect_true("nk" %in% names(fit$autotune$grid))
   # Should sweep at least 2 nk values when default nk is small enough that
   # 2x and 4x do not collapse into the cap of 200.
@@ -83,7 +90,8 @@ test_that("successive halving eliminates clearly bad cells after fold 1", {
   x <- matrix(stats::runif(n * p), n, p)
   y <- 10 * sin(pi * x[, 1] * x[, 2]) +
        20 * (x[, 3] - 0.5)^2 + stats::rnorm(n)
-  fit <- ares(x, y, autotune = TRUE, seed.cv = 1, nthreads = 2)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 1, nthreads = 2)
   # All degree-1 cells should be eliminated on this DGP.
   d1_elim <- with(fit$autotune$grid, eliminated[degree == 1L])
   expect_true(any(d1_elim))
@@ -95,8 +103,10 @@ test_that("autotune determinism across nthreads with v0.16 grid", {
   set.seed(20260510)
   x <- matrix(stats::runif(200 * 5), 200, 5)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(200)
-  s1 <- ares(x, y, autotune = TRUE, seed.cv = 42, nthreads = 1)
-  s2 <- ares(x, y, autotune = TRUE, seed.cv = 42, nthreads = 4)
+  s1 <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+             seed.cv = 42, nthreads = 1)
+  s2 <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+             seed.cv = 42, nthreads = 4)
   expect_identical(s1$autotune$nk, s2$autotune$nk)
   expect_identical(s1$autotune$grid$cv_mse, s2$autotune$grid$cv_mse)
   expect_identical(s1$autotune$grid$eliminated, s2$autotune$grid$eliminated)
@@ -110,7 +120,7 @@ test_that("autotune.speed='quality' forces fast.k = 0 in every cell", {
   x <- matrix(stats::runif(150 * 5), 150, 5)
   y <- 5 * x[, 1] + stats::rnorm(150)
   fit <- ares(x, y, autotune = TRUE, autotune.speed = "quality",
-              seed.cv = 1, nthreads = 2)
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
   expect_true(all(fit$autotune$grid$fast_k == 0L))
   expect_equal(fit$autotune$fast_k, 0L)
 })
@@ -120,7 +130,7 @@ test_that("autotune.speed='fast' forces fast.k = 5 in every cell", {
   x <- matrix(stats::runif(150 * 5), 150, 5)
   y <- 5 * x[, 1] + stats::rnorm(150)
   fit <- ares(x, y, autotune = TRUE, autotune.speed = "fast",
-              seed.cv = 1, nthreads = 2)
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
   expect_true(all(fit$autotune$grid$fast_k == 5L))
   expect_equal(fit$autotune$fast_k, 5L)
 })
@@ -130,7 +140,7 @@ test_that("autotune.speed='balanced' sweeps fast.k in {10, 25, 0}", {
   x <- matrix(stats::runif(180 * 5), 180, 5)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(180)
   fit <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
-              seed.cv = 1, nthreads = 2)
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
   expect_setequal(unique(fit$autotune$grid$fast_k), c(10L, 25L, 0L))
 })
 
@@ -139,7 +149,7 @@ test_that("balanced winner respects 1% MSE rule (prefers smaller fast.k)", {
   x <- matrix(stats::runif(200 * 5), 200, 5)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(200)
   fit <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
-              seed.cv = 1, nthreads = 2)
+              autotune.warmstart = FALSE, seed.cv = 1, nthreads = 2)
   best_score <- fit$autotune$cv_mse
   # Within-1% set:
   near <- with(fit$autotune$grid,
@@ -163,10 +173,78 @@ test_that("autotune.speed determinism across nthreads", {
   y <- 5 * x[, 1] + stats::rnorm(180)
   for (sp in c("balanced", "quality", "fast")) {
     s1 <- ares(x, y, autotune = TRUE, autotune.speed = sp,
-               seed.cv = 7, nthreads = 1)
+               autotune.warmstart = FALSE, seed.cv = 7, nthreads = 1)
     s2 <- ares(x, y, autotune = TRUE, autotune.speed = sp,
-               seed.cv = 7, nthreads = 4)
+               autotune.warmstart = FALSE, seed.cv = 7, nthreads = 4)
     expect_equal(s1$rss, s2$rss, tolerance = 1e-10)
     expect_equal(s1$autotune$fast_k, s2$autotune$fast_k)
   }
 })
+
+# ---- v0.19: warm-start (subsample pre-fit) ---------------------------------
+
+test_that("autotune.warmstart triggers on a clearly-deg-1 DGP", {
+  set.seed(20260510)
+  n <- 400; p <- 5
+  x <- matrix(stats::runif(n * p), n, p)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = TRUE,
+              seed.cv = 1, nthreads = 2)
+  expect_true(isTRUE(fit$autotune$warmstart))
+  expect_equal(fit$autotune$degree, 1L)
+  expect_equal(nrow(fit$autotune$grid), 0L)
+})
+
+test_that("autotune.warmstart = FALSE always runs the full grid", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(400 * 5), 400, 5)
+  y <- 5 * x[, 1] + stats::rnorm(400)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+              seed.cv = 1, nthreads = 2)
+  expect_false(isTRUE(fit$autotune$warmstart))
+  expect_gt(nrow(fit$autotune$grid), 0L)
+})
+
+test_that("autotune.warmstart skipped when n < 200", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(150 * 5), 150, 5)
+  y <- 5 * x[, 1] + stats::rnorm(150)
+  fit <- ares(x, y, autotune = TRUE, autotune.warmstart = TRUE,
+              seed.cv = 1, nthreads = 2)
+  expect_false(isTRUE(fit$autotune$warmstart))
+  expect_gt(nrow(fit$autotune$grid), 0L)
+})
+
+test_that("autotune.warmstart determinism across nthreads", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(400 * 5), 400, 5)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(400)
+  s1 <- ares(x, y, autotune = TRUE, autotune.warmstart = TRUE,
+             seed.cv = 42, nthreads = 1)
+  s2 <- ares(x, y, autotune = TRUE, autotune.warmstart = TRUE,
+             seed.cv = 42, nthreads = 4)
+  expect_equal(s1$rss, s2$rss, tolerance = 1e-10)
+  expect_equal(s1$autotune$degree, s2$autotune$degree)
+  expect_equal(s1$autotune$warmstart, s2$autotune$warmstart)
+})
+
+test_that("warmstart winner predicts comparably to full-grid winner", {
+  # We don't insist that warmstart and full-grid pick the same degree
+  # — degree=1 vs degree=2 with high penalty often produce near-identical
+  # signal-fits — only that their holdout MSE on a held-out test set is
+  # within wash (within 25%). Looser-but-meaningful regression check.
+  set.seed(20260510)
+  x <- matrix(stats::runif(400 * 5), 400, 5)
+  y <- 5 * x[, 1] + stats::rnorm(400)
+  fw <- ares(x, y, autotune = TRUE, autotune.warmstart = TRUE,
+             seed.cv = 1, nthreads = 2)
+  ff <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,
+             seed.cv = 1, nthreads = 2)
+  set.seed(20260511)
+  xte <- matrix(stats::runif(200 * 5), 200, 5)
+  yte <- 5 * xte[, 1] + stats::rnorm(200)
+  mse_w <- mean((yte - predict(fw, xte))^2)
+  mse_f <- mean((yte - predict(ff, xte))^2)
+  expect_lt(max(mse_w, mse_f) / min(mse_w, mse_f), 1.25)
+})
+

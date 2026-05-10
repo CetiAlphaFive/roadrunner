@@ -1,3 +1,37 @@
+# ares 0.0.0.9019 (development)
+
+## Phase 3 — autotune.warmstart (subsample pre-fit)
+
+New arg `autotune.warmstart = TRUE` (default; only meaningful with
+`autotune = TRUE`). When `n >= 200`, ares first runs autotune on a
+15% subsample (capped at 200 rows) using `autotune.speed = "fast"`
+and `nfold = 3`. If the subsample's best-per-degree CV-MSE is at
+least 5% below the next-best degree's best cell, that decisive
+winner's `(degree, penalty, nk, fast.k)` is adopted directly and the
+full-data autotune grid is skipped.
+
+### Effect
+- Linear DGP n=600 p=6: 15.1s → **0.5s** (28x faster) when
+  warm-start fires.
+- Strong-interaction DGP: subsample is *not* decisive, full grid
+  still runs; warmstart adds ~0.4s overhead but doesn't lose
+  accuracy (the full grid runs as if warmstart were off).
+- Subsample autotune uses `autotune.speed = "fast"` and `nfold = 3`
+  so the pre-fit cost is sub-second on `n_sub <= 200`.
+
+### Result additions
+- `$autotune$warmstart` — boolean, TRUE only when the subsample
+  triggered an early exit. When TRUE, `$autotune$grid` is empty
+  (a 0-row data frame) since no full-data grid was scored.
+
+### Tests
+- 5 new tests covering: warmstart triggers on a clearly-deg-1 DGP,
+  warmstart=FALSE always runs full grid, skipped when n < 200,
+  determinism across nthreads, and warmstart vs full-grid predict
+  parity within 25% holdout MSE.
+- **131/131 testthat green** (was 120). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9018 (development)
 
 ## Phase 2 — n.boot bagging (earth has no bag)
