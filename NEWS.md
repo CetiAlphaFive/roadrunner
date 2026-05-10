@@ -1,3 +1,56 @@
+# ares 0.0.0.9005 (development)
+
+## Forward pass: incremental QR maintenance
+
+- The per-forward-step `build_Q` (O(n·M²) modified Gram-Schmidt) and
+  `recompute_residual` (O(n·M²) Householder QR) calls are replaced by an
+  incremental column-append on a maintained QR factor `(Q1, R, Qty)`.
+  When forward picks the next hinge / linear column `c`:
+  - `u = Q1' c` (one matrix-vector product, O(n·M))
+  - `c_perp = c - Q1·u`; `d = ||c_perp||`
+  - On rank deficiency (`d` below tolerance × column scale) the new Q1
+    column is zeroed out and `R[M,M] = Qty[M] = 0` so M_q stays in step
+    with M.
+  - `Q1[:, M] = c_perp/d`; new `R` column is `[u; d]`; `Qty[M]` follows
+    in closed form, and `resid -= Q1[:, M] · Qty[M]`, `rss -= Qty[M]²`.
+- `KnotScanner` now reads from a transposed `QT` (per-row Mq slice
+  contiguous → unit-stride q-loop, auto-vectorisable). `QT_stride` field
+  added so the active region (`Mq` cols) lives inside an `nk_cap`-stride
+  block without per-step repacking.
+- Backward still does a fresh Householder QR for its initial state (the
+  forward-maintained QR may carry zero columns from rank-deficient
+  appends, which the Givens downdate path can't tolerate). Cost was 0.8%
+  in the v0.4 profile — negligible.
+
+## Numerical stability
+
+- Maintained-QR `rss` is the *true OLS minimum* at each forward M, not
+  the rank-clamped pseudo-minimum returned by `ols_qr`. On near-rank-
+  deficient designs ares finds slightly lower RSS than earth at any given
+  M; the forward `rel_imp` test continues with smaller margin and
+  occasionally adds 1-2 more terms before stopping. Side effect:
+  Friedman parity test thresholds are bumped 5e-3 → 2e-2 (already done
+  in v0.4).
+- Worst-cell rss_rel_err on the 18-cell single-thread grid dropped from
+  **71.7% → 3.65%** (max). Cells with rel_err > 1% dropped 7/18 → 5/18;
+  cells > 5% dropped 3/18 → 0/18.
+
+## Speed
+
+- Median 1t wall-clock: 0.10s (was 0.10s in v0.4 — flat at single thread
+  because incremental-QR overhead per step roughly cancels the saved
+  rebuild on small cells).
+- Median 2t wall-clock: 0.062s (was 0.076s — **18% faster**).
+- Median 4t wall-clock: 0.048s (was 0.080s — **40% faster**).
+- Median 1t speed ratio vs earth: **5.8×** (was 6.6×).
+- Threading scaling at n=3000 deg=2: 1.84× (preserved).
+
+## Determinism preserved
+
+- `nthreads=1` and `nthreads=N` produce byte-identical fits (verified on
+  Friedman-1 n=1500 deg=2 fixed seed; RSS = 1796.11037133069 across
+  thread counts).
+
 # ares 0.0.0.9004 (development)
 
 ## Speed: backward pass via QR Givens downdate
