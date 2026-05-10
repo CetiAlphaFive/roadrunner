@@ -292,7 +292,6 @@ struct KnotScanner {
     double S_pr = 0.0, S_pxr = 0.0;
     double S_pp = 0.0, S_ppx = 0.0, S_ppxx = 0.0;
     std::vector<double> S_Qp(Mq, 0.0), S_Qpx(Mq, 0.0);
-    std::vector<double> qcp(Mq), qcm(Mq);
 
     const double tiny = 1e-12;
     size_t kp_pos = 0;  // next index into knot_pos to score
@@ -346,8 +345,8 @@ struct KnotScanner {
             __m256d HQpx = _mm256_sub_pd(_mm256_sub_pd(Tpx, Spx), _mm256_mul_pd(Qkq, vpkxk));
             __m256d dp = _mm256_sub_pd(HQpx, _mm256_mul_pd(vt, HQp));
             __m256d dm = _mm256_sub_pd(_mm256_mul_pd(vt, Sp), Spx);
-            _mm256_storeu_pd(qcp.data() + q, dp);
-            _mm256_storeu_pd(qcm.data() + q, dm);
+            // qcp[q]/qcm[q] used to be stored here; the values are never read
+            // after this loop, so the stores were pure dead code.
             acc_pp = _mm256_add_pd(acc_pp, _mm256_mul_pd(dp, dp));
             acc_mm = _mm256_add_pd(acc_mm, _mm256_mul_pd(dm, dm));
             acc_pm = _mm256_add_pd(acc_pm, _mm256_mul_pd(dp, dm));
@@ -366,8 +365,6 @@ struct KnotScanner {
             double H_Qpx_q = T_Qpx[q] - S_Qpx[q] - Qkq * pkxk;
             double dp = H_Qpx_q - t * H_Qp_q;
             double dm = t * S_Qp[q] - S_Qpx[q];
-            qcp[q] = dp;
-            qcm[q] = dm;
             cp_perp_norm2       -= dp * dp;
             cm_perp_norm2       -= dm * dm;
             cp_perp_dot_cm_perp -= dp * dm;

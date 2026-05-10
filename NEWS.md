@@ -1,3 +1,23 @@
+# ares 0.0.0.9010 (development)
+
+## Drop earth-parity acceptance criterion
+
+- The package no longer treats `earth::earth()` as a parity target.
+  `ares` is its own MARS implementation; matching earth is a useful
+  diagnostic but not a correctness criterion.
+- `tests/testthat/test-parity-friedman.R` and `test-parity-mtcars.R`
+  are replaced by `test-fit-friedman.R` + `test-fit-mtcars.R`. The new
+  tests check fit quality directly: R² versus the DGP signal on
+  Friedman-style designs, sensible R² and finite GCV on mtcars.
+- One earth-comparison left in place as informational (won't fail unless
+  ares regresses by > 25 %).
+
+## Minor speed micro-ops
+
+- Dead `qcp[q]` / `qcm[q]` stores in the per-knot scoring loop removed
+  (the values were never read after the loop). Saves a few SIMD writes
+  per knot — modest measured gain.
+
 # ares 0.0.0.9009 (development)
 
 ## Hoist per-variable sort out of the forward loop
