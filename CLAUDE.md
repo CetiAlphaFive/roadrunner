@@ -8,7 +8,7 @@
 
 **Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
 
-## Current state — v0.0.0.9007
+## Current state — v0.0.0.9008
 
 - `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
   - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
@@ -56,18 +56,26 @@
 - Best 4t cell vs earth: 1.41× → **1.08×** (within 8% of parity).
 
 ### v0.7: AVX2 SIMD on KnotScanner inner loops
-- Manually vectorised the three q-inner prefix-sum loops (initial totals, per-knot scoring with reduction, S_* update) with AVX2 `__m256d` 256-bit double intrinsics. Four lanes per iteration; scalar fallback for Mq-mod-4 tail. Compile-guarded by `__AVX2__`.
+- Manually vectorised the three q-inner prefix-sum loops with AVX2 `__m256d` 256-bit double intrinsics. Four lanes per iteration; scalar fallback for Mq-mod-4 tail. Compile-guarded by `__AVX2__`.
+- 1t ratio vs earth: 5.3× → 3.8×; 4t best cell crossed below 1.0× for the first time (additive n=5000 deg=2 at 0.84×).
+
+### v0.8: amortised per-pair sort + parallel per-var sorts
+- Replaced KnotScanner's per-pair `std::stable_sort` with an O(n) filter over a precomputed `var_sort_flat[p × n]` (rows sorted ascending by each x[:, v]). Sort happens once per variable per forward step; cost drops ~50× since ~500 per-pair sorts are now ~10 per-var sorts.
+- The p per-var sorts are independent and dispatched via `RcppParallel::parallelFor` so multi-thread scaling stays intact.
 - inst/sims grid (median across 18 cells):
-  - 1t ratio vs earth: 5.3× → **3.8×**.
-  - 4t median wall: 0.040s → 0.030s (25% faster).
-  - 4t best cell vs earth: 1.08× → **0.84×** — **first cell where ares-4t beats earth wall-clock** (additive n=5000 deg=2: 107ms ares vs 128ms earth).
-  - friedman n=500 deg=1 at 4t: 1.03× of earth (within 3%).
-- Determinism preserved. AVX2 mul/add (no FMA) keeps `-ffp-contract=off` contract intact.
+  - 1t ratio vs earth: 3.8× → **3.09×**.
+  - 4t ratio vs earth: 1.5× → **1.28×**.
+  - **4 cells faster than earth at 4t** (was 1):
+    - additive n=5000 deg=2: 0.61× — ares 1.65× faster than earth (78ms vs 128ms).
+    - additive n=1500 deg=2: 0.89×.
+    - friedman n=1500 deg=2: 0.94×.
+    - friedman n=5000 deg=2: 0.99×.
+- Determinism preserved.
 
 ## Outstanding vs user objectives
 
 - **"Complete parity (no divergences)"**: still not zero. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth and to earth's `Adjust.endspan` / `Auto.linpreds` heuristics ares does not faithfully reproduce.
-- **"Must be faster than earth"**: partially met. **1/18 cells faster than earth at 4t** (additive n=5000 deg=2 at 0.84×); median 1.5× at 4t; median 3.8× at 1t. To make more cells beat earth, smaller cells (where fixed overhead dominates) need attention: SIMD the n-loops in `qr_append_col` (currently scalar inner loops over n for `c_norm2` / `u_norm2` / `c_perp`); reduce per-pair scanner setup cost (sort, allocations); push parallelism into the per-pair worker (currently each pair is sequential within its own thread).
+- **"Must be faster than earth"**: partially met. **4/18 cells faster than earth at 4t** (best: additive n=5000 deg=2 at 0.61× — ares 1.65× faster). Median 4t ratio 1.28×; median 1t 3.09×. Re-profiling at v0.7 showed `KnotScanner::run` is still 95% of single-thread wall, so v0.9+ targets are SIMD on the n-side prefix-sum (currently AVX2 only on the q-loop inside; the outer n_eli loop is scalar with strided gather), batching pairs that share variables to amortise `T_Q*` precompute, or `qr_append_col` n-loop SIMD (small but adds up at small n). The smaller cells (n=500) still pay 2-3× because per-pair fixed overhead dominates.
 - See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.1-bench.csv` (latest grid) for raw numbers.
 
 ## CRAN gotcha
