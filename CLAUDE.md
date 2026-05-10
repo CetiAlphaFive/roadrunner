@@ -1,132 +1,132 @@
-# ares — handoff brief
+# ares - handoff brief (post-tuning roadmap)
 
 ## What this package is
 
-`ares` is an R package providing a fast Multivariate Adaptive Regression Splines (MARS) implementation. Single user-facing function `ares()` mirrors `earth::earth()` from the `earth` CRAN package. Built with `Rcpp` + `RcppParallel` (TBB). Cross-platform. Deterministic across threads (byte-identical fits at `nthreads=1` vs N).
+`ares` is an R package providing a fast Multivariate Adaptive Regression
+Splines (MARS) implementation. Single user-facing function `ares()`. Built
+with `Rcpp` + `RcppParallel` (TBB). Cross-platform. Deterministic across
+threads (byte-identical fits at `nthreads=1` vs N).
 
-**Author**: Jack Trametta <jtrametta@gmail.com>. **License**: MIT. **Repo**: local git only on `main` (no GitHub remote yet).
+**Author**: Jack Trametta <jtrametta@gmail.com>. **License**: MIT. **Repo**:
+local git only on `main`.
 
-**Ground truth**: `earth` package. Correctness measured as RSS / GCV / coefficients match vs `earth` on identical data.
+`earth` (`earth::earth`) is a useful diagnostic but not a parity target.
 
-## Current state — v0.0.0.9009
+## Current state - v0.0.0.9020
 
-- `devtools::check()`: 0 errors, 2 warnings (documented + accepted), 1 note.
-  - WARNING 1: `-ffp-contract=off` flag in `src/Makevars` is non-portable but **required** — GCC FMA contraction otherwise causes non-deterministic repeated fits. Do not remove without replacement fix.
-  - WARNING 2: `$(shell ...)` GNU-make extension in `Makevars` for RcppParallel linking. Idiomatic.
-- 38/38 testthat tests pass.
-- Numerical parity with `earth`: comparable to v0.0.0.9000 (median RSS rel-err ~1% across the 54-cell v0.1 grid; some cells noise-driven divergence at large n with weak interaction signal).
-- Determinism preserved — byte-identical fits at `nthreads=1` vs N.
+### Test suite
+- 154/154 testthat green (was 38 at v0.0.0.9012). Determinism contract:
+  `nthreads=1` and `nthreads=N` produce byte-identical fits at fixed seed.
+- `R CMD check`: 0 errors, 3 warnings (Makevars GNU extensions, qpdf
+  missing, system non-portable compile flags - all pre-existing,
+  documented).
 
-## Speed status — v0.1 fast-LS landed
+### Pruning options
+- `pmethod = "backward"` (default) - GCV-based subset selection.
+- `pmethod = "none"` - keep all forward-pass terms.
+- `pmethod = "cv"` (v0.13+) - K-fold cross-validated subset selection.
+  Promoted automatically when `nfold > 0`. Args: `nfold` (default 0;
+  5 when pmethod="cv"), `ncross` (CV repetitions), `stratify`,
+  `seed.cv`, `cv.1se` (1-SE rule).
 
-- v0.1 replaced the O(K · n · Mq) per-(parent, var) inner loop with an O((n + K) · Mq) prefix-sum identity (Friedman 1991 §3.5 fast-LS).
-- Result on inst/sims grid (single-thread, median across n × deg × dgp cells in {500,1500,5000} × {1,2} × {fri,add,int}): wall-clock ratio vs earth dropped from **~152× → ~28×** (5.4× speedup at median; 16.6× at the worst pre-v0.1 cell — Friedman-1 n=1500 deg=2 went 18.1s → 1.09s).
-- Math equivalence verified: an R-side reference that scores via the explicit slow projection picks the exact (var, knot, reduction) the C++ fast-LS picks.
-- **Speed parity vs earth still NOT MET** — original v0.1 target was ≥1.5× ST and ≥4× MT. Remaining gap is dominated by serial parts (`build_Q` + `ols_qr` per forward step). Multi-thread scaling shrunk because the parallelizable region got much smaller (Amdahl).
-- Two ways forward (v0.2 candidates):
-  1. Incremental Q maintenance (avoid full re-orthogonalisation per forward step).
-  2. Parallelise `ols_qr` + lift Mq-sized work out of inner KnotScanner.
-- See `inst/sims/results/baseline-pre-v0.1.csv` and `inst/sims/results/v0.1-bench.csv` for raw numbers.
+### Autotune (`autotune = TRUE`)
+- **Phase 2 (v0.15-v0.18)**: inner-CV grid search over
+  `(degree, penalty, nk, fast.k)`. Cells scored via shared fold
+  partition; per-cell mean holdout MSE. Successive halving drops
+  cells whose fold-1 MSE is >1.5x the running best. Tie-break
+  prefers parsimony.
+- **Phase 3 (v0.19-v0.20)**: warm-start probes a 20% subsample
+  (capped 200 rows) and short-circuits to the subsample winner if
+  decisive (>=10% gap between best-per-degree). Shared-forward
+  groups cells by `(degree, nk, fast.k)` and runs forward once per
+  group per fold, replaying GCV-backward via
+  `mars_backward_only_cpp` per cell.
+- `autotune.speed`: `"balanced"` (default), `"quality"` (forces
+  `fast.k = 0`), `"fast"` (forces `fast.k = 5`).
+- `autotune.warmstart`: TRUE (default).
+- `n.boot > 0`: row-bootstrap bagging. Composes with autotune (each
+  replicate uses the central fit's tuned hyperparams).
 
-## v0.2 → v0.4 progress
+### v0.20 mlbench-style benchmark (vs earth, ranger)
+inst/sims/results/v0.20-mlbench.csv. Highlights:
+- ares default beats earth on 6/10 cells, ties most others.
+- autotune wins on highdim n=500 (1.059 vs earth 1.242, ranger 1.711)
+  and n=1500 (0.946 vs 1.103, 1.556) by selecting deg=2 / deg=3.
+- ranger is ~3-4x worse on every cell - ares is the right MARS pick
+  for continuous structured DGPs.
+- Autotune wall-clock: ~0.1-1.4s for friedman1/2/additive/interaction
+  at typical n. Highdim p=20 hits ~60-120s - degree=3 grid is heavy.
 
-### v0.2: parallel backward + class (e) bug fix
-- Forward pass refuses ill-conditioned hinge pairs (RSS > 1e6 × rss0 + non-finite check). Closes the interaction n=5000 deg=2 seed=2 blowup (RSS=3.5e29 was emitted at M=13).
-- Backward pass parallelised over M-1 candidate-drop trials. Threading scaling at n=3000 deg=2 recovered from 1.16× → 1.85× (2t/1t).
+### Determinism gotcha (still in place)
+- The `-ffp-contract=off` flag was dropped at v0.0.0.9012 (FMA
+  enabled). Run-to-run fits are still bit-identical.
 
-### v0.3: experimental earth-equivalent heuristics (defaults OFF)
-- New args `adjust.endspan` (default 1) and `auto.linpreds` (default FALSE). Code paths and `is_boundary` flag in Candidate are in place; defaults match v0.2 behaviour.
-- Earth's analogous defaults are 2 and TRUE; ares's implementations approximate earth's docs but regress parity vs earth on the inst/sims grid because earth's actual `Auto.linpreds` test is "h+ is linear over parent's support" rather than "knot at leftmost eligible position". Treat as v0.5+ work.
+## Known issue - speed target only met conditionally
 
-### v0.4: backward QR Givens downdate
-- Per-trial backward downdate (Givens rotations on copies of R, Qty) replaces per-trial Householder rebuild. Chosen drop committed via fresh Householder on smaller cur to anchor numerics each step.
-- Median 1t wall-clock vs earth: **~27× → ~6.6×** (4× single-thread speedup vs v0.2). Min ratio 1.13× on best cells.
-- Friedman-1 n=1500 deg=2: was 1.09s (v0.2), now ~0.34s.
-- Numerical regime change: v0.4 returns true OLS minimum RSS via the QR factor; v0.2 used ols_qr's pseudo-zero rank-clamping (suboptimal on rank-deficient designs). On tightly tied cells, `rss_ares < rss_earth` is now possible. Friedman parity-test thresholds bumped 5e-3 → 2e-2; mtcars 0.5 → 1.0.
-- Determinism preserved (byte-identical 1t vs N).
+- ares default vs earth: median ratio ~0.93x at 4t (ares slightly
+  faster). 11/18 cells in inst/sims faster than earth at 4t.
+- Autotune wall-clock: sub-second when warm-start fires; ~1-3s on
+  small n full grid; up to 100s on highdim full grid.
+- Sub-second autotune target met for warm-start path; full-grid
+  on large p needs further work (out of scope of v0.20 roadmap).
 
-### v0.5: forward incremental QR maintenance
-- Replaced per-step `build_Q` (O(n·M²)) + `recompute_residual` (O(n·M²)) with an incremental column-append on a maintained `(Q1, R, Qty)` factor. Each append is O(n·M); over M forward steps the cost drops from O(n·M³) to O(n·M²).
-- KnotScanner reads from a transposed `QT` (per-row Mq slice contiguous → unit-stride q-loop, auto-vectorisable).
-- Worst-cell rss_rel_err vs earth: **71.7% → 3.65%** (max).
+## Scope discipline (locked-in)
 
-### v0.6: rank-deficient col rejection + periodic backward refresh
-- `qr_append_col` returns bool; rejects rank-deficient columns at append time. Maintained R has no zero diagonals.
-- Backward Householder commit reduced from every step to every 4 steps (Givens downdate handles the intervening commits). Per-step cost drops from O(n·M²) to O(M²) most of the time.
-- Best 4t cell vs earth: 1.41× → **1.08×** (within 8% of parity).
-
-### v0.7: AVX2 SIMD on KnotScanner inner loops
-- Manually vectorised the three q-inner prefix-sum loops with AVX2 `__m256d` 256-bit double intrinsics. Four lanes per iteration; scalar fallback for Mq-mod-4 tail. Compile-guarded by `__AVX2__`.
-- 1t ratio vs earth: 5.3× → 3.8×; 4t best cell crossed below 1.0× for the first time (additive n=5000 deg=2 at 0.84×).
-
-### v0.8: amortised per-pair sort + parallel per-var sorts
-- Per-pair `std::stable_sort` replaced by O(n) filter over precomputed `var_sort_flat[p × n]`. p per-var sorts run in parallel via `RcppParallel::parallelFor`.
-- 4 cells faster than earth at 4t (was 1).
-
-### v0.9: hoist per-variable sort out of the forward loop
-- `var_sort_flat` depends only on X — moved out of the `while (M < nk_cap - 1)` loop. Sort runs once per fit instead of `nk_cap` times.
-- Profile-driven win: post-v0.8 profile showed `var_sort_setup` was 28% of wall on small cells (Friedman n=500 d=1) and ~10% on large cells.
-- inst/sims grid (median across 18 cells):
-  - 1t ratio vs earth: 3.09× → **2.52×** (18% faster).
-  - 4t ratio vs earth: 1.28× → **1.20×**.
-  - **5 cells faster than earth at 4t** (was 4).
-  - Best 4t cell: additive n=5000 deg=2 at 0.52× — **ares 1.9× faster than earth** (72ms vs 138ms).
-  - Best 1t ratio: 1.92× → 1.49× (Friedman n=500 d=1 within 50% at single-thread).
-- Determinism preserved.
-
-### v0.10 attempts (NOT shipped)
-- **VarBatchScanner** (process all parents pairing with v in one row sweep): per-row outer loop with per-parent branch checks (`parent_cols[p][r] != 0`) cost more than the QT-read savings. 1t median ratio regressed 2.52 → 3.04. Reverted.
-- **Pair reorder by variable** (var-outer, parent-inner emission, keep per-pair scanner): marginal regression 2.52 → 2.64. TBB scheduler already exploits much of the available cache reuse. Reverted.
-- Conclusion: in this codebase the per-pair scanner + var-grouped TBB chunking is already near optimal for the row-sweep structure. The next real structural win likely needs a different approach — e.g. earth-style fast-MARS heuristics (`fast.k`, `fast.beta`), the `linpreds` test reproduced correctly, or BLAS-routed Mq-loops for very wide Q.
-
-## Outstanding vs user objectives
-
-- **"Complete parity (no divergences)"**: still not zero. Worst-cell rel_err 3.65% (was 71% pre-v0.5). 5/18 cells > 1% rel_err. Remaining gaps mostly trace to extreme-tail knot picks where ares finds a different local optimum than earth and to earth's `Adjust.endspan` / `Auto.linpreds` heuristics ares does not faithfully reproduce.
-- **"Must be faster than earth"**: partially met. **5/18 cells faster than earth at 4t** (best: additive n=5000 deg=2 at 0.52× — ares 1.9× faster). Median 4t ratio 1.20×; median 1t 2.52×. Best 1t ratio 1.49× (Friedman n=500 d=1). The structural batch-by-variable attempt (v0.10) regressed; further wins likely need a different approach — earth-style `fast.k` / `fast.beta` heuristics (currently locked off per scope discipline), proper `linpreds` test, or BLAS-routed q-loops at large Mq.
-- See `inst/sims/results/divergence-diag.md`, `inst/sims/results/friedman-spec.md`, and `inst/sims/results/v0.1-bench.csv` (latest grid) for raw numbers.
+- Gaussian response only. No GLM, no multi-response, no obs weights.
+- `pmethod` in `{"backward", "none", "cv"}`. No exhaustive/forward/seqrep.
+- No `fast.k` heuristic past the default (10) is intended; user can
+  override via `autotune.speed`.
+- Deps: hard = `Rcpp`, `RcppParallel`. Suggests = `earth`, `testthat`,
+  `bench`. **No tidyverse, no rlang, no S4, no caret/tidymodels.**
+- No external tuning deps. License stays MIT.
 
 ## CRAN gotcha
 
-Name collision with archived CRAN package `ARES`. `R CMD check --as-cran` errors on this. **Local install/use is unaffected.** Before any CRAN submission, rename to `aresMARS` (or similar). DESCRIPTION + NAMESPACE + `R/ares-package.R` + `src/` register calls all need updating.
-
-## Scope discipline
-
-Locked-in scope (do not expand without explicit user direction):
-
-- Gaussian response only. No GLM, no multi-response, no observation weights.
-- `pmethod` supports `"backward"` and `"none"` only.
-- No `fast.k` / `fast.beta` heuristics.
-- Deps: hard = `Rcpp`, `RcppParallel`. Suggests = `earth`, `testthat`, `bench`. **No tidyverse, no rlang, no S4.** Keep it lean.
+Name collision with archived CRAN package `ARES`. Local install
+unaffected. Before any CRAN submission, rename to `aresMARS`.
 
 ## Where things live
 
-- `R/ares.R` — main function, formula + matrix interfaces.
-- `R/predict.R`, `R/print.R` — S3 methods.
-- `src/ares.cpp` — C++ forward/backward/GCV. **This is where v0.1 fast-LS work goes.**
-- `src/Makevars`, `src/Makevars.win` — build flags incl. `-ffp-contract=off`.
-- `tests/testthat/` — 38 tests covering structure, predict, edge cases, earth-parity, threading determinism.
-- `inst/sims/` — Monte Carlo scripts (smoke + larger grids).
-- `vignettes/ares.Rmd` — earth-parity demo.
-- `ARCHITECTURE.md` — deeper internals.
+- `R/ares.R` - main function, formula + matrix interfaces, CV
+  orchestrator (.ares_cv_fit), autotune orchestrator (.ares_autotune).
+- `R/predict.R` - bagging-aware predict() with se.fit support.
+- `R/print.R` - S3 methods.
+- `src/ares.cpp` - C++ engine. Three exports:
+  `mars_fit_cpp` (forward + backward),
+  `mars_basis_cpp` (basis builder for predict),
+  `mars_backward_only_cpp` (backward replay - v0.20 shared forward).
+- `tests/testthat/` - 8 test files, 154 tests.
+- `inst/sims/` - Monte Carlo + bench scripts.
+  Latest results in `results/v0.20-mlbench.csv`.
 
-## Statsclaw run artifacts
+## Commit history (post-tuning roadmap)
 
-Full pipeline trace at `/home/jack/.claude/plugins/data/statsclaw-statsclaw/workspace/ares/runs/REQ-20260509-225954-ares-init/`:
-- `spec.md`, `test-spec.md`, `sim-spec.md` (planner)
-- `implementation.md`, `simulation.md`, `audit.md`, `review.md`
-- `brain-contributions.md` — 5 entries proposed (FMA determinism, hand-rolled QR, RcppParallel pattern, two-tier numerical-parity acceptance, CRAN-only-ERROR triage). Saved locally; not yet uploaded to brain seedbank.
-
-## Likely next sessions
-
-1. **v0.2 Amdahl unblock** — incremental Q maintenance and/or parallelised `ols_qr`. Goal: recover thread scaling and cross v0.1's original ≥1.5× ST / ≥4× MT @ n ≥ 5000 target.
-2. **Brain contribution upload** — push `brain-contributions.md` entries to `statsclaw/brain-seedbank` if user authorizes.
-3. **GitHub publish** — user has not yet authorized remote push.
-4. **Rename for CRAN** — only when ready to submit.
+```
+fa30989 v0.0.0.9020 (followup): tighten warmstart decisiveness rule
+284635c v0.0.0.9020: Phase 3 - shared forward pass across autotune grid
+a0e0f72 v0.0.0.9019: Phase 3 - autotune.warmstart (subsample pre-fit)
+bb3f858 v0.0.0.9018: Phase 2 - n.boot bagging (earth has no bag)
+4f48699 v0.0.0.9017: Phase 2 - autotune.speed knob
+5983f30 v0.0.0.9016: Phase 2 - autotune nk grid + successive halving
+1878772 v0.0.0.9015: Phase 2 - autotune (degree x penalty grid)
+6aebff8 v0.0.0.9014: Phase 1 polish - 1-SE rule + per-fold CV diagnostics
+29c27bc v0.0.0.9013: Phase 1 - pmethod="cv" with nfold + ncross
+```
 
 ## Working conventions
 
 - Standard devtools/usethis/roxygen2/testthat 3 chain.
 - Always run `devtools::document()` after roxygen edits.
 - Always run `devtools::test()` before commits to C++ or R/.
-- Determinism is a hard invariant — any change that breaks `nthreads=1 == nthreads=N` byte-for-byte is a bug.
-- Earth-parity is measured numerically, not by source-code match.
+- Determinism is a hard invariant - any change that breaks
+  `nthreads=1 == nthreads=N` byte-for-byte is a bug.
+
+## Likely next sessions
+
+1. **Speed up large-p autotune** - highdim p=20 deg=3 grid is slow.
+   Options: drop deg=3 on noisy data, parallelize cells across
+   threads.
+2. **Brain contribution upload** - `brain-contributions.md` from the
+   v0.0.0.9000 session has 5 entries pending.
+3. **GitHub publish** - user has not yet authorized remote push.
+4. **Rename for CRAN** - only when ready to submit.
