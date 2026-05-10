@@ -65,6 +65,16 @@
 #'   standard error of the minimum, pick the smallest. Trades a bit of
 #'   accuracy for parsimony. Default `FALSE` (pick `argmin` of mean
 #'   CV-MSE, i.e. the size that minimises holdout error directly).
+#' @param autotune If `TRUE`, runs an inner cross-validated grid search
+#'   over `(degree, penalty)` and refits the winner. The grid is
+#'   `degree in {1, 2}` (extended to `{1, 2, 3}` when `nk` is large
+#'   enough) crossed with `penalty in {0.5*d, 1.0*d, 2.0*d, 3.0*d}` at
+#'   each degree `d`. Inner CV uses `nfold` (default 5 when autotune
+#'   is on and `nfold == 0`) and respects `seed.cv`. The chosen
+#'   `(degree, penalty)` and the full grid CV-MSE are returned in
+#'   `$autotune`. Default `FALSE` (current grf-style fast default
+#'   path). Subsequent versions extend the grid (v0.16: `nk`,
+#'   v0.17: `autotune.speed`, v0.18: `n.boot`).
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -113,6 +123,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          pmethod = c("backward", "none", "cv"),
                          nfold = 0L, ncross = 1L, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
+                         autotune = FALSE,
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
@@ -206,8 +217,22 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # ---- Coerce x to plain numeric matrix ----
   storage.mode(x) <- "double"
 
-  # ---- Call C++ engine ----
-  if (pmethod == "cv") {
+  # ---- Autotune dispatch (Phase 2 — v0.15+) ----
+  if (isTRUE(autotune)) {
+    # Promote nfold to a sensible default if user didn't ask.
+    nfold_at <- if (nfold > 0L) nfold else 5L
+    out <- .ares_autotune(
+      x = x, y = as.numeric(y),
+      nk = as.integer(nk),
+      thresh = thresh, minspan = minspan, endspan = endspan,
+      adjust_endspan = adjust_endspan, auto_linpreds = auto_linpreds,
+      fast_k = fast_k, fast_beta = fast_beta,
+      nprune = as.integer(nprune),
+      nfold = nfold_at, ncross = ncross, stratify = isTRUE(stratify),
+      seed_cv = seed.cv, cv_1se = isTRUE(cv.1se),
+      trace = trace, nthreads = nthreads_eff
+    )
+  } else if (pmethod == "cv") {
     out <- .ares_cv_fit(x, y = as.numeric(y),
                         degree = degree, nk = as.integer(nk),
                         penalty = as.numeric(penalty), thresh = thresh,
@@ -240,7 +265,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   out$residuals <- as.numeric(y) - out$fitted.values
   out$namesx <- namesx
   out$call <- cl
-  out$pmethod <- pmethod
+  out$pmethod <- if (isTRUE(autotune)) "backward" else pmethod
   out$dropped <- dropped_names
   class(out) <- c("ares")
   out
@@ -481,4 +506,145 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 
 # Tiny helper: %||% (used only inside .ares_cv_fit for safe defaulting).
 `%||%` <- function(a, b) if (is.null(a)) b else a
+
+# ---- Autotune (v0.15+) ------------------------------------------------------
+
+# Internal: inner-CV grid search over (degree, penalty). For each cell, run
+# K-fold CV with pmethod="backward" (GCV-based) per fold so that penalty
+# directly shapes each fold's size pick. The cell's score is the mean
+# holdout MSE across folds. Pick the smallest-score cell, then refit the
+# winner on the full data using pmethod="backward" with that
+# (degree, penalty). Return the winner augmented with $autotune carrying
+# the grid summary.
+#
+# v0.15 grid:
+#   degree  in {1, 2} (and 3 when nk_eff >= 21).
+#   penalty in {0.5*d, 1.0*d, 2.0*d, 3.0*d} for each candidate degree d.
+#
+# Subsequent versions extend this grid (v0.16: nk; v0.17: autotune.speed;
+# v0.18: n.boot). Helper signature stays stable.
+.ares_autotune <- function(x, y, nk, thresh, minspan, endspan,
+                           adjust_endspan, auto_linpreds, fast_k, fast_beta,
+                           nprune, nfold, ncross, stratify, seed_cv,
+                           cv_1se, trace, nthreads) {
+  n <- nrow(x)
+  p <- ncol(x)
+
+  # Effective nk used for the grid (unless user pinned it).
+  nk_eff <- if (length(nk) == 0L || is.na(nk[1])) {
+    min(200L, max(20L, 2L * p)) + 1L
+  } else as.integer(nk)
+
+  # Build degree grid: include 3 only if nk_eff >= 31 (need plenty of forward
+  # slots for a 3-way hinge to actually appear in the forward pass; with
+  # nk = 2*p + 1 ~ 21 there's barely room past depth-2 selection).
+  deg_grid <- c(1L, 2L)
+  if (nk_eff >= 31L) deg_grid <- c(deg_grid, 3L)
+
+  # (degree, penalty) cells.
+  cells <- list()
+  for (d in deg_grid)
+    for (mult in c(0.5, 1.0, 2.0, 3.0))
+      cells[[length(cells) + 1L]] <- list(degree = d, penalty = mult * d)
+
+  # Build a single shared fold partition (function of seed.cv + stratify) so
+  # all cells score on the same folds. This is critical for fair comparison
+  # between cells. Stratification is regression-only (quantile-binned y).
+  has_seed <- !is.null(seed_cv)
+  if (has_seed) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed <- get(".Random.seed", envir = globalenv(),
+                       inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed_cv))
+  }
+  fold_lists <- vector("list", ncross)
+  for (r in seq_len(ncross)) {
+    if (stratify) {
+      ord <- order(y, sample(seq_len(n)))
+      fid <- integer(n)
+      fid[ord] <- (seq_len(n) - 1L) %% nfold + 1L
+    } else {
+      perm <- sample(seq_len(n))
+      fid <- integer(n)
+      fid[perm] <- (seq_len(n) - 1L) %% nfold + 1L
+    }
+    fold_lists[[r]] <- fid
+  }
+
+  # Score one cell. For each fold: GCV-backward fit on train, predict on
+  # holdout, fold MSE. Mean over (nfold * ncross) folds is the cell score.
+  score_cell <- function(d, pen) {
+    mses <- numeric(0)
+    for (r in seq_len(ncross)) {
+      fid <- fold_lists[[r]]
+      for (k in seq_len(nfold)) {
+        tr <- which(fid != k); te <- which(fid == k)
+        if (length(te) < 1L) next
+        fit_k <- mars_fit_cpp(
+          x[tr, , drop = FALSE], as.numeric(y[tr]),
+          as.integer(d), nk_eff, as.numeric(pen),
+          thresh, minspan, endspan, adjust_endspan, auto_linpreds,
+          fast_k, fast_beta,
+          if (length(nprune) == 0L || is.na(nprune[1])) nk_eff else as.integer(nprune),
+          0L, trace, nthreads, 0L, 0L
+        )
+        bx_te <- mars_basis_cpp(x[te, , drop = FALSE],
+                                fit_k$dirs, fit_k$cuts,
+                                as.integer(fit_k$selected.terms))
+        yhat <- drop(bx_te %*% as.numeric(fit_k$coefficients))
+        r_te <- y[te] - yhat
+        mses <- c(mses, mean(r_te * r_te))
+      }
+    }
+    if (!length(mses)) return(Inf)
+    mean(mses)
+  }
+
+  scores <- vapply(cells,
+                   function(ce) score_cell(ce$degree, ce$penalty),
+                   numeric(1L))
+  if (!any(is.finite(scores)))
+    stop("ares: autotune found no finite CV-MSE on any grid cell.")
+
+  # Tie-break: smallest score; on tie, prefer smaller degree (parsimony),
+  # then smaller penalty.
+  ord_cells <- order(scores,
+                     vapply(cells, function(c) c$degree, integer(1L)),
+                     vapply(cells, function(c) c$penalty, numeric(1L)))
+  best <- ord_cells[1]
+  best_d   <- cells[[best]]$degree
+  best_pen <- cells[[best]]$penalty
+
+  # Refit winner on the full data, GCV-backward, with the chosen (d, pen).
+  fit_full <- mars_fit_cpp(
+    x, y, as.integer(best_d), nk_eff, as.numeric(best_pen),
+    thresh, minspan, endspan, adjust_endspan, auto_linpreds,
+    fast_k, fast_beta,
+    if (length(nprune) == 0L || is.na(nprune[1])) nk_eff else as.integer(nprune),
+    0L, trace, nthreads, 0L, 0L
+  )
+
+  grid_df <- data.frame(
+    degree   = vapply(cells, function(c) c$degree, integer(1L)),
+    penalty  = vapply(cells, function(c) c$penalty, numeric(1L)),
+    cv_mse   = scores,
+    stringsAsFactors = FALSE
+  )
+  fit_full$autotune <- list(
+    grid     = grid_df,
+    best     = best,
+    degree   = best_d,
+    penalty  = best_pen,
+    cv_mse   = scores[best],
+    nfold    = nfold,
+    ncross   = ncross,
+    stratify = stratify
+  )
+  fit_full
+}
 

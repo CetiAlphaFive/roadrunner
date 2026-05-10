@@ -30,6 +30,7 @@ ares(x, ...)
   stratify = TRUE,
   seed.cv = NULL,
   cv.1se = FALSE,
+  autotune = FALSE,
   trace = 0L,
   nthreads = 0L,
   ...
@@ -106,6 +107,17 @@ CV partitions.}
 standard error of the minimum, pick the smallest. Trades a bit of
 accuracy for parsimony. Default \code{FALSE} (pick \code{argmin} of mean
 CV-MSE, i.e. the size that minimises holdout error directly).}
+
+\item{autotune}{If \code{TRUE}, runs an inner cross-validated grid search
+over \verb{(degree, penalty)} and refits the winner. The grid is
+\verb{degree in \{1, 2\}} (extended to \verb{\{1, 2, 3\}} when \code{nk} is large
+enough) crossed with \verb{penalty in \{0.5*d, 1.0*d, 2.0*d, 3.0*d\}} at
+each degree \code{d}. Inner CV uses \code{nfold} (default 5 when autotune
+is on and \code{nfold == 0}) and respects \code{seed.cv}. The chosen
+\verb{(degree, penalty)} and the full grid CV-MSE are returned in
+\verb{$autotune}. Default \code{FALSE} (current grf-style fast default
+path). Subsequent versions extend the grid (v0.16: \code{nk},
+v0.17: \code{autotune.speed}, v0.18: \code{n.boot}).}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 

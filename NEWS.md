@@ -1,3 +1,46 @@
+# ares 0.0.0.9015 (development)
+
+## Phase 2 — autotune (`autotune = TRUE`)
+
+grf-style hands-free hyperparameter tuning. Defaults still always work;
+opt-in with one flag.
+
+### New arg
+- `autotune` (default `FALSE`). When `TRUE`, ares runs an inner
+  K-fold CV grid search over `(degree, penalty)` and refits the
+  winner on the full data using GCV-backward pruning. Subsequent
+  versions extend the grid (v0.16: nk; v0.17: speed knob; v0.18:
+  bagging).
+
+### v0.15 grid
+- `degree in {1, 2}`, plus `3` when `nk_eff >= 31`.
+- For each candidate degree `d`, `penalty in {0.5*d, 1.0*d, 2.0*d, 3.0*d}`.
+- Inner CV: `nfold = 5` (or user's `nfold` if set), shared fold
+  partition across all cells (so cells are scored on the same
+  splits — fair comparison). Stratification and `seed.cv`
+  reproducibility honoured.
+
+### Cell scoring
+- Each cell runs GCV-backward fits per fold (penalty meaningfully
+  shapes the per-fold size pick). Cell score is the mean holdout
+  MSE across folds. Tie-break: smaller degree, then smaller
+  penalty (parsimony).
+
+### Result additions
+- `$autotune` (list): `grid` (data.frame with columns degree,
+  penalty, cv_mse), `best` (row index), `degree`, `penalty`,
+  `cv_mse`, plus `nfold`, `ncross`, `stratify`.
+- `$pmethod` reports `"backward"` for autotune fits (the refit on
+  the full data is GCV-backward).
+
+### Tests
+- 5 new tests covering: grid contents, degree>=2 on a clear
+  interaction DGP, determinism across threads at fixed `seed.cv`,
+  small-n graceful fallback (no degree=3 when nk_eff is small),
+  predict round-trip + `$pmethod` reporting.
+- **79/79 testthat green** (was 65). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9014 (development)
 
 ## Phase 1 polish — 1-SE rule + per-fold CV diagnostics
