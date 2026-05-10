@@ -29,6 +29,7 @@ ares(x, ...)
   ncross = 1L,
   stratify = TRUE,
   seed.cv = NULL,
+  cv.1se = FALSE,
   trace = 0L,
   nthreads = 0L,
   ...
@@ -99,6 +100,12 @@ skewed responses; cheap.}
 \item{seed.cv}{Optional integer seed for fold partitioning. \code{NULL}
 (default) uses the current RNG state; pass an integer for reproducible
 CV partitions.}
+
+\item{cv.1se}{If \code{TRUE}, applies the one-standard-error rule for
+\code{pmethod="cv"}: among sizes whose mean CV-MSE is within one
+standard error of the minimum, pick the smallest. Trades a bit of
+accuracy for parsimony. Default \code{FALSE} (pick \code{argmin} of mean
+CV-MSE, i.e. the size that minimises holdout error directly).}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 

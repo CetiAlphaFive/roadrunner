@@ -1,3 +1,30 @@
+# ares 0.0.0.9014 (development)
+
+## Phase 1 polish — 1-SE rule + per-fold CV diagnostics
+
+### New arg
+- `cv.1se` (default `FALSE`) — when `TRUE`, picks the smallest subset
+  size whose mean CV-MSE is within one standard error of the
+  argmin-mean-CV-MSE size. Standard parsimony rule. Off by default
+  to keep the lowest-error pick.
+
+### New `$cv` slots
+- `cv.se` — per-size standard error of CV-MSE (across the
+  `nfold * ncross` evaluations).
+- `cv.mse.mat` — `(nfold * ncross) × M` matrix of holdout MSE per
+  fold per size; useful for plotting CV-MSE bars or building
+  custom selection rules.
+- `size.argmin` — the size that minimises mean CV-MSE (always
+  reported, even when `cv.1se = TRUE`).
+- `cv.1se` — boolean echo of the rule used.
+
+### Tests
+- 4 new tests covering: 1-SE rule never picks larger than argmin,
+  per-fold matrix shape, SE reported wherever cv.n > 1, and 1-SE
+  determinism across threads at fixed `seed.cv`.
+- **65/65 testthat green** (was 56). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9013 (development)
 
 ## Phase 1 — earth parity: pmethod="cv", nfold, ncross

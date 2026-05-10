@@ -60,6 +60,11 @@
 #' @param seed.cv Optional integer seed for fold partitioning. `NULL`
 #'   (default) uses the current RNG state; pass an integer for reproducible
 #'   CV partitions.
+#' @param cv.1se If `TRUE`, applies the one-standard-error rule for
+#'   `pmethod="cv"`: among sizes whose mean CV-MSE is within one
+#'   standard error of the minimum, pick the smallest. Trades a bit of
+#'   accuracy for parsimony. Default `FALSE` (pick `argmin` of mean
+#'   CV-MSE, i.e. the size that minimises holdout error directly).
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -107,7 +112,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          nprune = NULL,
                          pmethod = c("backward", "none", "cv"),
                          nfold = 0L, ncross = 1L, stratify = TRUE,
-                         seed.cv = NULL,
+                         seed.cv = NULL, cv.1se = FALSE,
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
@@ -214,7 +219,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                         trace = trace, nthreads = nthreads_eff,
                         nfold = nfold, ncross = ncross,
                         stratify = isTRUE(stratify),
-                        seed_cv = seed.cv)
+                        seed_cv = seed.cv,
+                        cv_1se = isTRUE(cv.1se))
   } else {
     out <- mars_fit_cpp(x, as.numeric(y), degree, nk, penalty, thresh,
                         minspan, endspan, adjust_endspan, auto_linpreds,
@@ -291,7 +297,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 .ares_cv_fit <- function(x, y, degree, nk, penalty, thresh,
                          minspan, endspan, adjust_endspan, auto_linpreds,
                          fast_k, fast_beta, nprune, trace, nthreads,
-                         nfold, ncross, stratify, seed_cv) {
+                         nfold, ncross, stratify, seed_cv,
+                         cv_1se = FALSE) {
   n <- nrow(x)
   if (n < nfold + 1L)
     stop("ares: nfold (", nfold, ") must be < n (", n, ").")
@@ -382,10 +389,22 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
   cv_mse <- colMeans(mse_mat, na.rm = TRUE)
   cv_n   <- colSums(!is.na(mse_mat))
+  full_n <- nrow(mse_mat)
+  # Per-size CV-MSE standard error (across the nfold * ncross evaluations).
+  # Only meaningful where cv_n > 1; treated as 0 otherwise.
+  cv_se <- rep(NA_real_, length(cv_mse))
+  for (s in seq_along(cv_mse)) {
+    v <- mse_mat[, s]
+    v <- v[is.finite(v)]
+    if (length(v) > 1L) {
+      cv_se[s] <- stats::sd(v) / sqrt(length(v))
+    } else if (length(v) == 1L) {
+      cv_se[s] <- 0
+    }
+  }
   # Prefer sizes achieved by ALL folds (otherwise mean is biased toward
   # folds whose forward pass happened to keep more terms). Fall back to
   # any-fold sizes only if no size was achieved by every fold.
-  full_n <- nrow(mse_mat)
   ok_all <- is.finite(cv_mse) & cv_n == full_n
   ok_any <- is.finite(cv_mse) & cv_n > 0
   if (any(ok_all)) {
@@ -397,7 +416,22 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
   cv_mse_finite <- cv_mse
   cv_mse_finite[!candidate_mask] <- Inf
-  size_star <- which.min(cv_mse_finite)
+  size_argmin <- which.min(cv_mse_finite)
+  if (cv_1se) {
+    # 1-SE rule: smallest size whose mean CV-MSE is within one standard
+    # error of the minimum.
+    se_at_min <- cv_se[size_argmin]
+    if (!is.finite(se_at_min)) se_at_min <- 0
+    threshold <- cv_mse_finite[size_argmin] + se_at_min
+    in_thresh <- candidate_mask & is.finite(cv_mse) & cv_mse <= threshold
+    if (any(in_thresh)) {
+      size_star <- which(in_thresh)[1]   # smallest size meeting the rule
+    } else {
+      size_star <- size_argmin
+    }
+  } else {
+    size_star <- size_argmin
+  }
 
   # Final refit on full data with force_size = size_star. We still ask for
   # the path so we can return cv.mse to the caller.
@@ -431,12 +465,16 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
   # Annotate.
   fit_full$cv <- list(
-    nfold      = nfold,
-    ncross     = ncross,
-    stratify   = stratify,
-    cv.mse     = cv_mse,
-    cv.n       = cv_n,
-    size.star  = size_star
+    nfold       = nfold,
+    ncross      = ncross,
+    stratify    = stratify,
+    cv.1se      = cv_1se,
+    cv.mse      = cv_mse,
+    cv.se       = cv_se,
+    cv.n        = cv_n,
+    cv.mse.mat  = mse_mat,
+    size.argmin = size_argmin,
+    size.star   = size_star
   )
   fit_full
 }
