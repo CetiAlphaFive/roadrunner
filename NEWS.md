@@ -1,3 +1,43 @@
+# ares 0.0.0.9004 (development)
+
+## Speed: backward pass via QR Givens downdate
+
+- The backward pass per-trial loop now uses `qr_downdate_col` (Givens
+  rotations on a copy of `R` and `Qty`) to compute the RSS for each
+  candidate drop, instead of doing a full Householder QR on `B[:, cur \\ {ki}]`.
+  Per-trial cost drops from O(n·M²) to O(M²); per backward step from
+  O(n·M³) to O(M³). The actual chosen drop is committed via a fresh
+  Householder QR on the smaller `cur` to keep numerics anchored each step
+  (cumulative rotation drift across the whole backward path was producing
+  bad picks otherwise).
+- Inst/sims grid (single-thread, median across 18 cells in {500,1500,5000}
+  × {1,2} × {fri,add,int}): wall-clock vs earth dropped from **~27× to
+  ~6.6×** (median speed_ratio). Min ratio 1.13× (close to earth on best
+  cells).
+- Median 1t wall-clock 0.10s; 2t 0.076s; 4t 0.083s. Friedman-1 n=1500
+  deg=2 single-thread: was 1.09s (v0.2), now ~0.34s.
+- 0/18 grid cells faster than earth yet, but the gap is now in the
+  same order of magnitude rather than 1-2 OOM.
+
+## Numerical regime change
+
+- v0.4 backward computes the **true OLS minimum RSS** for each candidate
+  subset (Givens downdate retrieves it exactly from the QR factor),
+  whereas v0.2 and earlier used `ols_qr`'s pseudo-zero rank-clamping
+  path that returns a higher (suboptimal) RSS for rank-deficient
+  designs. Earth's LINPACK-based solver matches the rank-clamped regime,
+  so on tightly tied cells `rss_ares < rss_earth` is now possible —
+  ares finds an OLS solution earth's pivoted Cholesky can't reach.
+- Side effect: parity-test thresholds bumped from `5e-3` to `2e-2` on
+  Friedman fixed-seed tests, and from `0.5` to `1.0` on mtcars
+  predict-RMSE relative to `sd(y)`. Documented in those tests' header
+  comments. Median grid `rss_rel_err` essentially unchanged (~0.9%).
+
+## Determinism preserved
+
+- `nthreads=1` and `nthreads=N` still produce byte-identical fits
+  (verified on Friedman-1 n=1500 deg=2 fixed seed).
+
 # ares 0.0.0.9003 (development)
 
 ## Experimental earth-equivalent heuristics

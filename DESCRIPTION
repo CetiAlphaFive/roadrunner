@@ -1,6 +1,6 @@
 Package: ares
 Title: Fast Multivariate Adaptive Regression Splines
-Version: 0.0.0.9003
+Version: 0.0.0.9004
 Authors@R: 
     person("Jack", "Trametta", , "jtrametta@gmail.com", role = c("aut", "cre"))
 Description: Fits Multivariate Adaptive Regression Splines (MARS) models
