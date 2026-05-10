@@ -1,3 +1,30 @@
+# ares 0.0.0.9007 (development)
+
+## AVX2 SIMD on KnotScanner — first ares-faster-than-earth cells
+
+- The three q-inner prefix-sum loops in `KnotScanner::run` are now
+  manually vectorised with AVX2 256-bit double intrinsics (`__m256d`,
+  `_mm256_loadu_pd`, `_mm256_mul_pd`, `_mm256_add_pd`, `_mm256_sub_pd`).
+  Four lanes processed per iteration; the scalar fallback handles the
+  Mq-mod-4 tail. Compile-guarded by `__AVX2__`.
+- The hot reduction loop (per-knot scoring) maintains 4-lane SIMD
+  accumulators for `||h+_perp||²`, `||h-_perp||²`, and `h+_perp · h-_perp`,
+  reducing across lanes once per knot — cuts the per-knot work from
+  Mq scalar fmadds to (Mq/4) AVX2 muls + adds.
+- inst/sims grid (median across 18 cells):
+  - 1t wall-clock: 0.10s → 0.077s (**23% faster**).
+  - 4t wall-clock: 0.040s → 0.030s (**25% faster**).
+  - 1t speed ratio vs earth: 5.3× → **3.8×** (median).
+  - 4t speed ratio vs earth: best cell drops to **0.84×** —
+    **the first cell where ares-4t beats earth wall-clock**
+    (additive n=5000 deg=2: 107ms ares vs 128ms earth).
+  - friedman n=500 deg=1 at 4t: 1.03× (within 3%).
+- Determinism preserved (RSS = 1796.11037133069 byte-identical 1t / 4t
+  on Friedman fixed seed). 38/38 testthat green.
+- `-ffp-contract=off` is still in `src/Makevars`; the AVX2 intrinsics
+  use `_mm256_mul_pd` + `_mm256_add_pd` (no FMA), so the determinism
+  contract is preserved without disabling vectorisation.
+
 # ares 0.0.0.9006 (development)
 
 ## Forward QR rejection + backward periodic refresh

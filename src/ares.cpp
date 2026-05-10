@@ -15,6 +15,16 @@
 #include <vector>
 #include <numeric>
 
+// AVX2 intrinsics for the KnotScanner q-inner loops. Guarded so the
+// package still compiles on architectures without AVX2; the scalar
+// fallback path stays intact.
+#if defined(__AVX2__)
+#include <immintrin.h>
+#define ARES_HAVE_AVX2 1
+#else
+#define ARES_HAVE_AVX2 0
+#endif
+
 using namespace Rcpp;
 
 namespace ares {
@@ -251,7 +261,21 @@ struct KnotScanner {
       T_ppxx += pp * xv * xv;
       const double* QTr = QT + size_t(r) * QT_stride;  // unit-stride Mq slice
       double pxv = p * xv;
-      for (int q = 0; q < Mq; ++q) {
+      int q = 0;
+#if ARES_HAVE_AVX2
+      __m256d vp = _mm256_set1_pd(p);
+      __m256d vpxv = _mm256_set1_pd(pxv);
+      for (; q + 4 <= Mq; q += 4) {
+        __m256d Qq = _mm256_loadu_pd(QTr + q);
+        __m256d Tp = _mm256_loadu_pd(T_Qp.data() + q);
+        __m256d Tpx = _mm256_loadu_pd(T_Qpx.data() + q);
+        Tp  = _mm256_add_pd(Tp,  _mm256_mul_pd(Qq, vp));
+        Tpx = _mm256_add_pd(Tpx, _mm256_mul_pd(Qq, vpxv));
+        _mm256_storeu_pd(T_Qp.data() + q, Tp);
+        _mm256_storeu_pd(T_Qpx.data() + q, Tpx);
+      }
+#endif
+      for (; q < Mq; ++q) {
         double Qiq = QTr[q];
         T_Qp[q]  += Qiq * p;
         T_Qpx[q] += Qiq * pxv;
@@ -300,7 +324,39 @@ struct KnotScanner {
           double cp_perp_dot_cm_perp = 0.0;  // h+·h- = 0 (disjoint supports)
           const double* QTrk = QT + size_t(rk) * QT_stride;  // contiguous Mq slice
           double pkxk = pk * xk;
-          for (int q = 0; q < Mq; ++q) {
+          int q = 0;
+#if ARES_HAVE_AVX2
+          __m256d vpk   = _mm256_set1_pd(pk);
+          __m256d vpkxk = _mm256_set1_pd(pkxk);
+          __m256d vt    = _mm256_set1_pd(t);
+          __m256d acc_pp = _mm256_setzero_pd();
+          __m256d acc_mm = _mm256_setzero_pd();
+          __m256d acc_pm = _mm256_setzero_pd();
+          for (; q + 4 <= Mq; q += 4) {
+            __m256d Qkq = _mm256_loadu_pd(QTrk + q);
+            __m256d Tp  = _mm256_loadu_pd(T_Qp.data() + q);
+            __m256d Tpx = _mm256_loadu_pd(T_Qpx.data() + q);
+            __m256d Sp  = _mm256_loadu_pd(S_Qp.data() + q);
+            __m256d Spx = _mm256_loadu_pd(S_Qpx.data() + q);
+            __m256d HQp  = _mm256_sub_pd(_mm256_sub_pd(Tp, Sp),  _mm256_mul_pd(Qkq, vpk));
+            __m256d HQpx = _mm256_sub_pd(_mm256_sub_pd(Tpx, Spx), _mm256_mul_pd(Qkq, vpkxk));
+            __m256d dp = _mm256_sub_pd(HQpx, _mm256_mul_pd(vt, HQp));
+            __m256d dm = _mm256_sub_pd(_mm256_mul_pd(vt, Sp), Spx);
+            _mm256_storeu_pd(qcp.data() + q, dp);
+            _mm256_storeu_pd(qcm.data() + q, dm);
+            acc_pp = _mm256_add_pd(acc_pp, _mm256_mul_pd(dp, dp));
+            acc_mm = _mm256_add_pd(acc_mm, _mm256_mul_pd(dm, dm));
+            acc_pm = _mm256_add_pd(acc_pm, _mm256_mul_pd(dp, dm));
+          }
+          alignas(32) double rbuf[4];
+          _mm256_store_pd(rbuf, acc_pp);
+          cp_perp_norm2       -= rbuf[0] + rbuf[1] + rbuf[2] + rbuf[3];
+          _mm256_store_pd(rbuf, acc_mm);
+          cm_perp_norm2       -= rbuf[0] + rbuf[1] + rbuf[2] + rbuf[3];
+          _mm256_store_pd(rbuf, acc_pm);
+          cp_perp_dot_cm_perp -= rbuf[0] + rbuf[1] + rbuf[2] + rbuf[3];
+#endif
+          for (; q < Mq; ++q) {
             double Qkq = QTrk[q];
             double H_Qp_q  = T_Qp[q]  - S_Qp[q]  - Qkq * pk;
             double H_Qpx_q = T_Qpx[q] - S_Qpx[q] - Qkq * pkxk;
@@ -353,10 +409,24 @@ struct KnotScanner {
       S_ppxx += pp * xv * xv;
       const double* QTr2 = QT + size_t(r) * QT_stride;
       double pxv2 = p * xv;
-      for (int q = 0; q < Mq; ++q) {
-        double Qiq = QTr2[q];
-        S_Qp[q]  += Qiq * p;
-        S_Qpx[q] += Qiq * pxv2;
+      int q2 = 0;
+#if ARES_HAVE_AVX2
+      __m256d vp2 = _mm256_set1_pd(p);
+      __m256d vpxv2 = _mm256_set1_pd(pxv2);
+      for (; q2 + 4 <= Mq; q2 += 4) {
+        __m256d Qq = _mm256_loadu_pd(QTr2 + q2);
+        __m256d Sp = _mm256_loadu_pd(S_Qp.data() + q2);
+        __m256d Spx = _mm256_loadu_pd(S_Qpx.data() + q2);
+        Sp  = _mm256_add_pd(Sp,  _mm256_mul_pd(Qq, vp2));
+        Spx = _mm256_add_pd(Spx, _mm256_mul_pd(Qq, vpxv2));
+        _mm256_storeu_pd(S_Qp.data() + q2, Sp);
+        _mm256_storeu_pd(S_Qpx.data() + q2, Spx);
+      }
+#endif
+      for (; q2 < Mq; ++q2) {
+        double Qiq = QTr2[q2];
+        S_Qp[q2]  += Qiq * p;
+        S_Qpx[q2] += Qiq * pxv2;
       }
     }
     if (local_best.parent >= 0) {
