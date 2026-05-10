@@ -19,8 +19,16 @@ ares(x, ...)
   thresh = 0.001,
   minspan = 0L,
   endspan = 0L,
+  adjust.endspan = 1L,
+  auto.linpreds = FALSE,
+  fast.k = 10L,
+  fast.beta = 1,
   nprune = NULL,
-  pmethod = c("backward", "none"),
+  pmethod = c("backward", "none", "cv"),
+  nfold = 0L,
+  ncross = 1L,
+  stratify = TRUE,
+  seed.cv = NULL,
   trace = 0L,
   nthreads = 0L,
   ...
@@ -49,9 +57,48 @@ when calling the formula method.}
 
 \item{endspan}{Knot offset from the data ends. 0 (default) selects automatic.}
 
+\item{adjust.endspan}{Multiplier applied to \code{endspan} when the candidate
+hinge would deepen an existing interaction (parent term has degree= 1). Default 1 (no adjustment). Earth's analogous default is 2;ares's heuristic is empirically mixed on the inst/sims grid (helps afew cells, hurts others), so the default is conservative. Pass 2to enable.}
+
+\item{auto.linpreds}{If \code{TRUE}, and the best forward-pass knot for a
+candidate hinge sits at the boundary of its variable's eligible range,
+substitutes a linear term (\code{dirs = 2}) for the hinge pair. \strong{Default
+\code{FALSE}.} Earth's analogous default is \code{TRUE}, but earth applies a
+stricter linearity test that ares's "boundary knot" heuristic only
+approximates; current ares implementation regresses parity on most
+benchmark cells. Treat as experimental.}
+
+\item{fast.k}{Fast-MARS priority cache size (Friedman 1993). The forward
+pass always rescores pairs whose parent was added in the previous step;
+the top \code{fast.k} of the remaining stale pairs (ranked by age-discounted
+cached score) are also rescored, and the rest contribute their cached
+reduction. \code{0} disables the cache (every pair is rescored every step).
+Default \code{10}.}
+
+\item{fast.beta}{Age-penalty for the fast-MARS priority cache: a stale
+pair's effective score is \code{cached_rss_red / (1 + fast.beta * age)}.
+Default \code{1.0}. Only matters when \code{fast.k > 0}.}
+
 \item{nprune}{Maximum number of terms after backward pruning (default \code{nk}).}
 
-\item{pmethod}{Pruning method: \code{"backward"} (default) or \code{"none"}.}
+\item{pmethod}{Pruning method: \code{"backward"} (default), \code{"none"}, or
+\code{"cv"} for K-fold cross-validated subset selection. \code{"cv"} requires
+\code{nfold > 0} (or implicitly sets \code{nfold = 5} when not specified).}
+
+\item{nfold}{Number of CV folds (default \code{0} = no CV; GCV-based backward
+selection). When \code{nfold > 0}, \code{pmethod} is promoted to \code{"cv"}.}
+
+\item{ncross}{Number of CV repetitions when \code{nfold > 0}. Each repetition
+builds a fresh fold partition; per-size mean MSE is averaged across
+\code{nfold * ncross} evaluations. Default \code{1}.}
+
+\item{stratify}{If \code{TRUE} (default), folds are quantile-stratified on \code{y}
+so each fold has a similar response distribution. Useful on small \code{n} /
+skewed responses; cheap.}
+
+\item{seed.cv}{Optional integer seed for fold partitioning. \code{NULL}
+(default) uses the current RNG state; pass an integer for reproducible
+CV partitions.}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 

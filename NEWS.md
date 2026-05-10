@@ -1,3 +1,62 @@
+# ares 0.0.0.9013 (development)
+
+## Phase 1 — earth parity: pmethod="cv", nfold, ncross
+
+New CV-based subset-selection path.
+
+### New args on `ares()`
+- `pmethod = "cv"` — K-fold cross-validated subset-size selection. Picks
+  the subset size with the smallest mean holdout MSE across folds.
+- `nfold` (default `0`) — number of CV folds. `nfold > 0` automatically
+  promotes `pmethod` to `"cv"`. Asking for `pmethod="cv"` with
+  `nfold == 0` defaults to 5 folds.
+- `ncross` (default `1`) — number of CV repetitions; each repetition
+  draws a fresh fold partition. Per-size MSE is averaged across the
+  `nfold * ncross` evaluations.
+- `stratify` (default `TRUE`) — quantile-bin `y` into `nfold` strata so
+  every fold has a similar response distribution. Recommended on small
+  `n` and skewed responses.
+- `seed.cv` (default `NULL`) — optional integer seed for fold
+  partitioning. When set, ares saves and restores the caller's
+  `.Random.seed`, so the user's RNG stream is unaffected by the CV
+  partitioning RNG.
+
+### Implementation
+- C++ engine `mars_fit_cpp()` gained two new params: `force_size`
+  (override the GCV-best subset size; `0` = use GCV) and `return_path`
+  (`!=0` returns `path.subsets` and `path.coefs` — the surviving
+  forward-pass term indices and OLS coefficients at every backward-pass
+  size).
+- The CV path runs `mars_fit_cpp` once per fold with `return_path=1` so
+  it can score every candidate subset size on the holdout via
+  `mars_basis_cpp` + a single matrix multiply, with no extra fits.
+- After picking `size_star` from the mean CV-MSE, ares refits on the
+  full data with `force_size = size_star`. If the full-data forward
+  pass produces fewer terms than `size_star` (rare: forward-pass
+  terminations differ), ares clamps `size_star` to the largest
+  in-range size and refits.
+- Fold MSEs are aggregated only over sizes achieved by **all** folds,
+  to avoid a bias in which the smaller-MSE folds also tend to retain
+  more terms. Falls back to any-fold sizes only if no size is
+  reached by every fold.
+
+### Result object additions
+- `$cv` (list) when `pmethod="cv"`: `nfold`, `ncross`, `stratify`,
+  `cv.mse` (length-`nrow($dirs)` numeric vector of mean CV-MSE by
+  size), `cv.n` (count of folds contributing to each size), and
+  `size.star` (the chosen size).
+
+### Tests
+- New `tests/testthat/test-cv-pruning.R` with 5 tests covering: basic
+  fit + `$cv` slot, `nfold>0` auto-promotion, determinism across
+  threads at fixed `seed.cv`, multi-rep `ncross`, and RNG
+  save/restore semantics. **56/56 testthat green** (was 38).
+- Determinism contract preserved: `nthreads=1` and `nthreads=N` give
+  byte-identical RSS and coefficients at fixed `seed.cv`.
+- `R CMD check`: 0 errors, 3 warnings (all pre-existing — Makevars
+  GNU extensions, qpdf not installed, non-portable system compile
+  flags), 1 note.
+
 # ares 0.0.0.9012 (development)
 
 ## Autoresearch session — 5 iterations, 1 keeper

@@ -11,8 +11,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // mars_fit_cpp
-List mars_fit_cpp(const NumericMatrix& x_in, const NumericVector& y_in, int degree, int nk, double penalty, double thresh, int minspan_in, int endspan_in, int adjust_endspan, int auto_linpreds, int fast_k, double fast_beta, int nprune, int pmethod, int trace, int nthreads);
-RcppExport SEXP _ares_mars_fit_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP degreeSEXP, SEXP nkSEXP, SEXP penaltySEXP, SEXP threshSEXP, SEXP minspan_inSEXP, SEXP endspan_inSEXP, SEXP adjust_endspanSEXP, SEXP auto_linpredsSEXP, SEXP fast_kSEXP, SEXP fast_betaSEXP, SEXP npruneSEXP, SEXP pmethodSEXP, SEXP traceSEXP, SEXP nthreadsSEXP) {
+List mars_fit_cpp(const NumericMatrix& x_in, const NumericVector& y_in, int degree, int nk, double penalty, double thresh, int minspan_in, int endspan_in, int adjust_endspan, int auto_linpreds, int fast_k, double fast_beta, int nprune, int pmethod, int trace, int nthreads, int force_size, int return_path);
+RcppExport SEXP _ares_mars_fit_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP degreeSEXP, SEXP nkSEXP, SEXP penaltySEXP, SEXP threshSEXP, SEXP minspan_inSEXP, SEXP endspan_inSEXP, SEXP adjust_endspanSEXP, SEXP auto_linpredsSEXP, SEXP fast_kSEXP, SEXP fast_betaSEXP, SEXP npruneSEXP, SEXP pmethodSEXP, SEXP traceSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -32,7 +32,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type pmethod(pmethodSEXP);
     Rcpp::traits::input_parameter< int >::type trace(traceSEXP);
     Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(mars_fit_cpp(x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads));
+    Rcpp::traits::input_parameter< int >::type force_size(force_sizeSEXP);
+    Rcpp::traits::input_parameter< int >::type return_path(return_pathSEXP);
+    rcpp_result_gen = Rcpp::wrap(mars_fit_cpp(x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -52,7 +54,7 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_ares_mars_fit_cpp", (DL_FUNC) &_ares_mars_fit_cpp, 16},
+    {"_ares_mars_fit_cpp", (DL_FUNC) &_ares_mars_fit_cpp, 18},
     {"_ares_mars_basis_cpp", (DL_FUNC) &_ares_mars_basis_cpp, 4},
     {NULL, NULL, 0}
 };
