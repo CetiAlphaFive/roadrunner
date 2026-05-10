@@ -1,3 +1,37 @@
+# ares 0.0.0.9017 (development)
+
+## Phase 2 — autotune.speed knob
+
+New arg `autotune.speed = c("balanced", "quality", "fast")`.
+Only meaningful when `autotune = TRUE`.
+
+### Modes
+- `"quality"` — forces `fast.k = 0` for every cell. No fast-MARS
+  priority cache; every (parent, var) pair is rescored every
+  forward step. Most accurate, slowest. Matches v0.10 quality at
+  v0.10 cost.
+- `"fast"` — forces `fast.k = 5`. Most aggressive cache. Cheapest
+  per-fit, slight accuracy hit on tightly-tied designs.
+- `"balanced"` (default) — sweeps `fast.k in {10, 25, 0}` inside
+  the autotune grid. The grid grows 3x. After scoring, the winner
+  is the cell with the smallest non-zero `fast.k` whose mean CV-MSE
+  is within 1% of the best. `fast.k = 0` (no cache) is picked only
+  if no positive-`fast.k` cell qualifies. The user gets a fit with
+  the cheapest `fast.k` setting that doesn't measurably hurt
+  accuracy on the actual data.
+
+### Result additions
+- `$autotune$grid` gains a `fast_k` column.
+- `$autotune` gains `fast_k` (winner's value) and `speed` (echo of
+  the user's choice).
+
+### Tests
+- 5 new tests covering: quality/fast/balanced fast.k coverage of
+  cells, the 1% rule of balanced mode, determinism across nthreads
+  for all three speeds.
+- **100/100 testthat green** (was 88). Determinism preserved.
+- `R CMD check`: 0 errors.
+
 # ares 0.0.0.9016 (development)
 
 ## Phase 2 — autotune extensions: nk grid + successive halving

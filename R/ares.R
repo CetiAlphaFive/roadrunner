@@ -75,6 +75,16 @@
 #'   `$autotune`. Default `FALSE` (current grf-style fast default
 #'   path). Subsequent versions extend the grid (v0.16: `nk`,
 #'   v0.17: `autotune.speed`, v0.18: `n.boot`).
+#' @param autotune.speed One of `"balanced"` (default), `"quality"`,
+#'   or `"fast"`. Only meaningful when `autotune = TRUE`.
+#'   - `"quality"`: forces `fast.k = 0` for every cell (no fast-MARS
+#'     priority cache; every (parent, var) pair rescored every step).
+#'     Matches v0.10 quality at v0.10 wall-clock cost.
+#'   - `"fast"`: forces `fast.k = 5`. Most aggressive cache; cheapest.
+#'   - `"balanced"` (default): sweeps `fast.k in {10, 25, Inf}` (where
+#'     `Inf` means "no cache") inside the autotune grid and picks the
+#'     smallest `fast.k` whose mean CV-MSE is within 1% of the best.
+#'     Trades a marginal accuracy hit for a marginal speed gain.
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -124,9 +134,11 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          nfold = 0L, ncross = 1L, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE,
+                         autotune.speed = c("balanced", "quality", "fast"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
+  autotune_speed <- match.arg(autotune.speed)
   # nfold > 0 implies CV pruning. Promote pmethod to "cv" so downstream
   # branches share the same code path; a user explicitly asking for
   # pmethod="cv" with nfold==0 gets a default of 5 folds.
@@ -230,7 +242,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       nprune = as.integer(nprune),
       nfold = nfold_at, ncross = ncross, stratify = isTRUE(stratify),
       seed_cv = seed.cv, cv_1se = isTRUE(cv.1se),
-      trace = trace, nthreads = nthreads_eff
+      trace = trace, nthreads = nthreads_eff,
+      autotune_speed = autotune_speed
     )
   } else if (pmethod == "cv") {
     out <- .ares_cv_fit(x, y = as.numeric(y),
@@ -526,7 +539,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 .ares_autotune <- function(x, y, nk, thresh, minspan, endspan,
                            adjust_endspan, auto_linpreds, fast_k, fast_beta,
                            nprune, nfold, ncross, stratify, seed_cv,
-                           cv_1se, trace, nthreads) {
+                           cv_1se, trace, nthreads,
+                           autotune_speed = "balanced") {
   n <- nrow(x)
   p <- ncol(x)
 
@@ -545,13 +559,26 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # capped at 200. The default value (nk_default) is the user's nk if pinned,
   # else min(200, max(20, 2*p)) + 1.
   nk_grid <- unique(pmin(c(nk_eff, 2L * nk_eff, 4L * nk_eff), 200L))
+
+  # autotune_speed determines fast.k policy:
+  #   "quality"  : fast.k = 0 always (no cache, slowest, most accurate).
+  #   "fast"     : fast.k = 5 always (aggressive cache, cheapest).
+  #   "balanced" : sweep fast.k in {10, 25, 0 (== "infinity" / no cache)}
+  #                inside the grid; pick smallest within 1% of best.
+  fk_grid <- switch(autotune_speed,
+                    quality  = 0L,
+                    fast     = 5L,
+                    balanced = c(10L, 25L, 0L))
+
   cells <- list()
   for (d in deg_grid)
     for (mult in c(0.5, 1.0, 2.0, 3.0))
       for (nk_c in nk_grid)
-        cells[[length(cells) + 1L]] <- list(degree  = d,
-                                            penalty = mult * d,
-                                            nk      = as.integer(nk_c))
+        for (fk in fk_grid)
+          cells[[length(cells) + 1L]] <- list(degree  = d,
+                                              penalty = mult * d,
+                                              nk      = as.integer(nk_c),
+                                              fast_k  = as.integer(fk))
 
   # Build a single shared fold partition (function of seed.cv + stratify) so
   # all cells score on the same folds. This is critical for fair comparison
@@ -583,12 +610,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
 
   # Score one fold for one cell. Returns NA on failure.
-  score_one <- function(d, pen, nk_c, tr, te) {
+  score_one <- function(d, pen, nk_c, fk, tr, te) {
     fit_k <- mars_fit_cpp(
       x[tr, , drop = FALSE], as.numeric(y[tr]),
       as.integer(d), as.integer(nk_c), as.numeric(pen),
       thresh, minspan, endspan, adjust_endspan, auto_linpreds,
-      fast_k, fast_beta,
+      as.integer(fk), fast_beta,
       if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_c) else as.integer(nprune),
       0L, trace, nthreads, 0L, 0L
     )
@@ -626,7 +653,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       if (!alive[i]) next
       ce <- cells[[i]]
       m <- tryCatch(
-        score_one(ce$degree, ce$penalty, ce$nk, tr, te),
+        score_one(ce$degree, ce$penalty, ce$nk, ce$fast_k, tr, te),
         error = function(e) NA_real_
       )
       fold_mse[i, fp_i] <- m
@@ -657,21 +684,51 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 
   # Tie-break: smallest score; on tie, prefer smaller degree (parsimony),
   # then smaller penalty.
+  # Cell order key for default (non-balanced) tie-break.
   ord_cells <- order(scores,
                      vapply(cells, function(c) c$degree, integer(1L)),
                      vapply(cells, function(c) c$nk, integer(1L)),
-                     vapply(cells, function(c) c$penalty, numeric(1L)))
+                     vapply(cells, function(c) c$penalty, numeric(1L)),
+                     vapply(cells, function(c) c$fast_k, integer(1L)))
+
+  # Balanced mode: among cells within 1% of the argmin score, prefer the
+  # smallest non-zero fast_k (= fastest cache setting). fast_k = 0 (cache
+  # disabled) gets picked only if it is strictly the global best within
+  # 1% (i.e. nothing else qualifies).
+  if (autotune_speed == "balanced" && any(is.finite(scores))) {
+    s_min <- min(scores[is.finite(scores)])
+    within1 <- is.finite(scores) & scores <= s_min * 1.01
+    if (any(within1)) {
+      # Sort within1 cells by: fastest fast_k first (smaller non-zero fast_k
+      # is cheaper). Treat fast_k = 0 as the highest sort key (only chosen
+      # when no positive-fast_k cell qualifies).
+      fk_vec <- vapply(cells, function(c) c$fast_k, integer(1L))
+      score_key <- ifelse(fk_vec == 0L, .Machine$integer.max, fk_vec)
+      candidates <- which(within1)
+      ord_within <- candidates[order(score_key[candidates],
+                                     scores[candidates],
+                                     vapply(cells[candidates],
+                                            function(c) c$degree,
+                                            integer(1L)),
+                                     vapply(cells[candidates],
+                                            function(c) c$nk,
+                                            integer(1L)))]
+      # Override the argmin pick with the balanced-rule winner.
+      ord_cells <- c(ord_within, setdiff(ord_cells, ord_within))
+    }
+  }
   best <- ord_cells[1]
   best_d   <- cells[[best]]$degree
   best_pen <- cells[[best]]$penalty
 
   best_nk  <- cells[[best]]$nk
+  best_fk  <- cells[[best]]$fast_k
   # Refit winner on the full data, GCV-backward, with the chosen
-  # (degree, penalty, nk).
+  # (degree, penalty, nk, fast.k).
   fit_full <- mars_fit_cpp(
     x, y, as.integer(best_d), as.integer(best_nk), as.numeric(best_pen),
     thresh, minspan, endspan, adjust_endspan, auto_linpreds,
-    fast_k, fast_beta,
+    as.integer(best_fk), fast_beta,
     if (length(nprune) == 0L || is.na(nprune[1])) as.integer(best_nk) else as.integer(nprune),
     0L, trace, nthreads, 0L, 0L
   )
@@ -680,21 +737,24 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     degree     = vapply(cells, function(c) c$degree, integer(1L)),
     penalty    = vapply(cells, function(c) c$penalty, numeric(1L)),
     nk         = vapply(cells, function(c) c$nk, integer(1L)),
+    fast_k     = vapply(cells, function(c) c$fast_k, integer(1L)),
     cv_mse     = scores,
     eliminated = !alive,
     stringsAsFactors = FALSE
   )
   fit_full$autotune <- list(
-    grid     = grid_df,
-    best     = best,
-    degree   = best_d,
-    penalty  = best_pen,
-    nk       = best_nk,
-    cv_mse   = scores[best],
-    nfold    = nfold,
-    ncross   = ncross,
-    stratify = stratify,
-    n_eliminated = sum(!alive)
+    grid          = grid_df,
+    best          = best,
+    degree        = best_d,
+    penalty       = best_pen,
+    nk            = best_nk,
+    fast_k        = best_fk,
+    cv_mse        = scores[best],
+    nfold         = nfold,
+    ncross        = ncross,
+    stratify      = stratify,
+    n_eliminated  = sum(!alive),
+    speed         = autotune_speed
   )
   fit_full
 }

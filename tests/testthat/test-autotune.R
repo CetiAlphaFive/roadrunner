@@ -102,3 +102,71 @@ test_that("autotune determinism across nthreads with v0.16 grid", {
   expect_identical(s1$autotune$grid$eliminated, s2$autotune$grid$eliminated)
   expect_equal(s1$rss, s2$rss, tolerance = 1e-10)
 })
+
+# ---- v0.17: autotune.speed --------------------------------------------------
+
+test_that("autotune.speed='quality' forces fast.k = 0 in every cell", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(150 * 5), 150, 5)
+  y <- 5 * x[, 1] + stats::rnorm(150)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "quality",
+              seed.cv = 1, nthreads = 2)
+  expect_true(all(fit$autotune$grid$fast_k == 0L))
+  expect_equal(fit$autotune$fast_k, 0L)
+})
+
+test_that("autotune.speed='fast' forces fast.k = 5 in every cell", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(150 * 5), 150, 5)
+  y <- 5 * x[, 1] + stats::rnorm(150)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "fast",
+              seed.cv = 1, nthreads = 2)
+  expect_true(all(fit$autotune$grid$fast_k == 5L))
+  expect_equal(fit$autotune$fast_k, 5L)
+})
+
+test_that("autotune.speed='balanced' sweeps fast.k in {10, 25, 0}", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(180 * 5), 180, 5)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(180)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
+              seed.cv = 1, nthreads = 2)
+  expect_setequal(unique(fit$autotune$grid$fast_k), c(10L, 25L, 0L))
+})
+
+test_that("balanced winner respects 1% MSE rule (prefers smaller fast.k)", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(200 * 5), 200, 5)
+  y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(200)
+  fit <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
+              seed.cv = 1, nthreads = 2)
+  best_score <- fit$autotune$cv_mse
+  # Within-1% set:
+  near <- with(fit$autotune$grid,
+               is.finite(cv_mse) & cv_mse <= best_score * 1.01)
+  near_fk_pos <- with(fit$autotune$grid,
+                      near & fast_k > 0L)
+  if (any(near_fk_pos)) {
+    # Winner's fast_k must be the smallest non-zero fast_k in the
+    # within-1% set.
+    expect_equal(fit$autotune$fast_k,
+                 min(fit$autotune$grid$fast_k[near_fk_pos]))
+  } else {
+    # No positive-fast_k cell within 1%: fast.k = 0 is acceptable.
+    expect_equal(fit$autotune$fast_k, 0L)
+  }
+})
+
+test_that("autotune.speed determinism across nthreads", {
+  set.seed(20260510)
+  x <- matrix(stats::runif(180 * 5), 180, 5)
+  y <- 5 * x[, 1] + stats::rnorm(180)
+  for (sp in c("balanced", "quality", "fast")) {
+    s1 <- ares(x, y, autotune = TRUE, autotune.speed = sp,
+               seed.cv = 7, nthreads = 1)
+    s2 <- ares(x, y, autotune = TRUE, autotune.speed = sp,
+               seed.cv = 7, nthreads = 4)
+    expect_equal(s1$rss, s2$rss, tolerance = 1e-10)
+    expect_equal(s1$autotune$fast_k, s2$autotune$fast_k)
+  }
+})

@@ -31,6 +31,7 @@ ares(x, ...)
   seed.cv = NULL,
   cv.1se = FALSE,
   autotune = FALSE,
+  autotune.speed = c("balanced", "quality", "fast"),
   trace = 0L,
   nthreads = 0L,
   ...
@@ -118,6 +119,19 @@ is on and \code{nfold == 0}) and respects \code{seed.cv}. The chosen
 \verb{$autotune}. Default \code{FALSE} (current grf-style fast default
 path). Subsequent versions extend the grid (v0.16: \code{nk},
 v0.17: \code{autotune.speed}, v0.18: \code{n.boot}).}
+
+\item{autotune.speed}{One of \code{"balanced"} (default), \code{"quality"},
+or \code{"fast"}. Only meaningful when \code{autotune = TRUE}.
+\itemize{
+\item \code{"quality"}: forces \code{fast.k = 0} for every cell (no fast-MARS
+priority cache; every (parent, var) pair rescored every step).
+Matches v0.10 quality at v0.10 wall-clock cost.
+\item \code{"fast"}: forces \code{fast.k = 5}. Most aggressive cache; cheapest.
+\item \code{"balanced"} (default): sweeps \verb{fast.k in \{10, 25, Inf\}} (where
+\code{Inf} means "no cache") inside the autotune grid and picks the
+smallest \code{fast.k} whose mean CV-MSE is within 1\% of the best.
+Trades a marginal accuracy hit for a marginal speed gain.
+}}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 
