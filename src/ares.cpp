@@ -690,17 +690,18 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   double rss0 = rss;
   if (rss0 <= 0.0) rss0 = 1.0; // pathological all-zero y
 
-  // Lambda: append one column c (length n) to the maintained QR. Updates
-  // Q1, QT, R, Qty, resid, rss. The new column index is the current value
-  // of M (caller increments M afterwards). On rank deficiency (c nearly in
-  // span(B[:, 0:M])), the new Q1 / QT column is zero, R[M, M] = 0,
-  // Qty[M] = 0; resid and rss are unchanged. This keeps M (B-columns) and
-  // Mq (Q1 columns) in sync; downstream solve_R_back and the Givens
-  // downdate handle zero diagonals via pseudo-zero / norm-zero clauses.
+  // Lambda: append one column c (length n) to the maintained QR. Returns
+  // true if the column was accepted (full-rank) and Q1/R/Qty/resid/rss
+  // were updated; false if c is in span(existing basis) within tolerance,
+  // in which case the maintained state is left unchanged. The caller must
+  // then NOT increment M (so the rejected column never enters B).
+  // Keeping rank-deficient columns out of B means the maintained R has no
+  // zero diagonals — the Givens downdate path in backward works directly
+  // off this R, removing the need for the per-step Householder commit.
   const double tol_eps = 1e3 * std::numeric_limits<double>::epsilon();
-  auto qr_append_col = [&](const double* c) -> void {
+  auto qr_append_col = [&](const double* c) -> bool {
     int M_now = M;
-    if (M_now >= nk_cap) return;
+    if (M_now >= nk_cap) return false;
     std::vector<double> u(M_now, 0.0);
     for (int q = 0; q < M_now; ++q) {
       const double* Qcol = Q1.data() + size_t(q) * n;
@@ -718,20 +719,12 @@ List mars_fit_cpp(const NumericMatrix& x_in,
       double a = std::fabs(c[i]);
       if (a > col_scale) col_scale = a;
     }
-    double* Qcol_new = Q1.data() + size_t(M_now) * n;
     if (d2 < tol_eps * tol_eps * (col_scale + 1.0) * (col_scale + 1.0)) {
-      // Rank-deficient: zero the new Q-column and R diag/Qty entry.
-      for (int i = 0; i < n; ++i) {
-        Qcol_new[i] = 0.0;
-        QT[size_t(i) * nk_cap + M_now] = 0.0;
-      }
-      for (int q = 0; q < M_now; ++q) R[q + size_t(M_now) * nk_cap] = u[q];
-      R[M_now + size_t(M_now) * nk_cap] = 0.0;
-      Qty[M_now] = 0.0;
-      return;
+      return false;  // rank-deficient: reject; caller will skip this slot
     }
     double d = std::sqrt(d2);
     double inv_d = 1.0 / d;
+    double* Qcol_new = Q1.data() + size_t(M_now) * n;
     for (int i = 0; i < n; ++i) {
       double cp = c[i];
       for (int q = 0; q < M_now; ++q) cp -= Q1[size_t(q) * n + i] * u[q];
@@ -748,6 +741,7 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     Qty[M_now] = qty_new;
     for (int i = 0; i < n; ++i) resid[i] -= Qcol_new[i] * qty_new;
     rss -= qty_new * qty_new;
+    return true;
   };
 
   // Thread count is set from the R-side wrapper via RcppParallel::setThreadOptions.
@@ -832,27 +826,23 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     double rss_before = rss;
     if (auto_linpreds && best.is_boundary) {
       if (M < nk_cap) {
-        int* dr_new = &dirs[size_t(M) * p];
-        double* cr_new = &cuts[size_t(M) * p];
-        for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
-        dr_new[var] = 2;
-        cr_new[var] = 0.0;
         double* Bcol = &B[size_t(M) * n];
         const double* parent_col = &B[size_t(parent) * n];
         const double* xj = &X[size_t(var) * n];
         for (int i = 0; i < n; ++i) Bcol[i] = parent_col[i] * xj[i];
-        qr_append_col(Bcol);
-        ++M;
-        ++added;
+        if (qr_append_col(Bcol)) {
+          int* dr_new = &dirs[size_t(M) * p];
+          double* cr_new = &cuts[size_t(M) * p];
+          for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
+          dr_new[var] = 2;
+          cr_new[var] = 0.0;
+          ++M;
+          ++added;
+        }
       }
     } else {
       for (int s : {1, -1}) {
         if (M >= nk_cap) break;
-        int* dr_new = &dirs[size_t(M) * p];
-        double* cr_new = &cuts[size_t(M) * p];
-        for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
-        dr_new[var] = s;
-        cr_new[var] = cut;
         double* Bcol = &B[size_t(M) * n];
         const double* parent_col = &B[size_t(parent) * n];
         const double* xj = &X[size_t(var) * n];
@@ -860,9 +850,15 @@ List mars_fit_cpp(const NumericMatrix& x_in,
           double v = (s == 1) ? (xj[i] - cut) : (cut - xj[i]);
           Bcol[i] = (v > 0.0) ? parent_col[i] * v : 0.0;
         }
-        qr_append_col(Bcol);
-        ++M;
-        ++added;
+        if (qr_append_col(Bcol)) {
+          int* dr_new = &dirs[size_t(M) * p];
+          double* cr_new = &cuts[size_t(M) * p];
+          for (int j = 0; j < p; ++j) { dr_new[j] = dr_p[j]; cr_new[j] = cr_p[j]; }
+          dr_new[var] = s;
+          cr_new[var] = cut;
+          ++M;
+          ++added;
+        }
       }
     }
     if (added == 0) break;
@@ -924,11 +920,11 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     std::vector<int> cur(M);
     std::iota(cur.begin(), cur.end(), 0);
 
-    // Initial Householder QR for backward. The forward pass maintains its
-    // own (R, Qty) incrementally and that state may carry zero columns from
-    // rank-deficient append calls; the Givens downdate path doesn't tolerate
-    // those, so we redo a fresh QR here. ~0.8% wall-clock cost in v0.4
-    // profiling — negligible.
+    // Initial Householder QR for backward. Conceptually we could reuse the
+    // forward-maintained (R, Qty) directly, but empirically the
+    // outer-state has slightly different rounding and forward and
+    // backward end up disagreeing on which knot to drop on tightly tied
+    // designs. Cost was 0.8% in v0.4 — keep the fresh init for safety.
     int M_alloc = M;
     std::vector<double> R_b(size_t(M_alloc) * M_alloc, 0.0);
     std::vector<double> Qty_b(M_alloc, 0.0);
@@ -996,14 +992,19 @@ List mars_fit_cpp(const NumericMatrix& x_in,
       if (best_t < 0) break;
       int drop_ki = best_t + 1;
 
-      // Commit: erase the chosen drop, refresh the QR from the surviving
-      // B columns. The Givens-downdate path is correct for picking, but
-      // accumulates rotation error across the M steps if we trust it for
-      // commit; refreshing keeps (R_b, Qty_b, cur_rss) at the precision
-      // of a single Householder QR.
+      // Commit: redo the chosen Givens downdate on the actual (R_b, Qty_b).
+      // Periodically (every 4 steps) refresh from a fresh Householder QR
+      // of the surviving B columns to eat any cumulative rotation drift.
+      // Drops the per-step O(n·M²) Householder cost on most steps.
+      double commit_inc = ares::qr_downdate_col(R_b.data(), M_alloc, M_active,
+                                                drop_ki, Qty_b.data());
       cur.erase(cur.begin() + drop_ki);
+      cur_rss += commit_inc;
       --M_active;
-      {
+
+      static const int REFRESH_EVERY = 4;
+      bool need_refresh = (M_active >= 2) && ((M - M_active) % REFRESH_EVERY == 0);
+      if (need_refresh) {
         std::vector<double> Bw_re(size_t(n) * M_active);
         for (int j = 0; j < M_active; ++j)
           for (int i = 0; i < n; ++i)

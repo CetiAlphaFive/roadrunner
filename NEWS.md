@@ -1,3 +1,21 @@
+# ares 0.0.0.9006 (development)
+
+## Forward QR rejection + backward periodic refresh
+
+- `qr_append_col` now returns a bool. On rank-deficient columns (new
+  column nearly in `span(B[:, 0:M])`), it rejects the append; the caller
+  skips the basis slot rather than zeroing it. The maintained R has no
+  zero diagonals, which is a precondition for the next change…
+- Backward pass now does a Householder QR refresh only every 4 steps
+  instead of every step. Between refreshes, the chosen drop is
+  committed via Givens downdate alone (O(M²) vs O(n·M²) per step).
+  Drift across 4 downdate steps is well under FP-test-tolerance on the
+  inst/sims grid.
+- Multi-thread grid: 2t median 0.062s → 0.055s (12% faster); 4t
+  median 0.048s → 0.040s (17% faster). Best 4t cell vs earth:
+  **1.08×** (was 1.41× — within 8% of earth-parity).
+- Median 1t ratio vs earth: 5.8× → **5.3×**.
+
 # ares 0.0.0.9005 (development)
 
 ## Forward pass: incremental QR maintenance
