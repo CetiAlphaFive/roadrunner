@@ -12,7 +12,7 @@ a Multivariate Adaptive Regression Splines fitter; more will follow.
 - **Low dependency.** Only `Rcpp` and `RcppParallel` at runtime. No
   tidyverse, no rlang, no S4.
 - **Fast.** C++ engines via `Rcpp` with multi-core scoring via
-  `RcppParallel` (TBB).
+  `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread counts
   at a fixed seed.
 - **Familiar API.** Base-R style: formula and matrix interfaces,
