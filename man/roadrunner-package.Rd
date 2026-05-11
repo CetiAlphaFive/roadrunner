@@ -19,9 +19,9 @@ Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://jtrametta.github.io/roadrunner}
-  \item \url{https://github.com/jtrametta/roadrunner}
-  \item Report bugs at \url{https://github.com/jtrametta/roadrunner/issues}
+  \item \url{https://cetialphafive.github.io/roadrunner/}
+  \item \url{https://github.com/CetiAlphaFive/roadrunner}
+  \item Report bugs at \url{https://github.com/CetiAlphaFive/roadrunner/issues}
 }
 
 }
