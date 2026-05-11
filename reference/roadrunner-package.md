@@ -24,8 +24,8 @@ Useful links:
 
 ## Author
 
-**Maintainer**: Jack Trametta <jtrametta@gmail.com>
+**Maintainer**: Jack T. Rametta <jtrametta@gmail.com>
 
 Authors:
 
-- Jack Trametta <jtrametta@gmail.com>
+- Jack T. Rametta <jtrametta@gmail.com>

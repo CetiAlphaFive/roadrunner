@@ -22,4 +22,4 @@ predict(fit, head(mtcars))
 
 ## License
 
-MIT (c) Jack Trametta
+MIT (c) Jack T. Rametta
