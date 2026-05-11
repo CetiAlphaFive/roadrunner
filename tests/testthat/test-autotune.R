@@ -301,12 +301,12 @@ test_that("mars_backward_only_cpp matches mars_fit_cpp on the same forward", {
   x <- matrix(stats::runif(n * p), n, p)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
   # Plain forward + GCV-backward.
-  fit_full <- ares:::mars_fit_cpp(
+  fit_full <- roadrunner:::mars_fit_cpp(
     x, y, 2L, 21L, 3, 0.001, 0L, 0L, 1L, 0L, 10L, 1.0,
     21L, 0L, 0L, 1L, 0L, 0L
   )
   # Backward-only on the same dirs/cuts with the same penalty.
-  fit_back <- ares:::mars_backward_only_cpp(
+  fit_back <- roadrunner:::mars_backward_only_cpp(
     x, y, fit_full$dirs, fit_full$cuts,
     3.0, 21L, 1L, 0L, 0L
   )

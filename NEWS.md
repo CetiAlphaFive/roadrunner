@@ -1,3 +1,19 @@
+# roadrunner 0.0.0.9028 (development)
+
+## Package rename: `ares` -> `roadrunner`
+
+The package is rebranded as `roadrunner` -- a collection of fast,
+low-dependency machine learning algorithm implementations. The MARS
+fitter stays exposed as `ares()`. Existing `ares()` call sites, the
+`"ares"` S3 class, `predict.ares()`, `print.ares()`, `summary.ares()`,
+and `plot.ares()` are unchanged. Only the package itself is renamed:
+
+- `library(ares)` -> `library(roadrunner)`
+- `ares::ares(...)` -> `roadrunner::ares(...)`
+- `Package: ares` in DESCRIPTION -> `Package: roadrunner`
+
+No user-visible behavior in the MARS fitter changes at this version.
+
 # ares 0.0.0.9024 (development)
 
 ## Phase 5 -- classification support: `family = "binomial"`

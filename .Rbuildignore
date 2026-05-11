@@ -12,5 +12,7 @@
 ^README\.Rmd$
 ^ares\.Rcheck$
 ^ares_.*\.tar\.gz$
+^roadrunner\.Rcheck$
+^roadrunner_.*\.tar\.gz$
 ^\.positai$
 ^\.claude$

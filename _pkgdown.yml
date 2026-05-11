@@ -1,4 +1,4 @@
-url: https://jtrametta.github.io/ares/
+url: https://jtrametta.github.io/roadrunner/
 destination: docs
 template:
   bootstrap: 5
@@ -8,7 +8,7 @@ reference:
   desc: "Fit MARS models with optional CV pruning and hyperparameter autotune."
   contents:
   - ares
-  - ares-package
+  - roadrunner-package
 - title: "Prediction"
   contents:
   - predict.ares

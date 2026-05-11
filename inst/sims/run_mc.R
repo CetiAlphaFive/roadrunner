@@ -4,7 +4,7 @@
 # Reproducible: master seed below; per-cell seed = master + cell_index.
 
 suppressPackageStartupMessages({
-  library(ares)
+  library(roadrunner)
   if (!requireNamespace("earth", quietly = TRUE))
     stop("'earth' is required for the simulation comparison.")
   library(earth)
@@ -63,8 +63,8 @@ run_one <- function(row_idx, dgp, n, p, snr, degree, nrep) {
     rep_seed <- as.integer(cell_seed * 17 + rep) %% .Machine$integer.max
     d <- dgps[[dgp]](n = n, p = p, snr = snr, seed = rep_seed)
     # ares (single-thread) and ares (multi-thread, capped at 2 for CRAN safety)
-    t_a1 <- system.time(af1 <- ares::ares(d$x, d$y, degree = degree, nthreads = 1))[["elapsed"]]
-    t_a2 <- system.time(af2 <- ares::ares(d$x, d$y, degree = degree, nthreads = 2))[["elapsed"]]
+    t_a1 <- system.time(af1 <- roadrunner::ares(d$x, d$y, degree = degree, nthreads = 1))[["elapsed"]]
+    t_a2 <- system.time(af2 <- roadrunner::ares(d$x, d$y, degree = degree, nthreads = 2))[["elapsed"]]
     t_e  <- system.time(ef  <- earth::earth(d$x, d$y, degree = degree))[["elapsed"]]
 
     nt_a <- length(af1$selected.terms)

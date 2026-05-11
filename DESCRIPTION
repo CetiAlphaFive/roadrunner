@@ -1,17 +1,18 @@
-Package: ares
-Title: Fast Multivariate Adaptive Regression Splines
-Version: 0.0.0.9027
-Authors@R: 
+Package: roadrunner
+Title: Fast, Low-Dependency Machine Learning Algorithms
+Version: 0.0.0.9028
+Authors@R:
     person("Jack", "Trametta", , "jtrametta@gmail.com", role = c("aut", "cre"))
-Description: Fits Multivariate Adaptive Regression Splines (MARS) models
+Description: A collection of fast, low-dependency implementations of
+    classical machine learning algorithms. The first algorithm is
+    'ares()', a Multivariate Adaptive Regression Splines (MARS) fitter
     using Friedman's (1991) fast least-squares forward selection and a
-    parallelized knot search built on 'Rcpp' and 'RcppParallel'. Designed
-    for numerical parity with the 'earth' package on the gaussian-only
-    core while taking advantage of multi-core CPUs to reduce wall-clock
-    fitting time on large datasets.
+    parallelized knot search built on 'Rcpp' and 'RcppParallel'.
+    Additional algorithms will be added as separate exported functions
+    under the same package roof.
 License: MIT + file LICENSE
-URL: https://jtrametta.github.io/ares, https://github.com/jtrametta/ares
-BugReports: https://github.com/jtrametta/ares/issues
+URL: https://jtrametta.github.io/roadrunner, https://github.com/jtrametta/roadrunner
+BugReports: https://github.com/jtrametta/roadrunner/issues
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)

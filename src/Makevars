@@ -1,4 +1,4 @@
-# ares src/Makevars -- portable, no GNU-make extensions.
+# roadrunner src/Makevars -- portable, no GNU-make extensions.
 #
 # RcppParallel linkage is satisfied by `LinkingTo: Rcpp, RcppParallel` in
 # DESCRIPTION on every supported platform we know of (modern RcppParallel

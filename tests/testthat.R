@@ -7,6 +7,6 @@
 # * https://testthat.r-lib.org/articles/special-files.html
 
 library(testthat)
-library(ares)
+library(roadrunner)
 
-test_check("ares")
+test_check("roadrunner")

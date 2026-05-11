@@ -1,18 +1,25 @@
-# ares - handoff brief (post-tuning roadmap)
+# roadrunner - handoff brief (post-rename roadmap)
 
 ## What this package is
 
-`ares` is an R package providing a fast Multivariate Adaptive Regression
-Splines (MARS) implementation. Single user-facing function `ares()`. Built
+`roadrunner` is an R package collecting fast, low-dependency machine
+learning algorithm implementations. The first algorithm shipped is
+`ares()`, a Multivariate Adaptive Regression Splines (MARS) fitter built
 with `Rcpp` + `RcppParallel` (TBB). Cross-platform. Deterministic across
-threads (byte-identical fits at `nthreads=1` vs N).
+threads (byte-identical fits at `nthreads=1` vs N). Additional algorithms
+will plug in as separate exported functions under the same package roof.
+
+The package was renamed from `ares` to `roadrunner` at v0.0.0.9028. The
+MARS fitter remains exposed as `ares()`, the S3 class is still `"ares"`,
+and `predict.ares` / `print.ares` / `summary.ares` / `plot.ares` are
+unchanged. The working directory stays `/home/jack/Dropbox/ares`.
 
 **Author**: Jack Trametta <jtrametta@gmail.com>. **License**: MIT. **Repo**:
 local git only on `main`.
 
 `earth` (`earth::earth`) is a useful diagnostic but not a parity target.
 
-## Current state - v0.0.0.9027
+## Current state - v0.0.0.9028
 
 ### Test suite
 - 276/276 testthat green under ARES_FULL_TESTS=1 (202 prior + 51 weights /

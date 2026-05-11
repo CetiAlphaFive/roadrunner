@@ -1,10 +1,10 @@
 ---
-title: "ares: Fast MARS in R"
+title: "ares: Fast MARS in roadrunner"
 author: "Jack Trametta"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{ares: Fast MARS in R}
+  %\VignetteIndexEntry{ares: Fast MARS in roadrunner}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -20,20 +20,21 @@ knitr::opts_chunk$set(
 
 ## Introduction
 
-`ares` fits Multivariate Adaptive Regression Splines (MARS) models — a flexible
-nonparametric regression technique introduced by Friedman (1991). The MARS forward
-pass adds basis functions of the form `max(0, ±(x - knot))` (called *hinges*) one
-pair at a time, each scaled by a parent term to allow interactions. A backward
-pass then prunes terms by minimizing the GCV criterion.
+`ares()` (shipped in the `roadrunner` package) fits Multivariate Adaptive
+Regression Splines (MARS) models — a flexible nonparametric regression
+technique introduced by Friedman (1991). The MARS forward pass adds basis
+functions of the form `max(0, ±(x - knot))` (called *hinges*) one pair at a
+time, each scaled by a parent term to allow interactions. A backward pass
+then prunes terms by minimizing the GCV criterion.
 
-`ares` mirrors the API of [`earth`](https://cran.r-project.org/package=earth) on
-the gaussian-only core and is designed for numerical parity with `earth` while
-taking advantage of multi-core CPUs via `RcppParallel`.
+`ares()` mirrors the API of [`earth`](https://cran.r-project.org/package=earth)
+on the gaussian-only core and is designed for numerical parity with `earth`
+while taking advantage of multi-core CPUs via `RcppParallel`.
 
 ## A small example: `mtcars`
 
 ```{r}
-library(ares)
+library(roadrunner)
 fit <- ares(mpg ~ ., data = mtcars, nthreads = 2)
 print(fit)
 ```

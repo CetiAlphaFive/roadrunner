@@ -2,14 +2,14 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 mars_fit_cpp <- function(x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path, weights_in = NULL) {
-    .Call(`_ares_mars_fit_cpp`, x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path, weights_in)
+    .Call(`_roadrunner_mars_fit_cpp`, x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path, weights_in)
 }
 
 mars_basis_cpp <- function(xnew, dirs, cuts, selected) {
-    .Call(`_ares_mars_basis_cpp`, xnew, dirs, cuts, selected)
+    .Call(`_roadrunner_mars_basis_cpp`, xnew, dirs, cuts, selected)
 }
 
 mars_backward_only_cpp <- function(x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in = NULL) {
-    .Call(`_ares_mars_backward_only_cpp`, x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in)
+    .Call(`_roadrunner_mars_backward_only_cpp`, x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in)
 }
 
