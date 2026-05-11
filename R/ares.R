@@ -831,6 +831,11 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     out$varmod <- .ares_fit_varmod(out, varmod = varmod, weights = w_norm)
   }
 
+  # Persist observation weights so plot.ares() can build weighted leverage,
+  # standardized residuals, and Cook's distance. Stored as-passed (NULL when
+  # the caller did not supply weights); plot.ares() treats NULL as rep(1, n).
+  out$weights <- weights
+
   class(out) <- c("ares")
   out
 }

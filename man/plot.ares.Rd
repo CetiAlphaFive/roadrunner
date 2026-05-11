@@ -2,25 +2,82 @@
 % Please edit documentation in R/print.R
 \name{plot.ares}
 \alias{plot.ares}
-\title{Plot method for \code{ares} fits}
+\title{Diagnostic plots for an \code{ares} fit}
 \usage{
-\method{plot}{ares}(x, which = 1L, ...)
+\method{plot}{ares}(
+  x,
+  which = c(1L, 2L, 3L, 5L),
+  caption = list("Residuals vs Fitted", "Normal Q-Q", "Scale-Location",
+    "Cook's distance", "Residuals vs Leverage", expression("Cook's dist vs Leverage  " *
+    h[ii]/(1 - h[ii]))),
+  panel = if (add.smooth) graphics::panel.smooth else graphics::points,
+  sub.caption = NULL,
+  main = "",
+  ask = prod(graphics::par("mfcol")) < length(which) && grDevices::dev.interactive(),
+  ...,
+  id.n = 3L,
+  labels.id = NULL,
+  cex.id = 0.75,
+  qqline = TRUE,
+  cook.levels = c(0.5, 1),
+  add.smooth = getOption("add.smooth", TRUE),
+  label.pos = c(4, 2)
+)
 }
 \arguments{
-\item{x}{An object of class \code{"ares"}.}
+\item{x}{A fitted object of class \code{"ares"}.}
 
-\item{which}{Which diagnostic to draw. Only \code{1} (residuals vs
-fitted) is implemented.}
+\item{which}{Integer subset of \code{1:6} selecting which panels to
+draw. Default \code{c(1, 2, 3, 5)} (the \code{plot.lm()} default).}
 
-\item{...}{Further graphical parameters passed to \code{plot()}.}
+\item{caption}{Length-6 list of panel captions; defaults match
+\code{plot.lm()}.}
+
+\item{panel}{Panel function for scatter panels; defaults to
+\code{\link[graphics:panel.smooth]{graphics::panel.smooth()}}.}
+
+\item{sub.caption}{Optional caption shown on the outer margin (one
+per page). Defaults to a deparsed \code{x$call}.}
+
+\item{main}{Title for individual panels (typically \code{""}).}
+
+\item{ask}{If \code{TRUE}, prompt before each page when multiple panels
+are drawn on a single-panel device.}
+
+\item{...}{Further graphical parameters passed through to the
+underlying \code{plot()} calls.}
+
+\item{id.n}{Number of extreme points to label per panel (default
+\code{3}; set \code{0} to suppress).}
+
+\item{labels.id}{Character vector of row labels; defaults to
+\code{1:n}.}
+
+\item{cex.id}{\code{cex} for point labels.}
+
+\item{qqline}{Logical; if \code{TRUE}, add a Q-Q reference line on
+panel 2.}
+
+\item{cook.levels}{Cook's-distance contours drawn on panel 5.}
+
+\item{add.smooth}{Logical; passed to \code{panel}.}
+
+\item{label.pos}{\code{pos} argument forwarded to \code{\link[graphics:text]{graphics::text()}}.}
 }
 \value{
 Invisibly returns \code{x}.
 }
 \description{
-Diagnostic plot for a fitted \code{ares} model. Currently produces a
-residuals-vs-fitted scatter; additional diagnostics may be added in
-the future.
+Six diagnostic panels modelled on \code{\link[stats:plot.lm]{stats::plot.lm()}}: residuals vs
+fitted, normal Q-Q of standardized residuals, scale-location,
+Cook's distance, residuals vs leverage (with Cook's-distance
+contours), and Cook's distance vs leverage. The default \code{which}
+draws panels 1, 2, 3, 5 in a 2x2 grid when the device is on a
+single-panel layout; this matches the \code{plot.lm()} default. For
+non-gaussian families (\code{binomial}, \code{poisson}, \code{gamma}), deviance
+residuals are used in panel 1 and IRLS working weights are used to
+compute leverages and standardized residuals (the GLM analogue of
+the gaussian hat matrix).
 }
 \examples{
 \dontrun{
