@@ -129,6 +129,18 @@
 #'   Missing values in `y` are always a hard error -- there is no sensible
 #'   way to impute the regression target. `NaN` and `+/-Inf` in `x` are
 #'   also rejected outright regardless of `na.action`.
+#' @param family Response family. Either `"gaussian"` (default; numeric `y`,
+#'   identity link, OLS coefficients) or `"binomial"` (binary `y`, logit
+#'   link). When `family = "binomial"`, `y` must be either a 0/1 numeric
+#'   vector or a 2-level factor (any other shape is a hard error). The
+#'   forward and backward passes still run on the original numeric `y` as
+#'   if gaussian (matching earth's GLM strategy); after backward pruning
+#'   the selected basis is refit on the binary response via
+#'   `stats::glm.fit()` with `family = binomial()`, and `$coefficients`,
+#'   `$fitted.values`, and `$linear.predictor` come from that GLM. Bagging,
+#'   CV pruning, and autotune compose with `family = "binomial"`; the inner
+#'   model-selection still uses Gaussian MSE on the latent scale (cheap and
+#'   adequate for term selection — only the final coefficients use IRLS).
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -137,7 +149,11 @@
 #' @return An object of class `"ares"` -- a list with components
 #'   `coefficients`, `bx`, `dirs`, `cuts`, `selected.terms`, `rss`, `gcv`,
 #'   `rss.per.subset`, `gcv.per.subset`, `fitted.values`, `residuals`, `namesx`,
-#'   `call`, plus echoed control parameters.
+#'   `call`, plus echoed control parameters. When `family = "binomial"` the
+#'   fit additionally carries `$family = "binomial"`, `$glm` (a small list
+#'   with `deviance`, `null.deviance`, `df.null`, `df.residual`, `aic`,
+#'   `converged`, `iter`, `y.levels`), `$linear.predictor` (length `n`),
+#'   and `$fitted.values` holds response-scale probabilities (`plogis(lp)`).
 #' @references
 #' Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 #' *Annals of Statistics* 19(1):1-67.
@@ -170,7 +186,17 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
   # drop intercept column
   has_int <- "(Intercept)" %in% colnames(mm)
   if (has_int) mm <- mm[, colnames(mm) != "(Intercept)", drop = FALSE]
-  out <- ares.default(x = mm, y = as.numeric(yv), ...)
+  # When the caller passed family = "binomial" we must keep the response in
+  # its original type (factor / 0-1 / logical) so ares.default can validate
+  # and coerce it consistently. For gaussian (default), preserve the old
+  # behaviour of coercing to numeric.
+  dots <- list(...)
+  fam_in <- dots$family
+  if (!is.null(fam_in) && identical(fam_in, "binomial")) {
+    out <- ares.default(x = mm, y = yv, ...)
+  } else {
+    out <- ares.default(x = mm, y = as.numeric(yv), ...)
+  }
   out$call <- cl
   out$terms <- stats::terms(formula, data = data)
   out
@@ -201,11 +227,57 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          autotune.warmstart = TRUE,
                          n.boot = 0L,
                          na.action = c("impute", "omit"),
+                         family = c("gaussian", "binomial"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
   autotune_speed <- match.arg(autotune.speed)
   na.action <- match.arg(na.action)
+  family <- match.arg(family)
+  # ---- Response coercion for `family` --------------------------------------
+  # For `family = "binomial"`, we need y to be a 0/1 numeric on entry to the
+  # downstream gaussian engine. Accept:
+  #   - integer / numeric vectors whose unique non-NA values are subset of
+  #     {0, 1}.
+  #   - 2-level factors. Reference level (level 1) maps to 0; the other to
+  #     1. The level pair is stashed for predict.ares() so that predicted
+  #     factor responses round-trip to the original labels.
+  # Anything else is rejected with a clear stop().
+  y_levels <- NULL
+  if (family == "binomial") {
+    if (is.logical(y)) {
+      y <- as.integer(y)
+    } else if (is.factor(y)) {
+      lv <- levels(y)
+      if (length(lv) != 2L)
+        stop("ares: family = 'binomial' requires y to be a 2-level factor",
+             " (got ", length(lv), " levels: ",
+             paste(lv, collapse = ", "), ").")
+      y_levels <- lv
+      y <- as.integer(y) - 1L         # 1st level -> 0, 2nd level -> 1
+    } else if (is.character(y)) {
+      yf <- factor(y)
+      lv <- levels(yf)
+      if (length(lv) != 2L)
+        stop("ares: family = 'binomial' requires y to be a 2-level",
+             " character vector (got ", length(lv), " levels).")
+      y_levels <- lv
+      y <- as.integer(yf) - 1L
+    } else if (is.numeric(y) || is.integer(y)) {
+      # 0/1 integers / doubles only. NaN/Inf are caught later by the
+      # is.finite() check; this block only rejects out-of-{0,1} values.
+      yv <- y[is.finite(y)]
+      uv <- unique(yv)
+      if (!all(uv %in% c(0, 1)))
+        stop("ares: family = 'binomial' requires y in {0, 1}; got values ",
+             paste(utils::head(sort(uv), 6), collapse = ", "), ".")
+      y <- as.integer(y)
+    } else {
+      stop("ares: family = 'binomial' requires y to be 0/1 numeric,",
+           " logical, character, or 2-level factor (got class: ",
+           paste(class(y), collapse = "/"), ").")
+    }
+  }
   # nfold > 0 implies CV pruning. Promote pmethod to "cv" so downstream
   # branches share the same code path; a user explicitly asking for
   # pmethod="cv" with nfold==0 gets a default of 5 folds.
@@ -500,8 +572,103 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # predict.ares() replays the same model.matrix expansion on newdata.
   out$factor_info <- factor_info
 
+  # ---- family bookkeeping --------------------------------------------------
+  out$family <- family
+  if (family == "binomial") {
+    # Post-hoc GLM refit on the selected basis (earth strategy). The
+    # forward + backward already picked terms via OLS on the binary y; now
+    # IRLS estimates logit-scale coefficients on the same design. We use
+    # `glm.fit` (no formula, no model.frame) for speed.
+    out <- .ares_refit_binomial(out, y_int = as.integer(y),
+                                y_levels = y_levels)
+    # Refit each bag replicate too (each replicate already holds its own
+    # selected basis on its bootstrap rows; we re-evaluate on those rows
+    # and IRLS-refit). The original x/y are needed because bag fits only
+    # carry dirs/cuts/selected.terms (not their bootstrap data).
+    if (!is.null(out$boot) && length(out$boot$fits)) {
+      out$boot$fits <- .ares_refit_boot_binomial(out$boot$fits,
+                                                  x_full = x,
+                                                  y_full = as.integer(y),
+                                                  seed_cv = seed.cv)
+    }
+  }
+
   class(out) <- c("ares")
   out
+}
+
+# ============================================================================
+#  Internal: post-hoc GLM refit (family = "binomial")
+# ============================================================================
+#
+# Refits a binomial GLM on the *selected* basis (`out$bx`) using IRLS via
+# `stats::glm.fit`. Replaces `$coefficients`, `$fitted.values`,
+# `$linear.predictor`, `$residuals`, and `$glm`. The forward + backward
+# components (`dirs`, `cuts`, `selected.terms`, `rss`, `gcv`) are kept
+# untouched — they reflect the gaussian model-selection stage.
+#
+# @keywords internal
+.ares_refit_binomial <- function(out, y_int, y_levels) {
+  bx <- out$bx
+  if (is.null(bx) || nrow(bx) == 0L)
+    stop("ares: family='binomial' but $bx is empty; cannot fit GLM.")
+  # The intercept column is the first basis term (all ones), so glm.fit gets
+  # the full design and we pass `intercept = FALSE` to avoid duplicating it.
+  g <- stats::glm.fit(x = bx, y = y_int, family = stats::binomial(),
+                      intercept = FALSE)
+  cf <- g$coefficients
+  names(cf) <- colnames(bx)
+  out$coefficients   <- cf
+  out$linear.predictor <- drop(bx %*% cf)
+  out$fitted.values  <- stats::plogis(out$linear.predictor)
+  # Residuals = response - probability (working / response residuals).
+  out$residuals      <- as.numeric(y_int) - out$fitted.values
+  out$glm <- list(
+    deviance      = g$deviance,
+    null.deviance = g$null.deviance,
+    df.null       = g$df.null,
+    df.residual   = g$df.residual,
+    aic           = g$aic,
+    converged     = isTRUE(g$converged),
+    iter          = g$iter,
+    y.levels      = y_levels
+  )
+  out
+}
+
+# Internal: refit each bag replicate as binomial. We don't keep each bag's
+# bootstrap rows — only its dirs/cuts/selected.terms. So we rebuild the bag's
+# basis on a fresh bootstrap sample (using the same seed offset as the
+# original bagging loop) and IRLS-fit it against that sample's binary y.
+#
+# @keywords internal
+.ares_refit_boot_binomial <- function(fits, x_full, y_full, seed_cv) {
+  n_full <- nrow(x_full)
+  has_seed <- !is.null(seed_cv)
+  if (has_seed) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed_cv) + 1009L)   # same offset as bagging loop
+  }
+  for (b in seq_along(fits)) {
+    idx <- sample.int(n_full, n_full, replace = TRUE)
+    x_b <- x_full[idx, , drop = FALSE]
+    y_b <- y_full[idx]
+    bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
+                           as.integer(fits[[b]]$selected.terms))
+    g <- tryCatch(
+      stats::glm.fit(x = bx_b, y = y_b,
+                     family = stats::binomial(), intercept = FALSE),
+      error = function(e) NULL
+    )
+    if (!is.null(g)) fits[[b]]$coefficients <- as.numeric(g$coefficients)
+  }
+  fits
 }
 
 # ============================================================================

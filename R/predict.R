@@ -1,4 +1,4 @@
-# predict.ares -- bagging-aware prediction
+# predict.ares -- bagging-aware prediction (gaussian + binomial)
 #
 # Three code paths:
 #   1. newdata = NULL  -> return $fitted.values (training-set predictions).
@@ -9,12 +9,22 @@
 #   3. newdata supplied, $boot present -> average prediction across the
 #      central fit plus each bootstrap replicate. With se.fit = TRUE, the
 #      per-row sample SD across replicates is attached as attr(., "sd").
+#
+# When the fit was built with `family = "binomial"`, predictions go through
+# the logit link. `type = "link"` returns the linear predictor x %*% beta;
+# `type = "response"` returns plogis(linear predictor). For bag predictions
+# under binomial, replicate-level predictions are averaged on the response
+# (probability) scale so the bag mean is itself a valid probability.
 
 #' Predictions from an `ares` fit
 #'
 #' @param object An object of class `"ares"`.
 #' @param newdata A numeric matrix or data frame of new predictors. If `NULL`
 #'   (default), returns `object$fitted.values`.
+#' @param type Prediction scale. `"response"` (default) returns
+#'   `plogis(eta)` for binomial fits and the fitted mean for gaussian fits;
+#'   `"link"` returns the linear predictor `eta`. Ignored for gaussian
+#'   models (link and response coincide).
 #' @param se.fit If `TRUE` and `object` was fit with `n.boot > 0`, the
 #'   returned vector carries an `"sd"` attribute holding the per-prediction
 #'   bag standard deviation. Default `FALSE` (plain numeric vector).
@@ -26,9 +36,17 @@
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
 #' p <- predict(fit, as.matrix(mtcars[, -1]))
 #' @export
-predict.ares <- function(object, newdata = NULL, se.fit = FALSE, ...) {
+predict.ares <- function(object, newdata = NULL,
+                         type = c("response", "link"),
+                         se.fit = FALSE, ...) {
+  type <- match.arg(type)
+  fam  <- if (is.null(object$family)) "gaussian" else object$family
   if (is.null(newdata)) {
-    yhat <- object$fitted.values
+    yhat <- if (fam == "binomial" && type == "link") {
+      object$linear.predictor %||% object$fitted.values
+    } else {
+      object$fitted.values
+    }
     if (isTRUE(se.fit) && !is.null(object$boot)) {
       # Re-derive bag predictions on the training data: each replicate's
       # fit holds dirs/cuts/selected.terms; we evaluate them via the basis
@@ -111,26 +129,55 @@ predict.ares <- function(object, newdata = NULL, se.fit = FALSE, ...) {
   }
 
   bx_new <- mars_basis_cpp(xnew, object$dirs, object$cuts, object$selected.terms)
-  yhat_central <- drop(bx_new %*% object$coefficients)
+  eta_central <- drop(bx_new %*% object$coefficients)
 
-  if (is.null(object$boot)) return(yhat_central)
+  # Single-fit path.
+  if (is.null(object$boot)) {
+    if (fam == "binomial") {
+      return(if (type == "link") eta_central else stats::plogis(eta_central))
+    }
+    return(eta_central)
+  }
 
   # Bag predictions: average across (n.boot + 1) fits — the central fit plus
-  # each replicate.
+  # each replicate. For binomial we average on the response (probability)
+  # scale so the bag mean stays in [0, 1]; for gaussian we average on the
+  # raw scale (link == response).
   preds <- matrix(NA_real_, nrow = nrow(xnew),
                   ncol = length(object$boot$fits) + 1L)
-  preds[, 1] <- yhat_central
-  for (b in seq_along(object$boot$fits)) {
-    fb <- object$boot$fits[[b]]
-    bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
-    preds[, b + 1L] <- drop(bx_b %*% fb$coefficients)
+  if (fam == "binomial") {
+    preds[, 1] <- stats::plogis(eta_central)
+    for (b in seq_along(object$boot$fits)) {
+      fb <- object$boot$fits[[b]]
+      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
+      eta_b <- drop(bx_b %*% fb$coefficients)
+      preds[, b + 1L] <- stats::plogis(eta_b)
+    }
+  } else {
+    preds[, 1] <- eta_central
+    for (b in seq_along(object$boot$fits)) {
+      fb <- object$boot$fits[[b]]
+      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
+      preds[, b + 1L] <- drop(bx_b %*% fb$coefficients)
+    }
   }
   yhat <- rowMeans(preds)
   if (isTRUE(se.fit)) {
     attr(yhat, "sd") <- apply(preds, 1, stats::sd)
   }
+  # Convert to link scale only after averaging (for binomial): the
+  # bag-mean on response scale is the natural prediction; if the user
+  # explicitly asked type="link", invert via qlogis (handling 0/1 edge
+  # cases by clamping to a small epsilon so the logit is finite).
+  if (fam == "binomial" && type == "link") {
+    eps <- 1e-15
+    yhat <- stats::qlogis(pmin(pmax(yhat, eps), 1 - eps))
+  }
   yhat
 }
+
+# Tiny null-coalescing operator (mirrors the one in ares.R).
+`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Internal: compute bag SD on a built-in xnew (training x). Currently unused
 # from outside predict.ares; kept tiny for clarity.

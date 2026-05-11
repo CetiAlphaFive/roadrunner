@@ -4,13 +4,24 @@
 \alias{predict.ares}
 \title{Predictions from an \code{ares} fit}
 \usage{
-\method{predict}{ares}(object, newdata = NULL, se.fit = FALSE, ...)
+\method{predict}{ares}(
+  object,
+  newdata = NULL,
+  type = c("response", "link"),
+  se.fit = FALSE,
+  ...
+)
 }
 \arguments{
 \item{object}{An object of class \code{"ares"}.}
 
 \item{newdata}{A numeric matrix or data frame of new predictors. If \code{NULL}
 (default), returns \code{object$fitted.values}.}
+
+\item{type}{Prediction scale. \code{"response"} (default) returns
+\code{plogis(eta)} for binomial fits and the fitted mean for gaussian fits;
+\code{"link"} returns the linear predictor \code{eta}. Ignored for gaussian
+models (link and response coincide).}
 
 \item{se.fit}{If \code{TRUE} and \code{object} was fit with \code{n.boot > 0}, the
 returned vector carries an \code{"sd"} attribute holding the per-prediction

@@ -35,6 +35,7 @@ ares(x, ...)
   autotune.warmstart = TRUE,
   n.boot = 0L,
   na.action = c("impute", "omit"),
+  family = c("gaussian", "binomial"),
   trace = 0L,
   nthreads = 0L,
   ...
@@ -168,6 +169,19 @@ Missing values in \code{y} are always a hard error -- there is no sensible
 way to impute the regression target. \code{NaN} and \verb{+/-Inf} in \code{x} are
 also rejected outright regardless of \code{na.action}.}
 
+\item{family}{Response family. Either \code{"gaussian"} (default; numeric \code{y},
+identity link, OLS coefficients) or \code{"binomial"} (binary \code{y}, logit
+link). When \code{family = "binomial"}, \code{y} must be either a 0/1 numeric
+vector or a 2-level factor (any other shape is a hard error). The
+forward and backward passes still run on the original numeric \code{y} as
+if gaussian (matching earth's GLM strategy); after backward pruning
+the selected basis is refit on the binary response via
+\code{stats::glm.fit()} with \code{family = binomial()}, and \verb{$coefficients},
+\verb{$fitted.values}, and \verb{$linear.predictor} come from that GLM. Bagging,
+CV pruning, and autotune compose with \code{family = "binomial"}; the inner
+model-selection still uses Gaussian MSE on the latent scale (cheap and
+adequate for term selection — only the final coefficients use IRLS).}
+
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 
 \item{nthreads}{Number of threads. 0 (default) selects
@@ -178,7 +192,11 @@ bundled vignette cap this at 2.}
 An object of class \code{"ares"} -- a list with components
 \code{coefficients}, \code{bx}, \code{dirs}, \code{cuts}, \code{selected.terms}, \code{rss}, \code{gcv},
 \code{rss.per.subset}, \code{gcv.per.subset}, \code{fitted.values}, \code{residuals}, \code{namesx},
-\code{call}, plus echoed control parameters.
+\code{call}, plus echoed control parameters. When \code{family = "binomial"} the
+fit additionally carries \verb{$family = "binomial"}, \verb{$glm} (a small list
+with \code{deviance}, \code{null.deviance}, \code{df.null}, \code{df.residual}, \code{aic},
+\code{converged}, \code{iter}, \code{y.levels}), \verb{$linear.predictor} (length \code{n}),
+and \verb{$fitted.values} holds response-scale probabilities (\code{plogis(lp)}).
 }
 \description{
 Fits a MARS model (Friedman 1991) using a fast least-squares forward pass

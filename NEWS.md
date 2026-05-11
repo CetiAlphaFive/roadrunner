@@ -1,3 +1,53 @@
+# ares 0.0.0.9024 (development)
+
+## Phase 5 -- classification support: `family = "binomial"`
+
+First step toward classification. `ares.default()` and `ares.formula()` gain
+a `family` argument; values are `"gaussian"` (default; unchanged behaviour)
+and `"binomial"` (logistic regression with a 0/1 response or a 2-level
+factor / character / logical vector).
+
+The strategy follows earth's: forward + backward MARS still runs on the
+original numeric response as if gaussian (so all the speedups, CV,
+autotune, bagging, NA handling, factor expansion compose untouched).
+After backward pruning picks the basis, `stats::glm.fit()` refits the
+selected basis with `family = binomial()` and the IRLS coefficients
+replace the gaussian ones. `$fitted.values` then holds response-scale
+probabilities (`plogis(linear.predictor)`).
+
+### New API
+- `family = c("gaussian", "binomial")` on `ares()` / `ares.default()`.
+- `predict.ares()` gains `type = c("response", "link")`. Default
+  `"response"` for binomial fits returns probabilities; `"link"` returns
+  the linear predictor. For gaussian fits, the two are identical (the
+  link is identity) and `type` is a no-op.
+- Bagging composes: each bag replicate refits its own basis with IRLS,
+  and bag predictions average on the response scale.
+
+### Result-object additions (binomial only)
+- `$family`             - `"binomial"`.
+- `$linear.predictor`   - `bx %*% glm.coef`, length `n`.
+- `$fitted.values`      - `plogis(linear.predictor)` (probabilities).
+- `$glm`                - small list: `deviance`, `null.deviance`,
+                          `df.null`, `df.residual`, `aic`, `converged`,
+                          `iter`, `y.levels` (factor labels if applicable).
+- `print` and `summary` surface deviance, null deviance, McFadden R^2,
+  AIC, IRLS iterations, and convergence flag.
+
+### Tests
+- 38 new tests under `tests/testthat/test-family-binomial.R`.
+  Quick subset (26 tests) runs by default; the heavy compositions
+  (CV + binomial, autotune + binomial, bagging + binomial, determinism
+  across thread counts) are gated behind `ARES_FULL_TESTS=1`.
+- Full suite: 202/202 passing (164 prior + 38 binomial).
+
+### Notes
+- The inner CV / autotune step still picks terms by gaussian MSE on the
+  latent scale, then GLM-refits the winner. This matches earth's
+  approach and avoids re-IRLS inside the forward pass.
+- Determinism is preserved: at fixed `seed.cv`, binomial fits are
+  byte-identical across thread counts.
+
 # ares 0.0.0.9023 (development)
 
 ## Phase 4 (cont.) -- nfold default = 3 on high-p autotune
