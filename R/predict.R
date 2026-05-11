@@ -1,3 +1,15 @@
+# predict.ares -- bagging-aware prediction
+#
+# Three code paths:
+#   1. newdata = NULL  -> return $fitted.values (training-set predictions).
+#      With se.fit = TRUE and a bag, attaches a placeholder "sd" attribute
+#      (bag SD on training rows requires the original x; see .ares_boot_sd).
+#   2. newdata supplied, no $boot slot -> single-fit prediction via
+#      mars_basis_cpp + coefficient multiply.
+#   3. newdata supplied, $boot present -> average prediction across the
+#      central fit plus each bootstrap replicate. With se.fit = TRUE, the
+#      per-row sample SD across replicates is attached as attr(., "sd").
+
 #' Predictions from an `ares` fit
 #'
 #' @param object An object of class `"ares"`.

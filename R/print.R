@@ -1,3 +1,9 @@
+# S3 methods: print, summary, print.summary, plot.
+#
+# All four are thin formatters over fields populated by ares.default():
+#   $call, $dirs, $selected.terms, $rss, $gcv, $degree, $penalty,
+#   $nthreads, $coefficients, $fitted.values, $residuals.
+
 #' Print method for `ares` fits
 #' @param x an `ares` object
 #' @param digits significant digits for numeric output

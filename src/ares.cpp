@@ -1,8 +1,36 @@
-// ares — Fast Multivariate Adaptive Regression Splines
+// ares — Fast Multivariate Adaptive Regression Splines (C++ engine)
 // Author: Jack Trametta <jtrametta@gmail.com>
 // License: MIT
-// References: Friedman (1991), "Multivariate Adaptive Regression Splines",
-//             Annals of Statistics 19(1):1-67.
+// References:
+//   Friedman (1991), "Multivariate Adaptive Regression Splines",
+//   Annals of Statistics 19(1):1-67.
+//   Friedman (1993), "Fast MARS", Stanford TR-LCS-110 (priority cache).
+//
+// File layout (roughly top to bottom):
+//   1. ares::ares helpers   -- safe_div, auto_minspan/endspan, hinge eval,
+//                              build_term_column, ols_qr.
+//   2. KnotScanner          -- per-(parent, var) joint-hinge scoring via
+//                              Friedman fast-LS prefix sums; AVX2 q-loops.
+//   3. ForwardWorker        -- RcppParallel::Worker dispatching the
+//                              KnotScanner across (parent, var) pairs.
+//   4. QR / downdate helpers -- householder_qr_R, qr_downdate_col,
+//                              chol_diag_inverse (backward subset path).
+//   5. mars_fit_cpp         -- main Rcpp entry: forward + backward,
+//                              incremental Q maintenance, fast-MARS cache,
+//                              optional force_size / return_path for the
+//                              R-side CV pruning orchestrator.
+//   6. mars_basis_cpp       -- basis builder used by predict().
+//   7. mars_backward_only_cpp -- backward replay used by the shared
+//                                 forward-pass autotune fast path.
+//
+// Invariants:
+//   - Determinism: at a fixed seed.cv (or no RNG), fits are byte-identical
+//     across nthreads. The forward Q/QR/Qty state is maintained in a
+//     single serial thread; per-pair scoring is parallel but each pair's
+//     output goes into its own slot.
+//   - Rank-deficient columns are rejected at qr_append_col time so the
+//     maintained R has no zero diagonals; backward downdate can read it
+//     directly.
 
 // [[Rcpp::depends(RcppParallel)]]
 // [[Rcpp::plugins(cpp17)]]

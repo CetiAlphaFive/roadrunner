@@ -1,4 +1,23 @@
 # ares -- main fitting function
+#
+# File layout:
+#   1. ares()             -- S3 generic
+#   2. ares.formula()     -- formula -> matrix dispatch
+#   3. ares.default()     -- main entry; argument validation, dispatch into
+#                            the C++ engine, CV / autotune / bagging
+#                            orchestration, post-processing.
+#   4. .term_labels()     -- earth-compatible "h(x-cut)" labels for dirs/cuts.
+#   5. .ares_cv_fit()     -- CV pruning loop (pmethod = "cv").
+#   6. .ares_autotune()   -- inner-CV grid search over (degree, penalty, nk,
+#                            fast.k); supports warm-start subsample probe and
+#                            a shared-forward fast path across grid cells.
+#
+# Conventions:
+#   - Functions prefixed with `.` are internal helpers (not exported).
+#   - The C++ engine is reached via three Rcpp exports: mars_fit_cpp,
+#     mars_basis_cpp, mars_backward_only_cpp (see src/ares.cpp).
+#   - Determinism contract: at a fixed `seed.cv`, fits are byte-identical
+#     across `nthreads`. Any change that breaks this invariant is a bug.
 
 #' Fast Multivariate Adaptive Regression Splines
 #'
@@ -117,6 +136,10 @@
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
 #' print(fit)
 #' p <- predict(fit, as.matrix(mtcars[, -1]))
+# ============================================================================
+#  S3 generic + formula method
+# ============================================================================
+
 #' @export
 ares <- function(x, ...) UseMethod("ares")
 
@@ -138,6 +161,16 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
   out$terms <- stats::terms(formula, data = data)
   out
 }
+
+# ============================================================================
+#  Main default method
+# ============================================================================
+#
+# Orchestrates: input validation, default selection, optional autotune,
+# optional CV pruning, optional bagging, and the C++ engine call(s).
+#
+# Returns an object of class "ares" with the components documented at the
+# top of the file.
 
 #' @rdname ares
 #' @export
@@ -365,7 +398,19 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   out
 }
 
-# Internal: build term labels matching earth's "h(x-cut)" format
+# ============================================================================
+#  .term_labels — pretty-print MARS terms in earth's "h(x-cut)" format
+# ============================================================================
+#
+# Walks the (dirs, cuts) matrices produced by the C++ engine and turns each
+# row into a single human-readable label. Used for rownames of $bx, $dirs,
+# $cuts, and as the names() of $coefficients.
+#
+# dirs[t, j] codes: 0 = variable unused, +/-1 = hinge sign, 2 = linear basis
+# (auto.linpreds path). cuts[t, j] holds the knot for hinge terms; ignored
+# when dirs[t, j] == 2.
+#
+# @keywords internal
 .term_labels <- function(dirs, cuts, namesx) {
   M <- nrow(dirs)
   p <- ncol(dirs)
@@ -413,6 +458,28 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 #     plain repeated calls for clarity.
 #   - Stratification: regression-only -- quantile-bin y into nfold bins and
 #     round-robin within bins. ncross > 1 reseeds the partition.
+# ============================================================================
+#  .ares_cv_fit — K-fold CV pruning (pmethod = "cv")
+# ============================================================================
+#
+# Drives the cross-validated subset-selection path:
+#   1. Build stratified or random fold partitions (`nfold` folds repeated
+#      `ncross` times).
+#   2. For each (rep, fold), fit forward + backward on the training rows
+#      using the C++ engine with `return_path = 1` so the backward path
+#      (subset terms at every size 1..M) is returned.
+#   3. Score every subset size on the held-out rows via `mars_basis_cpp` +
+#      one matrix multiply per size — no extra fits.
+#   4. Aggregate fold-MSE per size across the `nfold * ncross` evaluations.
+#      Sizes not reached by every fold are excluded from the aggregate to
+#      avoid the (smaller-MSE = more-terms) selection bias.
+#   5. Pick `size_star` = argmin (or 1-SE rule if `cv.1se = TRUE`) and refit
+#      the full data with `force_size = size_star`.
+#
+# Returns the full-data fit augmented with a $cv slot carrying:
+#   nfold, ncross, stratify, cv.mse, cv.se, cv.n, cv.mse.mat, size, etc.
+#
+# @keywords internal
 .ares_cv_fit <- function(x, y, degree, nk, penalty, thresh,
                          minspan, endspan, adjust_endspan, auto_linpreds,
                          fast_k, fast_beta, nprune, trace, nthreads,
@@ -617,6 +684,34 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 #
 # Subsequent versions extend this grid (v0.16: nk; v0.17: autotune.speed;
 # v0.18: n.boot). Helper signature stays stable.
+# ============================================================================
+#  .ares_autotune — hands-free hyperparameter tuning (autotune = TRUE)
+# ============================================================================
+#
+# Picks (degree, penalty, nk, fast.k) by inner K-fold CV grid search:
+#
+#   - Grid construction: degree in {1, 2} (plus 3 when nk allows);
+#     penalty in {0.5, 1.0, 2.0, 3.0} * degree; nk in {1, 2, 4} * nk_default
+#     (capped at 200; capped at 2x on high-p where nk_default >= 31);
+#     fast.k driven by `autotune.speed`. Cells share one fold partition.
+#
+#   - Successive halving: after fold 1, any cell whose fold-1 MSE exceeds
+#     1.5 * running best is eliminated; remaining folds are skipped for it.
+#
+#   - Warm-start (autotune.warmstart = TRUE): a 15% subsample (capped at
+#     200 rows, gated by n >= 200) runs the grid first. If one degree's
+#     best cell beats the next-best degree's by >5% / >20%, that cell is
+#     used directly to refit on the full data — skipping the full-grid CV
+#     entirely. Cuts wall-clock by ~5x on well-separated DGPs.
+#
+#   - Shared forward pass (Phase 3): cells grouped by (degree, nk, fast.k)
+#     run one C++ forward per group per fold; backward replay via
+#     `mars_backward_only_cpp` produces the per-cell subset paths.
+#
+# Returns a full-data ares fit with $autotune containing the grid table,
+# the winning row, and the chosen hyperparameters.
+#
+# @keywords internal
 .ares_autotune <- function(x, y, nk, thresh, minspan, endspan,
                            adjust_endspan, auto_linpreds, fast_k, fast_beta,
                            nprune, nfold, ncross, stratify, seed_cv,
@@ -849,7 +944,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       fold_pairs[[length(fold_pairs) + 1L]] <- c(r, k)
 
   # Group cells by (degree, nk, fast_k). cell_group[i] gives the group index.
-  group_key <- vapply(cells, function(c)
+  group_key <- vapply(cells, \(c)
     sprintf("%d|%d|%d", c$degree, c$nk, c$fast_k), character(1L))
   group_levels <- unique(group_key)
   cell_group <- match(group_key, group_levels)
@@ -884,7 +979,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       # forward pass terminates only on rss-improvement / nk, not on GCV
       # (which doesn't gate the forward anyway). Penalty has no effect on
       # forward, so any value works.
-      pen0 <- min(vapply(cells[gi$members], function(c) c$penalty, numeric(1L)))
+      pen0 <- min(vapply(cells[gi$members], \(c) c$penalty, numeric(1L)))
       ff <- tryCatch(
         mars_fit_cpp(
           x_tr, y_tr, as.integer(gi$degree), as.integer(gi$nk),
@@ -959,10 +1054,10 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # then smaller penalty.
   # Cell order key for default (non-balanced) tie-break.
   ord_cells <- order(scores,
-                     vapply(cells, function(c) c$degree, integer(1L)),
-                     vapply(cells, function(c) c$nk, integer(1L)),
-                     vapply(cells, function(c) c$penalty, numeric(1L)),
-                     vapply(cells, function(c) c$fast_k, integer(1L)))
+                     vapply(cells, \(c) c$degree, integer(1L)),
+                     vapply(cells, \(c) c$nk, integer(1L)),
+                     vapply(cells, \(c) c$penalty, numeric(1L)),
+                     vapply(cells, \(c) c$fast_k, integer(1L)))
 
   # Balanced mode: among cells within 1% of the argmin score, prefer the
   # smallest non-zero fast_k (= fastest cache setting). fast_k = 0 (cache
@@ -975,16 +1070,16 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       # Sort within1 cells by: fastest fast_k first (smaller non-zero fast_k
       # is cheaper). Treat fast_k = 0 as the highest sort key (only chosen
       # when no positive-fast_k cell qualifies).
-      fk_vec <- vapply(cells, function(c) c$fast_k, integer(1L))
+      fk_vec <- vapply(cells, \(c) c$fast_k, integer(1L))
       score_key <- ifelse(fk_vec == 0L, .Machine$integer.max, fk_vec)
       candidates <- which(within1)
       ord_within <- candidates[order(score_key[candidates],
                                      scores[candidates],
                                      vapply(cells[candidates],
-                                            function(c) c$degree,
+                                            \(c) c$degree,
                                             integer(1L)),
                                      vapply(cells[candidates],
-                                            function(c) c$nk,
+                                            \(c) c$nk,
                                             integer(1L)))]
       # Override the argmin pick with the balanced-rule winner.
       ord_cells <- c(ord_within, setdiff(ord_cells, ord_within))
@@ -1007,10 +1102,10 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   )
 
   grid_df <- data.frame(
-    degree     = vapply(cells, function(c) c$degree, integer(1L)),
-    penalty    = vapply(cells, function(c) c$penalty, numeric(1L)),
-    nk         = vapply(cells, function(c) c$nk, integer(1L)),
-    fast_k     = vapply(cells, function(c) c$fast_k, integer(1L)),
+    degree     = vapply(cells, \(c) c$degree, integer(1L)),
+    penalty    = vapply(cells, \(c) c$penalty, numeric(1L)),
+    nk         = vapply(cells, \(c) c$nk, integer(1L)),
+    fast_k     = vapply(cells, \(c) c$fast_k, integer(1L)),
     cv_mse     = scores,
     eliminated = !alive,
     stringsAsFactors = FALSE
