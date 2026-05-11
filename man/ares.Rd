@@ -44,205 +44,176 @@ ares(x, ...)
 )
 }
 \arguments{
-\item{x}{A numeric matrix or data frame of predictors, OR a model formula
-when calling the formula method.}
+\item{x}{A numeric matrix or data frame of predictors, or a model
+formula when calling the formula method.}
 
-\item{...}{Additional arguments. Currently ignored.}
+\item{...}{Currently ignored.}
 
-\item{data}{Used by the formula method only. A data frame.}
+\item{data}{A data frame. Used only by the formula method.}
 
-\item{y}{A numeric response vector. Length must equal \code{nrow(x)}.}
+\item{y}{A numeric response vector with length \code{nrow(x)}. For
+\code{family = "binomial"}, a 0/1 numeric, logical, or 2-level factor.}
 
-\item{degree}{Maximum interaction degree. Default 1.}
+\item{degree}{Maximum interaction degree. Default \code{1} (additive).
+Use \code{2} or \code{3} for two- or three-way interactions.}
 
 \item{nk}{Maximum number of basis terms in the forward pass. Default
-\code{min(200, max(20, 2 * ncol(x))) + 1}.}
+scales with \code{ncol(x)}: \code{min(200, max(20, 2 * ncol(x))) + 1}.}
 
-\item{penalty}{GCV penalty. Default \code{if (degree > 1) 3 else 2}.}
+\item{penalty}{GCV penalty per knot. Default \code{2} for \code{degree = 1},
+\code{3} otherwise. Larger values produce sparser fits.}
 
-\item{thresh}{Forward-pass relative-RSS early-stop threshold. Default 0.001.}
+\item{thresh}{Forward-pass early-stop threshold on relative RSS
+improvement. Default \code{0.001}.}
 
-\item{minspan}{Minimum knot span. 0 (default) selects an automatic value.}
+\item{minspan}{Minimum gap between knots along a variable. \code{0}
+(default) picks an automatic value from \code{n} and \code{p}.}
 
-\item{endspan}{Knot offset from the data ends. 0 (default) selects automatic.}
+\item{endspan}{Distance from the data ends within which knots are
+forbidden. \code{0} (default) picks an automatic value.}
 
-\item{adjust.endspan}{Multiplier applied to \code{endspan} when the candidate
-hinge would deepen an existing interaction (parent term has degree at
-least 1). \strong{Default \code{1} for gaussian / poisson / gamma, \code{2} for
-binomial} (auto-flipped at v0.0.0.9026 with the same A/B-test
-justification as \code{auto.linpreds}). Pass \code{1} or \code{2} explicitly to
-override the family default.}
+\item{adjust.endspan}{Multiplier applied to \code{endspan} when the
+candidate hinge would deepen an existing interaction. Default \code{1}
+for \code{gaussian}, \code{poisson}, \code{gamma}; \code{2} for \code{binomial}. Pass an
+explicit value to override.}
 
-\item{auto.linpreds}{If \code{TRUE}, and the best forward-pass knot for a
-candidate hinge sits at the boundary of its variable's eligible range,
-substitutes a linear term (\code{dirs = 2}) for the hinge pair. \strong{Default
-\code{FALSE} for gaussian / poisson / gamma, \code{TRUE} for binomial} (auto-
-flipped at v0.0.0.9026 based on the inst/sims/v0.25 A/B test: earth-
-like settings tie or improve AUC on all mlbench binary cells, but
-regress some gaussian regression cells). Pass an explicit value to
-override the family default.}
+\item{auto.linpreds}{If \code{TRUE}, hinge pairs whose best knot sits at a
+variable's range boundary are replaced by a linear term. Default
+\code{FALSE} for \code{gaussian}, \code{poisson}, \code{gamma}; \code{TRUE} for \code{binomial}.
+Pass an explicit value to override.}
 
-\item{fast.k}{Fast-MARS priority cache size (Friedman 1993). The forward
-pass always rescores pairs whose parent was added in the previous step;
-the top \code{fast.k} of the remaining stale pairs (ranked by age-discounted
-cached score) are also rescored, and the rest contribute their cached
-reduction. \code{0} disables the cache (every pair is rescored every step).
-Default \code{10}.}
+\item{fast.k}{Size of the Fast-MARS candidate cache (Friedman 1993).
+Larger values rescore more candidates each step (slower, slightly
+more accurate); \code{0} rescores every candidate every step. Default
+\code{10}.}
 
-\item{fast.beta}{Age-penalty for the fast-MARS priority cache: a stale
-pair's effective score is \code{cached_rss_red / (1 + fast.beta * age)}.
-Default \code{1.0}. Only matters when \code{fast.k > 0}.}
+\item{fast.beta}{Age penalty for stale entries in the Fast-MARS
+cache. Default \code{1.0}. Only relevant when \code{fast.k > 0}.}
 
-\item{nprune}{Maximum number of terms after backward pruning (default \code{nk}).}
+\item{nprune}{Maximum number of terms after backward pruning.
+Default \code{nk}.}
 
-\item{pmethod}{Pruning method: \code{"backward"} (default), \code{"none"}, or
-\code{"cv"} for K-fold cross-validated subset selection. \code{"cv"} requires
-\code{nfold > 0} (or implicitly sets \code{nfold = 5} when not specified).}
+\item{pmethod}{Pruning method.
+\itemize{
+\item \code{"backward"} (default): minimise GCV over backward-elimination subsets.
+\item \code{"none"}: keep all forward-pass terms.
+\item \code{"cv"}: K-fold cross-validated subset selection. Requires \code{nfold > 0}
+(sets \code{nfold = 5} if not specified).
+}}
 
-\item{nfold}{Number of CV folds (default \code{0} = no CV; GCV-based backward
-selection). When \code{nfold > 0}, \code{pmethod} is promoted to \code{"cv"}.}
+\item{nfold}{Number of CV folds for \code{pmethod = "cv"}. Default \code{0}
+(no CV; GCV-based pruning). When \code{nfold > 0}, \code{pmethod} is
+promoted to \code{"cv"}.}
 
-\item{ncross}{Number of CV repetitions when \code{nfold > 0}. Each repetition
-builds a fresh fold partition; per-size mean MSE is averaged across
-\code{nfold * ncross} evaluations. Default \code{1}.}
+\item{ncross}{Number of CV repetitions (each builds a fresh fold
+partition; per-size mean MSE is averaged). Default \code{1}.}
 
-\item{stratify}{If \code{TRUE} (default), folds are quantile-stratified on \code{y}
-so each fold has a similar response distribution. Useful on small \code{n} /
-skewed responses; cheap.}
+\item{stratify}{If \code{TRUE} (default), CV folds are quantile-stratified
+on \code{y}. Useful for small \code{n} or skewed responses.}
 
-\item{seed.cv}{Optional integer seed for fold partitioning. \code{NULL}
-(default) uses the current RNG state; pass an integer for reproducible
-CV partitions.}
+\item{seed.cv}{Optional integer seed for the CV fold partition. Pass
+an integer for reproducible CV; \code{NULL} (default) uses the current
+RNG state.}
 
-\item{cv.1se}{If \code{TRUE}, applies the one-standard-error rule for
-\code{pmethod="cv"}: among sizes whose mean CV-MSE is within one
-standard error of the minimum, pick the smallest. Trades a bit of
-accuracy for parsimony. Default \code{FALSE} (pick \code{argmin} of mean
-CV-MSE, i.e. the size that minimises holdout error directly).}
+\item{cv.1se}{If \code{TRUE}, applies the one-standard-error rule under
+\code{pmethod = "cv"}: among sizes within one SE of the minimum mean
+CV-MSE, pick the smallest. Default \code{FALSE} (pick the argmin).}
 
 \item{autotune}{If \code{TRUE}, runs an inner cross-validated grid search
-over \verb{(degree, penalty)} and refits the winner. The grid is
-\verb{degree in \{1, 2\}} (extended to \verb{\{1, 2, 3\}} when \code{nk} is large
-enough) crossed with \verb{penalty in \{0.5*d, 1.0*d, 2.0*d, 3.0*d\}} at
-each degree \code{d}. Inner CV uses \code{nfold} (default 5 when autotune
-is on and \code{nfold == 0}) and respects \code{seed.cv}. The chosen
-\verb{(degree, penalty)} and the full grid CV-MSE are returned in
-\verb{$autotune}. Default \code{FALSE} (current grf-style fast default
-path). Subsequent versions extend the grid (v0.16: \code{nk},
-v0.17: \code{autotune.speed}, v0.18: \code{n.boot}).}
+over \verb{(degree, penalty, nk, fast.k)} and refits the winner on the
+full data. The chosen settings and full grid scores are returned in
+\verb{$autotune}. Default \code{FALSE}.}
 
-\item{autotune.speed}{One of \code{"balanced"} (default), \code{"quality"},
-or \code{"fast"}. Only meaningful when \code{autotune = TRUE}.
+\item{autotune.speed}{Speed/quality trade-off for \code{autotune}. Only
+used when \code{autotune = TRUE}.
 \itemize{
-\item \code{"quality"}: forces \code{fast.k = 0} for every cell (no fast-MARS
-priority cache; every (parent, var) pair rescored every step).
-Matches v0.10 quality at v0.10 wall-clock cost.
-\item \code{"fast"}: forces \code{fast.k = 5}. Most aggressive cache; cheapest.
-\item \code{"balanced"} (default): sweeps \verb{fast.k in \{10, 25, Inf\}} (where
-\code{Inf} means "no cache") inside the autotune grid and picks the
-smallest \code{fast.k} whose mean CV-MSE is within 1\% of the best.
-Trades a marginal accuracy hit for a marginal speed gain.
+\item \code{"balanced"} (default): explores a moderate \code{fast.k} range and
+picks the smallest whose CV-MSE is within 1\% of the best.
+\item \code{"quality"}: disables the Fast-MARS cache (most thorough,
+slowest).
+\item \code{"fast"}: forces an aggressive cache (cheapest, slight accuracy
+trade-off).
 }}
 
-\item{autotune.warmstart}{If \code{TRUE} (default; only meaningful when
-\code{autotune = TRUE}) and \code{n >= 200}, ares first runs autotune on a
-15\% subsample (capped at 200 rows). If the subsample has a
-\emph{decisive} winner -- best-per-degree CV-MSE more than 5\% below the
-next-best degree's best cell -- that \verb{(degree, penalty, nk, fast.k)}
-is used directly to refit on the full data, skipping the full-data
-grid. Cuts autotune wall-clock by ~5x on well-separated DGPs.}
+\item{autotune.warmstart}{If \code{TRUE} (default), \code{autotune} first tunes
+on a small subsample. If one cell wins decisively, the full grid is
+skipped and the winner is refit on all rows. Only applies when
+\code{autotune = TRUE} and \code{n >= 200}.}
 
-\item{n.boot}{Number of bootstrap replicate fits for bagging. Default
-\code{0} (no bagging). When \verb{> 0}, the result holds a list of \code{n.boot} ares
-fits in \verb{$boot$fits}, each fit on a row-bootstrap sample of the data.
-The augmented \code{predict()} averages predictions across replicates plus
-the central fit and reports per-prediction standard deviation in
-\code{attr(predictions, "sd")}. Bagging composes with \code{autotune} --
-each replicate fits with the central fit's chosen
-\verb{(degree, penalty, nk, fast.k)} so the cost is \code{(n.boot + 1) * fit_cost},
-not the autotune grid times \code{n.boot}.}
+\item{n.boot}{Number of bootstrap replicate fits for bagging.
+Default \code{0} (no bagging). When \verb{> 0}, \code{predict()} averages over the
+replicates plus the central fit and (with \code{se.fit = TRUE}) returns
+a per-prediction bag standard deviation. Composes with \code{autotune}:
+each replicate reuses the central fit's chosen hyperparameters.}
 
-\item{na.action}{Strategy for missing values in \code{x}. Either \code{"impute"}
-(default) or \code{"omit"}. \code{"impute"} replaces each column's \code{NA}s with
-that column's median (computed from the non-missing rows) and stores
-those medians on the fit so \code{predict()} can reapply them to future
-newdata. \code{"omit"} drops every row that has any \code{NA} in \code{x}. Both
-actions emit a warning summarising the affected rows / columns.
-Missing values in \code{y} are always a hard error -- there is no sensible
-way to impute the regression target. \code{NaN} and \verb{+/-Inf} in \code{x} are
-also rejected outright regardless of \code{na.action}.}
+\item{na.action}{Strategy for missing values in \code{x}. \code{"impute"}
+(default) replaces each column's \code{NA}s with that column's training
+median and stores the medians for \code{predict()} to reuse. \code{"omit"}
+drops rows with any \code{NA}. Either action warns. Missing values in
+\code{y}, or \code{NaN}/\code{Inf} anywhere in \code{x}, are always rejected.}
 
-\item{family}{Response family. One of \code{"gaussian"} (default; numeric \code{y},
-identity link, OLS coefficients), \code{"binomial"} (binary \code{y}, logit link),
-\code{"poisson"} (non-negative integer-valued \code{y}, log link), or \code{"gamma"}
-(strictly positive \code{y}, log link). For the non-gaussian families the
-forward and backward passes still run on the original numeric \code{y} as
-if gaussian (matching earth\'s GLM strategy); after backward pruning the
-selected basis is refit on the response via \code{stats::glm.fit()} with the
-appropriate \code{family} object, and \verb{$coefficients}, \verb{$fitted.values}, and
-\verb{$linear.predictor} come from that GLM. Bagging, CV pruning, autotune,
-and \code{weights} compose with the GLM families; inner model-selection
-still uses (weighted) Gaussian MSE on the latent scale (cheap and
-adequate for term selection — only the final coefficients use IRLS).}
-
-\item{weights}{Optional non-negative numeric vector of length \code{nrow(x)}
-for weighted least squares fitting. Default \code{NULL} (unweighted OLS).
-When supplied, the engine implements WLS via a \code{sqrt(weights)}
-transform of the design and response, so forward + backward both
-consume the weights (knot selection, GCV pruning, CV pruning, and
-autotune are all weight-aware). Weights are renormalised internally so
-that \code{mean(weights) = 1}; this keeps the GCV denominator valid (the
-"effective sample size" equals \code{n}). NA / NaN / negative weights are
-rejected. With \code{weights = rep(1, n)} the fit is byte-identical to the
-unweighted path.}
-
-\item{varmod}{Variance-model strategy used by \code{predict.ares()} to build
-prediction intervals. One of:
+\item{family}{Response family for the final coefficient fit.
 \itemize{
-\item \code{"none"} (default): no variance model is stored. \code{predict()} returns
-only the conditional mean; \code{interval = "pint"} is unavailable.
-\item \code{"const"}: store a single training residual standard deviation
-\code{sigma_hat = sqrt(weighted_RSS / df_residual)}. PIs are
-\verb{yhat +/- qt(0.975, df) * sigma_hat}.
-\item \code{"lm"}: fit a small linear model \verb{|resid| ~ yhat} on the training fit
-and use its prediction (multiplied by sqrt(pi/2) so it estimates
-sigma) at the new yhat. Captures simple heteroscedasticity.
-Only meaningful for \code{family = "gaussian"}. For binomial / poisson /
-gamma the variance is mean-determined; the argument is silently
-ignored (PIs would require family-specific intervals not implemented
-here — see ?stats::predict.glm for that). Defaults to \code{"none"} (SEs
-off by default).
+\item \code{"gaussian"} (default): identity link, OLS.
+\item \code{"binomial"}: logit link. \code{y} may be 0/1 numeric, logical, or a
+2-level factor.
+\item \code{"poisson"}: log link. \code{y} must be non-negative integer-valued.
+\item \code{"gamma"}: log link. \code{y} must be strictly positive.
+For non-gaussian families, term selection runs on the numeric \code{y}
+(fast); the selected basis is then refit on the response scale via
+\code{stats::glm.fit()} with the requested family.
 }}
 
-\item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
+\item{weights}{Optional non-negative numeric vector of length
+\code{nrow(x)} for weighted least-squares fitting. Default \code{NULL}
+(unweighted). Term selection, GCV / CV pruning, and autotune all
+respect the weights. Negative, \code{NA}, or \code{NaN} weights are rejected.}
 
-\item{nthreads}{Number of threads. 0 (default) selects
-\code{RcppParallel::defaultNumThreads()}. CRAN-distributed examples and the
-bundled vignette cap this at 2.}
+\item{varmod}{Residual variance model used by \code{predict()} for
+prediction intervals (gaussian only).
+\itemize{
+\item \code{"none"} (default): no variance model is stored; \code{interval = "pint"}
+is unavailable.
+\item \code{"const"}: stores a single residual SD; intervals are
+\verb{yhat +/- qt(level, df) * sigma}.
+\item \code{"lm"}: fits a small linear model of \verb{|resid|} on \code{yhat} to allow
+simple mean-dependent heteroscedasticity.
+Ignored for non-gaussian families.
+}}
+
+\item{trace}{Trace level. \code{0} (default) is silent; \code{1} reports
+forward-pass progress.}
+
+\item{nthreads}{Number of threads. \code{0} (default) uses
+\code{RcppParallel::defaultNumThreads()}. Examples and the vignette cap
+this at \code{2} for CRAN compliance.}
 }
 \value{
-An object of class \code{"ares"} -- a list with components
-\code{coefficients}, \code{bx}, \code{dirs}, \code{cuts}, \code{selected.terms}, \code{rss}, \code{gcv},
-\code{rss.per.subset}, \code{gcv.per.subset}, \code{fitted.values}, \code{residuals}, \code{namesx},
-\code{call}, plus echoed control parameters. When \code{family} is non-gaussian
-the fit additionally carries \verb{$family}, \verb{$glm} (a small list with
-\code{deviance}, \code{null.deviance}, \code{df.null}, \code{df.residual}, \code{aic},
-\code{converged}, \code{iter}, plus family-specific fields), \verb{$linear.predictor}
-(length \code{n}), and \verb{$fitted.values} on the response scale: probabilities
-for binomial (\code{plogis(lp)}), counts/rates for poisson (\code{exp(lp)}),
-positive means for gamma (\code{exp(lp)}).
+An object of class \code{"ares"}: a list containing the fitted
+coefficients, the basis matrix \code{bx}, the term directions \code{dirs}
+and knots \code{cuts}, the indices of \code{selected.terms}, training \code{rss}
+and \code{gcv}, \code{fitted.values} and \code{residuals}, predictor names
+\code{namesx}, the call, and echoed control parameters. Non-gaussian
+fits additionally include \verb{$family}, \verb{$glm} (with \code{deviance},
+\code{null.deviance}, \code{df.null}, \code{df.residual}, \code{aic}, \code{converged},
+\code{iter}), and \verb{$linear.predictor}; \verb{$fitted.values} is on the
+response scale (probabilities for binomial, positive means for
+poisson and gamma). Autotune fits carry \verb{$autotune} and bagged
+fits carry \verb{$boot}.
 }
 \description{
-Fits a MARS model (Friedman 1991) using a fast least-squares forward pass
-with a parallelized knot search and a backward subset-selection that
-minimizes the GCV criterion. The implementation aims for numerical parity
-with \code{\link[earth:earth]{earth::earth()}} on the gaussian-only core while taking advantage of
-multi-core CPUs to reduce wall-clock fitting time.
+Fits a Multivariate Adaptive Regression Splines (MARS) model
+(Friedman 1991). A forward pass adds pairs of hinge basis functions
+of the form \verb{max(0, +/-(x - knot))}; a backward pass prunes terms by
+minimising the GCV criterion (or a K-fold CV criterion if requested).
 }
 \details{
-Two interfaces are provided. \code{ares.default()} accepts a numeric predictor
-matrix \code{x} and a numeric response vector \code{y}. \code{ares.formula()} accepts a
-model formula and a data frame.
+Two interfaces are provided. The formula method takes a model formula
+and a data frame. The default method takes a numeric predictor matrix
+\code{x} and a numeric response vector \code{y}.
+
+Fits are deterministic across thread counts: at a fixed \code{seed.cv},
+results are bit-for-bit identical regardless of \code{nthreads}.
 }
 \examples{
 fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
@@ -252,4 +223,7 @@ p <- predict(fit, as.matrix(mtcars[, -1]))
 \references{
 Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 \emph{Annals of Statistics} 19(1):1-67.
+
+Friedman, J. H. (1993). \emph{Fast MARS}. Stanford University Department
+of Statistics Technical Report 110.
 }

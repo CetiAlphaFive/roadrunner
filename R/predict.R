@@ -1,55 +1,37 @@
-# predict.ares -- bagging-aware prediction (gaussian + binomial)
-#
-# Three code paths:
-#   1. newdata = NULL  -> return $fitted.values (training-set predictions).
-#      With se.fit = TRUE and a bag, attaches a placeholder "sd" attribute
-#      (bag SD on training rows requires the original x; see .ares_boot_sd).
-#   2. newdata supplied, no $boot slot -> single-fit prediction via
-#      mars_basis_cpp + coefficient multiply.
-#   3. newdata supplied, $boot present -> average prediction across the
-#      central fit plus each bootstrap replicate. With se.fit = TRUE, the
-#      per-row sample SD across replicates is attached as attr(., "sd").
-#
-# When the fit was built with `family = "binomial"`, predictions go through
-# the logit link. `type = "link"` returns the linear predictor x %*% beta;
-# `type = "response"` returns plogis(linear predictor). For bag predictions
-# under binomial, replicate-level predictions are averaged on the response
-# (probability) scale so the bag mean is itself a valid probability.
-
 #' Predictions from an `ares` fit
 #'
-#' @description
-#' Predicts the response (or linear predictor) for new data from a fitted
-#' ares MARS model. For bagged fits, returns the mean across the central
-#' fit and the bootstrap replicates; with `se.fit = TRUE`, the per-row bag
-#' standard deviation is attached as an `"sd"` attribute. For gaussian
-#' fits that stored a variance model (`varmod = "const"` or `"lm"`),
-#' `interval = "pint"` returns prediction intervals.
+#' Returns predictions for new data from a fitted `ares` MARS model.
+#' For bagged fits (`n.boot > 0`), returns the mean across the central
+#' fit and the bootstrap replicates; with `se.fit = TRUE`, the per-row
+#' bag standard deviation is attached as an `"sd"` attribute. For
+#' gaussian fits built with a residual variance model
+#' (`varmod = "const"` or `"lm"`), `interval = "pint"` returns
+#' prediction intervals.
 #'
 #' @param object An object of class `"ares"`.
-#' @param newdata A numeric matrix or data frame of new predictors. If `NULL`
-#'   (default), returns `object$fitted.values`.
-#' @param type Prediction scale. `"response"` (default) returns
-#'   `plogis(eta)` for binomial fits, `exp(eta)` for poisson / gamma, and
-#'   the fitted mean for gaussian fits; `"link"` returns the linear
-#'   predictor `eta`. Ignored for gaussian models (link and response
-#'   coincide).
-#' @param se.fit If `TRUE` and `object` was fit with `n.boot > 0`, the
-#'   returned vector carries an `"sd"` attribute holding the per-prediction
-#'   bag standard deviation. Default `FALSE` (plain numeric vector).
-#' @param interval Type of interval to return. `"none"` (default) returns
-#'   only the fitted mean. `"pint"` returns a matrix with columns
-#'   `c("fit", "lwr", "upr")` using the variance model stored at fit time
-#'   (`varmod = "const"` or `"lm"`; gaussian only). If `interval = "pint"`
-#'   but no variance model was stored, the call errors with an informative
-#'   message.
+#' @param newdata A numeric matrix or data frame of new predictors.
+#'   `NULL` (default) returns `object$fitted.values`.
+#' @param type Prediction scale.
+#'   - `"response"` (default): probabilities for binomial, response-scale
+#'     means for poisson and gamma, fitted values for gaussian.
+#'   - `"link"`: the linear predictor. Coincides with `"response"` for
+#'     gaussian fits.
+#' @param se.fit If `TRUE` and the fit was built with `n.boot > 0`, the
+#'   returned vector carries an `"sd"` attribute holding the per-row
+#'   bag standard deviation. Default `FALSE`.
+#' @param interval Type of interval to return.
+#'   - `"none"` (default): return point predictions only.
+#'   - `"pint"`: return a matrix with columns `c("fit", "lwr", "upr")`
+#'     using the variance model stored at fit time. Requires
+#'     `family = "gaussian"` and `varmod = "const"` or `"lm"`; errors
+#'     otherwise.
 #' @param level Confidence level for prediction intervals when
 #'   `interval = "pint"`. Default `0.95`.
-#' @param ... Additional arguments. Currently unused.
-#' @return A numeric vector of length `nrow(newdata)`, or a matrix with
-#'   `c("fit", "lwr", "upr")` columns when `interval = "pint"`. When
-#'   `se.fit = TRUE` and bag fits are present, the result carries
-#'   `attr(., "sd")` with the per-row sample SD across replicates.
+#' @param ... Currently unused.
+#' @return A numeric vector of predictions, or a matrix with columns
+#'   `c("fit", "lwr", "upr")` when `interval = "pint"`. With
+#'   `se.fit = TRUE` on a bagged fit, the vector carries an `"sd"`
+#'   attribute.
 #' @examples
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
 #' p <- predict(fit, as.matrix(mtcars[, -1]))

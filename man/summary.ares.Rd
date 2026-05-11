@@ -10,17 +10,19 @@
 \method{print}{summary.ares}(x, ...)
 }
 \arguments{
-\item{object}{an \code{ares} object}
+\item{object}{An object of class \code{"ares"}.}
 
-\item{...}{unused}
+\item{...}{Currently ignored.}
 
-\item{x}{a \code{summary.ares} object}
+\item{x}{A \code{summary.ares} object.}
 }
 \value{
 An object of class \code{"summary.ares"}.
 }
 \description{
-Summary method for \code{ares} fits
+Returns a compact summary of a fitted \code{ares} model: the call, the
+table of selected terms and coefficients, training RSS and GCV, and
+(for non-gaussian families) GLM-side fit statistics.
 }
 \examples{
 fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)

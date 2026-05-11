@@ -17,7 +17,7 @@ URL: https://cetialphafive.github.io/roadrunner/, https://github.com/CetiAlphaFi
 BugReports: https://github.com/CetiAlphaFive/roadrunner/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 8.0.0
+RoxygenNote: 7.3.3
 Depends:
     R (>= 4.1.0)
 LinkingTo: 

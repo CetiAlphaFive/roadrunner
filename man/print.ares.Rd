@@ -7,17 +7,19 @@
 \method{print}{ares}(x, digits = max(3L, getOption("digits") - 3L), ...)
 }
 \arguments{
-\item{x}{an \code{ares} object}
+\item{x}{An object of class \code{"ares"}.}
 
-\item{digits}{significant digits for numeric output}
+\item{digits}{Significant digits for numeric output.}
 
-\item{...}{unused}
+\item{...}{Currently ignored.}
 }
 \value{
 Invisibly returns \code{x}.
 }
 \description{
-Print method for \code{ares} fits
+Prints the call, family, term count, training RSS and GCV, and the
+control parameters used. For \code{family = "binomial"}, also prints the
+deviance, McFadden pseudo-R^2, AIC, and IRLS convergence.
 }
 \examples{
 fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)

@@ -1,14 +1,14 @@
-# S3 methods: print, summary, print.summary, plot.
-#
-# All four are thin formatters over fields populated by ares.default():
-#   $call, $dirs, $selected.terms, $rss, $gcv, $degree, $penalty,
-#   $nthreads, $coefficients, $fitted.values, $residuals, and (for
-#   binomial fits) $family / $glm.
+# S3 print / summary / plot methods for the `ares` class.
 
 #' Print method for `ares` fits
-#' @param x an `ares` object
-#' @param digits significant digits for numeric output
-#' @param ... unused
+#'
+#' Prints the call, family, term count, training RSS and GCV, and the
+#' control parameters used. For `family = "binomial"`, also prints the
+#' deviance, McFadden pseudo-R^2, AIC, and IRLS convergence.
+#'
+#' @param x An object of class `"ares"`.
+#' @param digits Significant digits for numeric output.
+#' @param ... Currently ignored.
 #' @return Invisibly returns `x`.
 #' @examples
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
@@ -42,8 +42,13 @@ print.ares <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
 }
 
 #' Summary method for `ares` fits
-#' @param object an `ares` object
-#' @param ... unused
+#'
+#' Returns a compact summary of a fitted `ares` model: the call, the
+#' table of selected terms and coefficients, training RSS and GCV, and
+#' (for non-gaussian families) GLM-side fit statistics.
+#'
+#' @param object An object of class `"ares"`.
+#' @param ... Currently ignored.
 #' @return An object of class `"summary.ares"`.
 #' @examples
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
@@ -68,7 +73,7 @@ summary.ares <- function(object, ...) {
 }
 
 #' @rdname summary.ares
-#' @param x a `summary.ares` object
+#' @param x A `summary.ares` object.
 #' @export
 print.summary.ares <- function(x, ...) {
   cat("Call:\n"); print(x$call)
@@ -93,10 +98,16 @@ print.summary.ares <- function(x, ...) {
   invisible(x)
 }
 
-#' Plot method for `ares` fits (residuals vs fitted)
-#' @param x an `ares` object
-#' @param which integer in 1:1 — currently only residuals-vs-fitted is supported
-#' @param ... passed to `plot()`
+#' Plot method for `ares` fits
+#'
+#' Diagnostic plot for a fitted `ares` model. Currently produces a
+#' residuals-vs-fitted scatter; additional diagnostics may be added in
+#' the future.
+#'
+#' @param x An object of class `"ares"`.
+#' @param which Which diagnostic to draw. Only `1` (residuals vs
+#'   fitted) is implemented.
+#' @param ... Further graphical parameters passed to `plot()`.
 #' @return Invisibly returns `x`.
 #' @examples
 #' \dontrun{

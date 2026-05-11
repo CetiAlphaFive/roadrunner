@@ -17,44 +17,49 @@
 \arguments{
 \item{object}{An object of class \code{"ares"}.}
 
-\item{newdata}{A numeric matrix or data frame of new predictors. If \code{NULL}
-(default), returns \code{object$fitted.values}.}
+\item{newdata}{A numeric matrix or data frame of new predictors.
+\code{NULL} (default) returns \code{object$fitted.values}.}
 
-\item{type}{Prediction scale. \code{"response"} (default) returns
-\code{plogis(eta)} for binomial fits, \code{exp(eta)} for poisson / gamma, and
-the fitted mean for gaussian fits; \code{"link"} returns the linear
-predictor \code{eta}. Ignored for gaussian models (link and response
-coincide).}
+\item{type}{Prediction scale.
+\itemize{
+\item \code{"response"} (default): probabilities for binomial, response-scale
+means for poisson and gamma, fitted values for gaussian.
+\item \code{"link"}: the linear predictor. Coincides with \code{"response"} for
+gaussian fits.
+}}
 
-\item{se.fit}{If \code{TRUE} and \code{object} was fit with \code{n.boot > 0}, the
-returned vector carries an \code{"sd"} attribute holding the per-prediction
-bag standard deviation. Default \code{FALSE} (plain numeric vector).}
+\item{se.fit}{If \code{TRUE} and the fit was built with \code{n.boot > 0}, the
+returned vector carries an \code{"sd"} attribute holding the per-row
+bag standard deviation. Default \code{FALSE}.}
 
-\item{interval}{Type of interval to return. \code{"none"} (default) returns
-only the fitted mean. \code{"pint"} returns a matrix with columns
-\code{c("fit", "lwr", "upr")} using the variance model stored at fit time
-(\code{varmod = "const"} or \code{"lm"}; gaussian only). If \code{interval = "pint"}
-but no variance model was stored, the call errors with an informative
-message.}
+\item{interval}{Type of interval to return.
+\itemize{
+\item \code{"none"} (default): return point predictions only.
+\item \code{"pint"}: return a matrix with columns \code{c("fit", "lwr", "upr")}
+using the variance model stored at fit time. Requires
+\code{family = "gaussian"} and \code{varmod = "const"} or \code{"lm"}; errors
+otherwise.
+}}
 
 \item{level}{Confidence level for prediction intervals when
 \code{interval = "pint"}. Default \code{0.95}.}
 
-\item{...}{Additional arguments. Currently unused.}
+\item{...}{Currently unused.}
 }
 \value{
-A numeric vector of length \code{nrow(newdata)}, or a matrix with
-\code{c("fit", "lwr", "upr")} columns when \code{interval = "pint"}. When
-\code{se.fit = TRUE} and bag fits are present, the result carries
-\code{attr(., "sd")} with the per-row sample SD across replicates.
+A numeric vector of predictions, or a matrix with columns
+\code{c("fit", "lwr", "upr")} when \code{interval = "pint"}. With
+\code{se.fit = TRUE} on a bagged fit, the vector carries an \code{"sd"}
+attribute.
 }
 \description{
-Predicts the response (or linear predictor) for new data from a fitted
-ares MARS model. For bagged fits, returns the mean across the central
-fit and the bootstrap replicates; with \code{se.fit = TRUE}, the per-row bag
-standard deviation is attached as an \code{"sd"} attribute. For gaussian
-fits that stored a variance model (\code{varmod = "const"} or \code{"lm"}),
-\code{interval = "pint"} returns prediction intervals.
+Returns predictions for new data from a fitted \code{ares} MARS model.
+For bagged fits (\code{n.boot > 0}), returns the mean across the central
+fit and the bootstrap replicates; with \code{se.fit = TRUE}, the per-row
+bag standard deviation is attached as an \code{"sd"} attribute. For
+gaussian fits built with a residual variance model
+(\code{varmod = "const"} or \code{"lm"}), \code{interval = "pint"} returns
+prediction intervals.
 }
 \examples{
 fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)

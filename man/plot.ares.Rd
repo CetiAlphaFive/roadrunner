@@ -2,22 +2,25 @@
 % Please edit documentation in R/print.R
 \name{plot.ares}
 \alias{plot.ares}
-\title{Plot method for \code{ares} fits (residuals vs fitted)}
+\title{Plot method for \code{ares} fits}
 \usage{
 \method{plot}{ares}(x, which = 1L, ...)
 }
 \arguments{
-\item{x}{an \code{ares} object}
+\item{x}{An object of class \code{"ares"}.}
 
-\item{which}{integer in 1:1 — currently only residuals-vs-fitted is supported}
+\item{which}{Which diagnostic to draw. Only \code{1} (residuals vs
+fitted) is implemented.}
 
-\item{...}{passed to \code{plot()}}
+\item{...}{Further graphical parameters passed to \code{plot()}.}
 }
 \value{
 Invisibly returns \code{x}.
 }
 \description{
-Plot method for \code{ares} fits (residuals vs fitted)
+Diagnostic plot for a fitted \code{ares} model. Currently produces a
+residuals-vs-fitted scatter; additional diagnostics may be added in
+the future.
 }
 \examples{
 \dontrun{
