@@ -2,9 +2,9 @@
 
 Fast, low-dependency machine learning algorithms in R.
 
-`roadrunner` ships C++-backed implementations of classical ML algorithms
+`roadrunner` ships C++ backed implementations of classical ML algorithms
 with thin, base-R-style interfaces. The first algorithm is `ares()`, a
-Multivariate Adaptive Regression Splines (MARS) fitter; more will follow.
+Multivariate Adaptive Regression Splines fitter; more will follow.
 
 ## Package design
 
@@ -21,8 +21,8 @@ Multivariate Adaptive Regression Splines (MARS) fitter; more will follow.
 ## Install
 
 ```r
-# install.packages("devtools")
-devtools::install_github("CetiAlphaFive/roadrunner")
+# install.packages("pak")
+pak::pak("CetiAlphaFive/roadrunner")
 ```
 
 ## Usage
