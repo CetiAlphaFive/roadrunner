@@ -177,7 +177,14 @@ is unavailable.
 \item \code{"const"}: stores a single residual SD; intervals are
 \verb{yhat +/- qt(level, df) * sigma}.
 \item \code{"lm"}: fits a small linear model of \verb{|resid|} on \code{yhat} to allow
-simple mean-dependent heteroscedasticity.
+simple \strong{yhat-dependent} heteroscedasticity. Captures residual scale
+that changes linearly with the fitted mean. Does NOT capture residual
+scale that depends on a predictor whose contribution to \code{yhat} is
+small -- in that case the |resid| ~ yhat slope is close to zero and
+\code{"lm"} collapses to roughly the same as \code{"const"}. If you suspect
+x-driven heteroscedasticity (e.g. variance depends on a covariate
+orthogonal to the mean structure), \code{varmod = "lm"} will not help
+and coverage will degrade in high-variance regions.
 Ignored for non-gaussian families.
 }}
 
