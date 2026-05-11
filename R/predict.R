@@ -22,24 +22,37 @@
 #' @param newdata A numeric matrix or data frame of new predictors. If `NULL`
 #'   (default), returns `object$fitted.values`.
 #' @param type Prediction scale. `"response"` (default) returns
-#'   `plogis(eta)` for binomial fits and the fitted mean for gaussian fits;
-#'   `"link"` returns the linear predictor `eta`. Ignored for gaussian
-#'   models (link and response coincide).
+#'   `plogis(eta)` for binomial fits, `exp(eta)` for poisson / gamma, and
+#'   the fitted mean for gaussian fits; `"link"` returns the linear
+#'   predictor `eta`. Ignored for gaussian models (link and response
+#'   coincide).
 #' @param se.fit If `TRUE` and `object` was fit with `n.boot > 0`, the
 #'   returned vector carries an `"sd"` attribute holding the per-prediction
 #'   bag standard deviation. Default `FALSE` (plain numeric vector).
+#' @param interval Type of interval to return. `"none"` (default) returns
+#'   only the fitted mean. `"pint"` returns a matrix with columns
+#'   `c("fit", "lwr", "upr")` using the variance model stored at fit time
+#'   (`varmod = "const"` or `"lm"`; gaussian only). If `interval = "pint"`
+#'   but no variance model was stored, the call errors with an informative
+#'   message.
+#' @param level Confidence level for prediction intervals when
+#'   `interval = "pint"`. Default `0.95`.
 #' @param ... Additional arguments. Currently unused.
-#' @return A numeric vector of length `nrow(newdata)`. When `se.fit = TRUE`
-#'   and bag fits are present, the result is the bag mean prediction with
-#'   `attr(., "sd")` set to the per-row sample SD across replicates.
+#' @return A numeric vector of length `nrow(newdata)`, or a matrix with
+#'   `c("fit", "lwr", "upr")` columns when `interval = "pint"`. When
+#'   `se.fit = TRUE` and bag fits are present, the result carries
+#'   `attr(., "sd")` with the per-row sample SD across replicates.
 #' @examples
 #' fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)
 #' p <- predict(fit, as.matrix(mtcars[, -1]))
 #' @export
 predict.ares <- function(object, newdata = NULL,
                          type = c("response", "link"),
-                         se.fit = FALSE, ...) {
+                         se.fit = FALSE,
+                         interval = c("none", "pint"),
+                         level = 0.95, ...) {
   type <- match.arg(type)
+  interval <- match.arg(interval)
   fam  <- if (is.null(object$family)) "gaussian" else object$family
   if (is.null(newdata)) {
     yhat <- if (fam == "binomial" && type == "link") {
@@ -48,10 +61,18 @@ predict.ares <- function(object, newdata = NULL,
       object$fitted.values
     }
     if (isTRUE(se.fit) && !is.null(object$boot)) {
-      # Re-derive bag predictions on the training data: each replicate's
-      # fit holds dirs/cuts/selected.terms; we evaluate them via the basis
-      # builder on the full design (the column space is set by namesx).
       attr(yhat, "sd") <- .ares_boot_sd(object, NULL)
+    }
+    if (interval == "pint") {
+      if (fam != "gaussian")
+        stop("ares: interval = 'pint' is only supported for",
+             " family = 'gaussian' (got '", fam, "').")
+      pi_mat <- .ares_make_pi(yhat, object, level)
+      if (is.null(pi_mat))
+        stop("ares: interval = 'pint' requires the fit was built",
+             " with varmod = 'const' or 'lm'. Refit ares() with",
+             " varmod = 'const' (or 'lm') and try again.")
+      return(pi_mat)
     }
     return(yhat)
   }
@@ -148,24 +169,30 @@ predict.ares <- function(object, newdata = NULL,
 
   # Single-fit path.
   if (is.null(object$boot)) {
-    if (fam == "binomial") {
-      if (type == "link") return(eta_central)
-      # Clamp eta to +/- 30 so plogis stays in (1e-13, 1-1e-13). Matches
-      # the clamp applied at fit time in .ares_refit_binomial() so a
-      # well-conditioned design is never affected (clamp only fires on
-      # quasi-perfect-separation extrapolation).
-      return(stats::plogis(pmin(pmax(eta_central, -30), 30)))
+    yhat <- if (fam == "binomial") {
+      if (type == "link") eta_central
+      else stats::plogis(pmin(pmax(eta_central, -30), 30))
+    } else if (fam == "poisson" || fam == "gamma") {
+      if (type == "link") eta_central
+      else {
+        clamp_hi <- if (fam == "poisson") 50 else 20
+        clamp_lo <- if (fam == "poisson") -50 else -20
+        exp(pmin(pmax(eta_central, clamp_lo), clamp_hi))
+      }
+    } else {
+      eta_central
     }
-    if (fam == "poisson" || fam == "gamma") {
-      # Log-link families: type='response' = exp(eta), type='link' = eta.
-      # Clamp eta wider than binomial since the exponential range is much
-      # larger; matches the clamp used in .ares_refit_glm_loglink().
-      if (type == "link") return(eta_central)
-      clamp_hi <- if (fam == "poisson") 50 else 20
-      clamp_lo <- if (fam == "poisson") -50 else -20
-      return(exp(pmin(pmax(eta_central, clamp_lo), clamp_hi)))
+    if (interval == "pint") {
+      if (fam != "gaussian")
+        stop("ares: interval = 'pint' is only supported for",
+             " family = 'gaussian' (got '", fam, "').")
+      pi_mat <- .ares_make_pi(yhat, object, level)
+      if (is.null(pi_mat))
+        stop("ares: interval = 'pint' requires the fit was built",
+             " with varmod = 'const' or 'lm'.")
+      return(pi_mat)
     }
-    return(eta_central)
+    return(yhat)
   }
 
   # Bag predictions: average across (n.boot + 1) fits — the central fit plus
@@ -217,11 +244,42 @@ predict.ares <- function(object, newdata = NULL,
     eps <- 1e-300
     yhat <- log(pmax(yhat, eps))
   }
+  if (interval == "pint") {
+    if (fam != "gaussian")
+      stop("ares: interval = 'pint' is only supported for",
+           " family = 'gaussian' (got '", fam, "').")
+    pi_mat <- .ares_make_pi(yhat, object, level)
+    if (is.null(pi_mat))
+      stop("ares: interval = 'pint' requires the fit was built",
+           " with varmod = 'const' or 'lm'.")
+    # PIs use the bag mean for `fit`; bag SD is approximate for the
+    # variance model component but we don't combine them here (the
+    # variance model already captures residual uncertainty). attr 'sd'
+    # from bagging is dropped on the PI matrix path for clarity.
+    return(pi_mat)
+  }
   yhat
 }
 
 # Tiny null-coalescing operator (mirrors the one in ares.R).
 `%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Internal helper: turn a vector of fitted means into a (fit, lwr, upr)
+# matrix using the variance model stored on `object`. Returns NULL when the
+# variance model is missing, with the caller responsible for stop()ing.
+.ares_make_pi <- function(yhat, object, level = 0.95) {
+  vm <- object$varmod
+  if (is.null(vm)) return(NULL)
+  alpha <- (1 - level) / 2
+  qq <- stats::qt(1 - alpha, df = vm$df)
+  sigma_vec <- switch(vm$type,
+    const = rep(vm$sigma_hat, length(yhat)),
+    lm    = pmax(vm$scale * (vm$intercept + vm$slope * yhat),
+                 1e-12)              # floor to keep sigma positive
+  )
+  cbind(fit = yhat, lwr = yhat - qq * sigma_vec,
+        upr = yhat + qq * sigma_vec)
+}
 
 # Internal: compute bag SD on a built-in xnew (training x). Currently unused
 # from outside predict.ares; kept tiny for clarity.

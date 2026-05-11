@@ -152,6 +152,21 @@
 #'   "effective sample size" equals `n`). NA / NaN / negative weights are
 #'   rejected. With `weights = rep(1, n)` the fit is byte-identical to the
 #'   unweighted path.
+#' @param varmod Variance-model strategy used by `predict.ares()` to build
+#'   prediction intervals. One of:
+#'   - `"none"` (default): no variance model is stored. `predict()` returns
+#'      only the conditional mean; `interval = "pint"` is unavailable.
+#'   - `"const"`: store a single training residual standard deviation
+#'      `sigma_hat = sqrt(weighted_RSS / df_residual)`. PIs are
+#'      `yhat +/- qt(0.975, df) * sigma_hat`.
+#'   - `"lm"`: fit a small linear model `|resid| ~ yhat` on the training fit
+#'      and use its prediction (multiplied by sqrt(pi/2) so it estimates
+#'      sigma) at the new yhat. Captures simple heteroscedasticity.
+#'   Only meaningful for `family = "gaussian"`. For binomial / poisson /
+#'   gamma the variance is mean-determined; the argument is silently
+#'   ignored (PIs would require family-specific intervals not implemented
+#'   here — see ?stats::predict.glm for that). Defaults to `"none"` (SEs
+#'   off by default).
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -243,12 +258,14 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          family = c("gaussian", "binomial",
                                     "poisson", "gamma"),
                          weights = NULL,
+                         varmod = c("none", "const", "lm"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
   autotune_speed <- match.arg(autotune.speed)
   na.action <- match.arg(na.action)
   family <- match.arg(family)
+  varmod <- match.arg(varmod)
   # ---- Response coercion for `family` --------------------------------------
   # For `family = "binomial"`, we need y to be a 0/1 numeric on entry to the
   # downstream gaussian engine. Accept:
@@ -773,6 +790,16 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     }
   }
 
+  # ---- Variance model (gaussian only) -------------------------------------
+  # Used by predict.ares(interval = "pint"). varmod = "none" (default)
+  # leaves the slot empty; binomial / poisson / gamma always skip this
+  # because their predictive variance is mean-determined and we do not
+  # implement family-specific PIs here.
+  out$varmod <- NULL
+  if (varmod != "none" && family == "gaussian") {
+    out$varmod <- .ares_fit_varmod(out, varmod = varmod, weights = w_norm)
+  }
+
   class(out) <- c("ares")
   out
 }
@@ -982,6 +1009,70 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     }
   }
   fits
+}
+
+# ============================================================================
+#  .ares_fit_varmod — fit the residual-variance model (gaussian only)
+# ============================================================================
+#
+# Two flavours:
+#   "const": store a single sigma_hat estimated from the (weighted) RSS
+#            and an effective residual df. PIs are constant-width:
+#               yhat +/- qt(1 - alpha/2, df) * sigma_hat.
+#   "lm":    fit lm(|residual| ~ fitted) and multiply the prediction by
+#            sqrt(pi/2) to convert E|N(0, sigma)| = sigma * sqrt(2/pi) back
+#            to sigma. Captures simple heteroscedasticity; the model is
+#            stored as a small list of intercept + slope (no need for the
+#            full lm object).
+#
+# Inputs come from the fully-finalised gaussian fit. Both flavours store
+# sigma estimates so predict.ares() can build PIs without re-running any
+# costly step.
+#
+# @keywords internal
+.ares_fit_varmod <- function(out, varmod, weights = NULL) {
+  resid <- out$residuals
+  yhat  <- out$fitted.values
+  n  <- length(resid)
+  k  <- length(out$coefficients)   # effective parameters used
+  df <- max(n - k, 1L)             # residual df (guard against k >= n)
+  if (varmod == "const") {
+    if (is.null(weights)) {
+      sigma_hat <- sqrt(sum(resid * resid) / df)
+    } else {
+      # Weighted residual variance: sum(w * r^2) / sum(w) is the natural
+      # estimator under the WLS objective; df-adjust via (sum(w) - k).
+      sw <- sum(weights)
+      sigma_hat <- sqrt(sum(weights * resid * resid) / max(sw - k, 1))
+    }
+    list(type = "const", sigma_hat = sigma_hat, df = df)
+  } else {                          # varmod == "lm"
+    # |resid| ~ yhat (intercept + slope). lm() is overkill — closed form
+    # gives the same numerical result for n moderate. Use weighted form
+    # when weights are supplied.
+    ar <- abs(resid)
+    if (is.null(weights)) {
+      m_y <- mean(yhat); m_r <- mean(ar)
+      xc <- yhat - m_y;  rc <- ar  - m_r
+      denom <- sum(xc * xc)
+      slope <- if (denom > 0) sum(xc * rc) / denom else 0
+      intercept <- m_r - slope * m_y
+    } else {
+      sw <- sum(weights)
+      m_y <- sum(weights * yhat) / sw
+      m_r <- sum(weights * ar)   / sw
+      xc <- yhat - m_y; rc <- ar - m_r
+      denom <- sum(weights * xc * xc)
+      slope <- if (denom > 0) sum(weights * xc * rc) / denom else 0
+      intercept <- m_r - slope * m_y
+    }
+    # E|N(0,sigma)| = sigma * sqrt(2/pi) -> sigma = |resid| * sqrt(pi/2).
+    list(type = "lm",
+         intercept = as.numeric(intercept),
+         slope     = as.numeric(slope),
+         scale     = sqrt(pi / 2),
+         df        = df)
+  }
 }
 
 # ============================================================================

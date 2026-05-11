@@ -37,6 +37,7 @@ ares(x, ...)
   na.action = c("impute", "omit"),
   family = c("gaussian", "binomial", "poisson", "gamma"),
   weights = NULL,
+  varmod = c("none", "const", "lm"),
   trace = 0L,
   nthreads = 0L,
   ...
@@ -194,6 +195,24 @@ that \code{mean(weights) = 1}; this keeps the GCV denominator valid (the
 "effective sample size" equals \code{n}). NA / NaN / negative weights are
 rejected. With \code{weights = rep(1, n)} the fit is byte-identical to the
 unweighted path.}
+
+\item{varmod}{Variance-model strategy used by \code{predict.ares()} to build
+prediction intervals. One of:
+\itemize{
+\item \code{"none"} (default): no variance model is stored. \code{predict()} returns
+only the conditional mean; \code{interval = "pint"} is unavailable.
+\item \code{"const"}: store a single training residual standard deviation
+\code{sigma_hat = sqrt(weighted_RSS / df_residual)}. PIs are
+\verb{yhat +/- qt(0.975, df) * sigma_hat}.
+\item \code{"lm"}: fit a small linear model \verb{|resid| ~ yhat} on the training fit
+and use its prediction (multiplied by sqrt(pi/2) so it estimates
+sigma) at the new yhat. Captures simple heteroscedasticity.
+Only meaningful for \code{family = "gaussian"}. For binomial / poisson /
+gamma the variance is mean-determined; the argument is silently
+ignored (PIs would require family-specific intervals not implemented
+here — see ?stats::predict.glm for that). Defaults to \code{"none"} (SEs
+off by default).
+}}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 

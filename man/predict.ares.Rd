@@ -9,6 +9,8 @@
   newdata = NULL,
   type = c("response", "link"),
   se.fit = FALSE,
+  interval = c("none", "pint"),
+  level = 0.95,
   ...
 )
 }
@@ -19,20 +21,32 @@
 (default), returns \code{object$fitted.values}.}
 
 \item{type}{Prediction scale. \code{"response"} (default) returns
-\code{plogis(eta)} for binomial fits and the fitted mean for gaussian fits;
-\code{"link"} returns the linear predictor \code{eta}. Ignored for gaussian
-models (link and response coincide).}
+\code{plogis(eta)} for binomial fits, \code{exp(eta)} for poisson / gamma, and
+the fitted mean for gaussian fits; \code{"link"} returns the linear
+predictor \code{eta}. Ignored for gaussian models (link and response
+coincide).}
 
 \item{se.fit}{If \code{TRUE} and \code{object} was fit with \code{n.boot > 0}, the
 returned vector carries an \code{"sd"} attribute holding the per-prediction
 bag standard deviation. Default \code{FALSE} (plain numeric vector).}
 
+\item{interval}{Type of interval to return. \code{"none"} (default) returns
+only the fitted mean. \code{"pint"} returns a matrix with columns
+\code{c("fit", "lwr", "upr")} using the variance model stored at fit time
+(\code{varmod = "const"} or \code{"lm"}; gaussian only). If \code{interval = "pint"}
+but no variance model was stored, the call errors with an informative
+message.}
+
+\item{level}{Confidence level for prediction intervals when
+\code{interval = "pint"}. Default \code{0.95}.}
+
 \item{...}{Additional arguments. Currently unused.}
 }
 \value{
-A numeric vector of length \code{nrow(newdata)}. When \code{se.fit = TRUE}
-and bag fits are present, the result is the bag mean prediction with
-\code{attr(., "sd")} set to the per-row sample SD across replicates.
+A numeric vector of length \code{nrow(newdata)}, or a matrix with
+\code{c("fit", "lwr", "upr")} columns when \code{interval = "pint"}. When
+\code{se.fit = TRUE} and bag fits are present, the result carries
+\code{attr(., "sd")} with the per-row sample SD across replicates.
 }
 \description{
 Predictions from an \code{ares} fit
