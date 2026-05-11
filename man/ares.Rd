@@ -35,7 +35,8 @@ ares(x, ...)
   autotune.warmstart = TRUE,
   n.boot = 0L,
   na.action = c("impute", "omit"),
-  family = c("gaussian", "binomial"),
+  family = c("gaussian", "binomial", "poisson", "gamma"),
+  weights = NULL,
   trace = 0L,
   nthreads = 0L,
   ...
@@ -169,18 +170,29 @@ Missing values in \code{y} are always a hard error -- there is no sensible
 way to impute the regression target. \code{NaN} and \verb{+/-Inf} in \code{x} are
 also rejected outright regardless of \code{na.action}.}
 
-\item{family}{Response family. Either \code{"gaussian"} (default; numeric \code{y},
-identity link, OLS coefficients) or \code{"binomial"} (binary \code{y}, logit
-link). When \code{family = "binomial"}, \code{y} must be either a 0/1 numeric
-vector or a 2-level factor (any other shape is a hard error). The
+\item{family}{Response family. One of \code{"gaussian"} (default; numeric \code{y},
+identity link, OLS coefficients), \code{"binomial"} (binary \code{y}, logit link),
+\code{"poisson"} (non-negative integer-valued \code{y}, log link), or \code{"gamma"}
+(strictly positive \code{y}, log link). For the non-gaussian families the
 forward and backward passes still run on the original numeric \code{y} as
-if gaussian (matching earth's GLM strategy); after backward pruning
-the selected basis is refit on the binary response via
-\code{stats::glm.fit()} with \code{family = binomial()}, and \verb{$coefficients},
-\verb{$fitted.values}, and \verb{$linear.predictor} come from that GLM. Bagging,
-CV pruning, and autotune compose with \code{family = "binomial"}; the inner
-model-selection still uses Gaussian MSE on the latent scale (cheap and
+if gaussian (matching earth\'s GLM strategy); after backward pruning the
+selected basis is refit on the response via \code{stats::glm.fit()} with the
+appropriate \code{family} object, and \verb{$coefficients}, \verb{$fitted.values}, and
+\verb{$linear.predictor} come from that GLM. Bagging, CV pruning, autotune,
+and \code{weights} compose with the GLM families; inner model-selection
+still uses (weighted) Gaussian MSE on the latent scale (cheap and
 adequate for term selection — only the final coefficients use IRLS).}
+
+\item{weights}{Optional non-negative numeric vector of length \code{nrow(x)}
+for weighted least squares fitting. Default \code{NULL} (unweighted OLS).
+When supplied, the engine implements WLS via a \code{sqrt(weights)}
+transform of the design and response, so forward + backward both
+consume the weights (knot selection, GCV pruning, CV pruning, and
+autotune are all weight-aware). Weights are renormalised internally so
+that \code{mean(weights) = 1}; this keeps the GCV denominator valid (the
+"effective sample size" equals \code{n}). NA / NaN / negative weights are
+rejected. With \code{weights = rep(1, n)} the fit is byte-identical to the
+unweighted path.}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 
@@ -192,11 +204,13 @@ bundled vignette cap this at 2.}
 An object of class \code{"ares"} -- a list with components
 \code{coefficients}, \code{bx}, \code{dirs}, \code{cuts}, \code{selected.terms}, \code{rss}, \code{gcv},
 \code{rss.per.subset}, \code{gcv.per.subset}, \code{fitted.values}, \code{residuals}, \code{namesx},
-\code{call}, plus echoed control parameters. When \code{family = "binomial"} the
-fit additionally carries \verb{$family = "binomial"}, \verb{$glm} (a small list
-with \code{deviance}, \code{null.deviance}, \code{df.null}, \code{df.residual}, \code{aic},
-\code{converged}, \code{iter}, \code{y.levels}), \verb{$linear.predictor} (length \code{n}),
-and \verb{$fitted.values} holds response-scale probabilities (\code{plogis(lp)}).
+\code{call}, plus echoed control parameters. When \code{family} is non-gaussian
+the fit additionally carries \verb{$family}, \verb{$glm} (a small list with
+\code{deviance}, \code{null.deviance}, \code{df.null}, \code{df.residual}, \code{aic},
+\code{converged}, \code{iter}, plus family-specific fields), \verb{$linear.predictor}
+(length \code{n}), and \verb{$fitted.values} on the response scale: probabilities
+for binomial (\code{plogis(lp)}), counts/rates for poisson (\code{exp(lp)}),
+positive means for gamma (\code{exp(lp)}).
 }
 \description{
 Fits a MARS model (Friedman 1991) using a fast least-squares forward pass

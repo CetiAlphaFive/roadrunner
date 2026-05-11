@@ -156,6 +156,15 @@ predict.ares <- function(object, newdata = NULL,
       # quasi-perfect-separation extrapolation).
       return(stats::plogis(pmin(pmax(eta_central, -30), 30)))
     }
+    if (fam == "poisson" || fam == "gamma") {
+      # Log-link families: type='response' = exp(eta), type='link' = eta.
+      # Clamp eta wider than binomial since the exponential range is much
+      # larger; matches the clamp used in .ares_refit_glm_loglink().
+      if (type == "link") return(eta_central)
+      clamp_hi <- if (fam == "poisson") 50 else 20
+      clamp_lo <- if (fam == "poisson") -50 else -20
+      return(exp(pmin(pmax(eta_central, clamp_lo), clamp_hi)))
+    }
     return(eta_central)
   }
 
@@ -173,6 +182,19 @@ predict.ares <- function(object, newdata = NULL,
       eta_b <- drop(bx_b %*% fb$coefficients)
       preds[, b + 1L] <- stats::plogis(pmin(pmax(eta_b, -30), 30))
     }
+  } else if (fam == "poisson" || fam == "gamma") {
+    # Bag-average on the response (rate / mean) scale so the average stays
+    # positive; convert to link scale (log of the mean) only if the user
+    # asked for it. Matches the binomial probability-scale convention.
+    clamp_hi <- if (fam == "poisson") 50 else 20
+    clamp_lo <- if (fam == "poisson") -50 else -20
+    preds[, 1] <- exp(pmin(pmax(eta_central, clamp_lo), clamp_hi))
+    for (b in seq_along(object$boot$fits)) {
+      fb <- object$boot$fits[[b]]
+      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
+      eta_b <- drop(bx_b %*% fb$coefficients)
+      preds[, b + 1L] <- exp(pmin(pmax(eta_b, clamp_lo), clamp_hi))
+    }
   } else {
     preds[, 1] <- eta_central
     for (b in seq_along(object$boot$fits)) {
@@ -185,13 +207,15 @@ predict.ares <- function(object, newdata = NULL,
   if (isTRUE(se.fit)) {
     attr(yhat, "sd") <- apply(preds, 1, stats::sd)
   }
-  # Convert to link scale only after averaging (for binomial): the
-  # bag-mean on response scale is the natural prediction; if the user
-  # explicitly asked type="link", invert via qlogis (handling 0/1 edge
-  # cases by clamping to a small epsilon so the logit is finite).
+  # Convert to link scale only after averaging:
+  #   - binomial: invert via qlogis(); clamp to (eps, 1-eps) for finiteness.
+  #   - poisson/gamma: log(); clamp to a small positive epsilon so log is finite.
   if (fam == "binomial" && type == "link") {
     eps <- 1e-15
     yhat <- stats::qlogis(pmin(pmax(yhat, eps), 1 - eps))
+  } else if ((fam == "poisson" || fam == "gamma") && type == "link") {
+    eps <- 1e-300
+    yhat <- log(pmax(yhat, eps))
   }
   yhat
 }

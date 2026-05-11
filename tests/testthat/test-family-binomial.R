@@ -27,7 +27,9 @@ test_that("family arg validates: gaussian default, accepts 'binomial'", {
   expect_identical(fg$family, "gaussian")
   fb <- ares(d$x, d$y, family = "binomial", nthreads = 2)
   expect_identical(fb$family, "binomial")
-  expect_error(ares(d$x, d$y, family = "poisson", nthreads = 2),
+  # As of v0.0.0.9025 poisson/gamma are accepted families. Sanity-check that
+  # the family arg still rejects truly-unknown strings.
+  expect_error(ares(d$x, d$y, family = "exponential", nthreads = 2),
                "should be one of")
 })
 

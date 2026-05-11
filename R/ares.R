@@ -129,18 +129,28 @@
 #'   Missing values in `y` are always a hard error -- there is no sensible
 #'   way to impute the regression target. `NaN` and `+/-Inf` in `x` are
 #'   also rejected outright regardless of `na.action`.
-#' @param family Response family. Either `"gaussian"` (default; numeric `y`,
-#'   identity link, OLS coefficients) or `"binomial"` (binary `y`, logit
-#'   link). When `family = "binomial"`, `y` must be either a 0/1 numeric
-#'   vector or a 2-level factor (any other shape is a hard error). The
+#' @param family Response family. One of `"gaussian"` (default; numeric `y`,
+#'   identity link, OLS coefficients), `"binomial"` (binary `y`, logit link),
+#'   `"poisson"` (non-negative integer-valued `y`, log link), or `"gamma"`
+#'   (strictly positive `y`, log link). For the non-gaussian families the
 #'   forward and backward passes still run on the original numeric `y` as
-#'   if gaussian (matching earth's GLM strategy); after backward pruning
-#'   the selected basis is refit on the binary response via
-#'   `stats::glm.fit()` with `family = binomial()`, and `$coefficients`,
-#'   `$fitted.values`, and `$linear.predictor` come from that GLM. Bagging,
-#'   CV pruning, and autotune compose with `family = "binomial"`; the inner
-#'   model-selection still uses Gaussian MSE on the latent scale (cheap and
+#'   if gaussian (matching earth\'s GLM strategy); after backward pruning the
+#'   selected basis is refit on the response via `stats::glm.fit()` with the
+#'   appropriate `family` object, and `$coefficients`, `$fitted.values`, and
+#'   `$linear.predictor` come from that GLM. Bagging, CV pruning, autotune,
+#'   and `weights` compose with the GLM families; inner model-selection
+#'   still uses (weighted) Gaussian MSE on the latent scale (cheap and
 #'   adequate for term selection — only the final coefficients use IRLS).
+#' @param weights Optional non-negative numeric vector of length `nrow(x)`
+#'   for weighted least squares fitting. Default `NULL` (unweighted OLS).
+#'   When supplied, the engine implements WLS via a `sqrt(weights)`
+#'   transform of the design and response, so forward + backward both
+#'   consume the weights (knot selection, GCV pruning, CV pruning, and
+#'   autotune are all weight-aware). Weights are renormalised internally so
+#'   that `mean(weights) = 1`; this keeps the GCV denominator valid (the
+#'   "effective sample size" equals `n`). NA / NaN / negative weights are
+#'   rejected. With `weights = rep(1, n)` the fit is byte-identical to the
+#'   unweighted path.
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -149,11 +159,13 @@
 #' @return An object of class `"ares"` -- a list with components
 #'   `coefficients`, `bx`, `dirs`, `cuts`, `selected.terms`, `rss`, `gcv`,
 #'   `rss.per.subset`, `gcv.per.subset`, `fitted.values`, `residuals`, `namesx`,
-#'   `call`, plus echoed control parameters. When `family = "binomial"` the
-#'   fit additionally carries `$family = "binomial"`, `$glm` (a small list
-#'   with `deviance`, `null.deviance`, `df.null`, `df.residual`, `aic`,
-#'   `converged`, `iter`, `y.levels`), `$linear.predictor` (length `n`),
-#'   and `$fitted.values` holds response-scale probabilities (`plogis(lp)`).
+#'   `call`, plus echoed control parameters. When `family` is non-gaussian
+#'   the fit additionally carries `$family`, `$glm` (a small list with
+#'   `deviance`, `null.deviance`, `df.null`, `df.residual`, `aic`,
+#'   `converged`, `iter`, plus family-specific fields), `$linear.predictor`
+#'   (length `n`), and `$fitted.values` on the response scale: probabilities
+#'   for binomial (`plogis(lp)`), counts/rates for poisson (`exp(lp)`),
+#'   positive means for gamma (`exp(lp)`).
 #' @references
 #' Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 #' *Annals of Statistics* 19(1):1-67.
@@ -227,7 +239,9 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          autotune.warmstart = TRUE,
                          n.boot = 0L,
                          na.action = c("impute", "omit"),
-                         family = c("gaussian", "binomial"),
+                         family = c("gaussian", "binomial",
+                                    "poisson", "gamma"),
+                         weights = NULL,
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
@@ -277,6 +291,47 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
            " logical, character, or 2-level factor (got class: ",
            paste(class(y), collapse = "/"), ").")
     }
+  } else if (family == "poisson") {
+    # poisson: y must be nonneg, finite, integer-valued (NaN/Inf caught later
+    # by the is.finite() guard). We coerce to numeric (glm.fit accepts that)
+    # but enforce "integer-valued" by comparing to round(y) within a tight
+    # tolerance to allow y stored as double 0.0/1.0/2.0/... .
+    if (!is.numeric(y) && !is.integer(y))
+      stop("ares: family = 'poisson' requires numeric y.")
+    y <- as.numeric(y)
+    yv <- y[is.finite(y)]
+    if (any(yv < 0))
+      stop("ares: family = 'poisson' requires y >= 0; got negative values.")
+    if (any(abs(yv - round(yv)) > 1e-8))
+      stop("ares: family = 'poisson' requires integer-valued y;",
+           " got non-integer values (e.g. ",
+           utils::head(yv[abs(yv - round(yv)) > 1e-8], 3)[1], ").")
+  } else if (family == "gamma") {
+    # gamma (log link): y must be strictly positive and finite.
+    if (!is.numeric(y) && !is.integer(y))
+      stop("ares: family = 'gamma' requires numeric y.")
+    y <- as.numeric(y)
+    yv <- y[is.finite(y)]
+    if (any(yv <= 0))
+      stop("ares: family = 'gamma' requires y > 0; got non-positive values.")
+  }
+
+  # ---- Observation weights (initial validation) ----------------------------
+  # Validate up front (length, finiteness, non-negativity) so subsequent
+  # row-subsetting branches (na.action = "omit") can subset weights too.
+  # Normalisation to mean(w) = 1 happens later, after any row drops.
+  if (!is.null(weights)) {
+    if (!is.numeric(weights))
+      stop("ares: weights must be numeric.")
+    if (length(weights) != length(y))
+      stop("ares: length(weights) (", length(weights),
+           ") must equal length(y) (", length(y), ").")
+    if (any(!is.finite(weights)))
+      stop("ares: weights contain NA / NaN / Inf; all weights must be finite.")
+    if (any(weights < 0))
+      stop("ares: weights must be non-negative.")
+    if (mean(weights) <= 0)
+      stop("ares: weights are all zero (or non-positive sum); cannot fit.")
   }
   # nfold > 0 implies CV pruning. Promote pmethod to "cv" so downstream
   # branches share the same code path; a user explicitly asking for
@@ -348,6 +403,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                   " to median-impute instead.", call. = FALSE)
           x <- x[keep, , drop = FALSE]
           y <- y[keep]
+          if (!is.null(weights)) weights <- weights[keep]
           if (length(y) < 3L)
             stop("ares: na.action='omit' left fewer than 3 rows; aborting.")
         }
@@ -443,6 +499,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
               " median-impute instead.", call. = FALSE)
       x <- x[keep, , drop = FALSE]
       y <- y[keep]
+      if (!is.null(weights)) weights <- weights[keep]
       if (length(y) < 3L)
         stop("ares: na.action='omit' left fewer than 3 rows; aborting.")
     }
@@ -467,6 +524,19 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     x <- x[, !col_const, drop = FALSE]
     if (ncol(x) < 1L)
       stop("ares: all predictor columns are constant after dropping.")
+  }
+
+  # ---- Observation weights (final normalisation) --------------------------
+  # Normalise to mean(w) = 1 so that sum(w) == n. The C++ engine assumes this
+  # convention (so its GCV denominator and intercept-init math stay valid).
+  # Constant-column drops above don't change weight length; we operate on the
+  # current (possibly omit-subsetted) `weights`.
+  w_norm <- NULL
+  if (!is.null(weights)) {
+    wm <- mean(weights)
+    if (wm <= 0)
+      stop("ares: post-NA-omit weights have zero mean; cannot fit.")
+    w_norm <- as.numeric(weights) / wm
   }
 
   # ---- Defaults ----
@@ -530,7 +600,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       seed_cv = seed.cv, cv_1se = isTRUE(cv.1se),
       trace = trace, nthreads = nthreads_eff,
       autotune_speed = autotune_speed,
-      warmstart = isTRUE(autotune.warmstart)
+      warmstart = isTRUE(autotune.warmstart),
+      weights = w_norm
     )
   } else if (pmethod == "cv") {
     out <- .ares_cv_fit(x, y = as.numeric(y),
@@ -545,13 +616,15 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                         nfold = nfold, ncross = ncross,
                         stratify = isTRUE(stratify),
                         seed_cv = seed.cv,
-                        cv_1se = isTRUE(cv.1se))
+                        cv_1se = isTRUE(cv.1se),
+                        weights = w_norm)
   } else {
     out <- mars_fit_cpp(x, as.numeric(y), degree, nk, penalty, thresh,
                         minspan, endspan, adjust_endspan, auto_linpreds,
                         fast_k, fast_beta,
                         nprune, pmethod_int, trace, nthreads_eff,
-                        force_size = 0L, return_path = 0L)
+                        force_size = 0L, return_path = 0L,
+                        weights_in = w_norm)
   }
 
   # ---- Post-process ----
@@ -602,13 +675,21 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       idx <- sample.int(n_full, n_full, replace = TRUE)
       x_b <- x[idx, , drop = FALSE]
       y_b <- as.numeric(y)[idx]
+      # Bootstrap-resampled weights, renormalised so mean(w_b) = 1 inside the
+      # replicate. NULL when no weights were supplied → bag fits behave
+      # exactly like the pre-weights bagging path.
+      w_b <- if (!is.null(w_norm)) {
+        wb <- w_norm[idx]
+        wb / mean(wb)
+      } else NULL
       f_b <- mars_fit_cpp(
         x_b, y_b, as.integer(deg_b), as.integer(nk_b),
         as.numeric(pen_b),
         thresh, minspan, endspan, adjust_endspan, auto_linpreds,
         as.integer(fk_b), fast_beta,
         if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_b) else as.integer(nprune),
-        pmethod_int_b, trace, nthreads_eff, 0L, 0L
+        pmethod_int_b, trace, nthreads_eff, 0L, 0L,
+        weights_in = w_b
       )
       # Strip heavy fields that bagging doesn't need (bx is n_full x M).
       f_b$bx <- NULL
@@ -632,13 +713,18 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 
   # ---- family bookkeeping --------------------------------------------------
   out$family <- family
+  # `w_norm` is the same vector passed to the C++ engine (mean(w_norm) = 1
+  # or NULL); we pass it onward to glm.fit() so the post-hoc GLM solves the
+  # weighted-MLE on the selected basis. For NULL weights, glm.fit defaults
+  # to equal weights, matching the pre-weights binomial path exactly.
   if (family == "binomial") {
     # Post-hoc GLM refit on the selected basis (earth strategy). The
     # forward + backward already picked terms via OLS on the binary y; now
     # IRLS estimates logit-scale coefficients on the same design. We use
     # `glm.fit` (no formula, no model.frame) for speed.
     out <- .ares_refit_binomial(out, y_int = as.integer(y),
-                                y_levels = y_levels)
+                                y_levels = y_levels,
+                                weights = w_norm)
     # Refit each bag replicate too (each replicate already holds its own
     # selected basis on its bootstrap rows; we re-evaluate on those rows
     # and IRLS-refit). The original x/y are needed because bag fits only
@@ -647,7 +733,24 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       out$boot$fits <- .ares_refit_boot_binomial(out$boot$fits,
                                                   x_full = x,
                                                   y_full = as.integer(y),
-                                                  seed_cv = seed.cv)
+                                                  seed_cv = seed.cv,
+                                                  weights = w_norm)
+    }
+  } else if (family == "poisson" || family == "gamma") {
+    # Mirror of the binomial path. Forward + backward already ran as
+    # gaussian on the selected basis; now refit the chosen basis under the
+    # appropriate GLM (poisson(log) or Gamma(log)) so the coefficients and
+    # fitted means come out on the correct scale.
+    out <- .ares_refit_glm_loglink(out, y = as.numeric(y),
+                                   family_name = family,
+                                   weights = w_norm)
+    if (!is.null(out$boot) && length(out$boot$fits)) {
+      out$boot$fits <- .ares_refit_boot_glm_loglink(out$boot$fits,
+                                                    x_full = x,
+                                                    y_full = as.numeric(y),
+                                                    family_name = family,
+                                                    seed_cv = seed.cv,
+                                                    weights = w_norm)
     }
   }
 
@@ -666,7 +769,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 # untouched — they reflect the gaussian model-selection stage.
 #
 # @keywords internal
-.ares_refit_binomial <- function(out, y_int, y_levels) {
+.ares_refit_binomial <- function(out, y_int, y_levels, weights = NULL) {
   bx <- out$bx
   if (is.null(bx) || nrow(bx) == 0L)
     stop("ares: family='binomial' but $bx is empty; cannot fit GLM.")
@@ -678,6 +781,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # routine and shouldn't spam the console.
   g <- suppressWarnings(stats::glm.fit(
     x = bx, y = y_int, family = stats::binomial(),
+    weights = if (is.null(weights)) rep(1, length(y_int)) else weights,
     intercept = FALSE,
     control = list(maxit = 50L, epsilon = 1e-8, trace = FALSE)
   ))
@@ -717,7 +821,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 # original bagging loop) and IRLS-fit it against that sample's binary y.
 #
 # @keywords internal
-.ares_refit_boot_binomial <- function(fits, x_full, y_full, seed_cv) {
+.ares_refit_boot_binomial <- function(fits, x_full, y_full, seed_cv,
+                                      weights = NULL) {
   n_full <- nrow(x_full)
   has_seed <- !is.null(seed_cv)
   if (has_seed) {
@@ -736,11 +841,119 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     y_b <- y_full[idx]
     bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
                            as.integer(fits[[b]]$selected.terms))
+    w_b <- if (!is.null(weights)) {
+      ww <- weights[idx]; m <- mean(ww); if (m > 0) ww / m else ww
+    } else rep(1, length(y_b))
     g <- tryCatch(
       suppressWarnings(stats::glm.fit(
-        x = bx_b, y = y_b,
+        x = bx_b, y = y_b, weights = w_b,
         family = stats::binomial(), intercept = FALSE,
         control = list(maxit = 50L, epsilon = 1e-8, trace = FALSE))),
+      error = function(e) NULL
+    )
+    if (!is.null(g)) {
+      cf_b <- as.numeric(g$coefficients)
+      if (any(!is.finite(cf_b))) cf_b[!is.finite(cf_b)] <- 0
+      fits[[b]]$coefficients <- cf_b
+    }
+  }
+  fits
+}
+
+# ============================================================================
+#  Internal: post-hoc GLM refit (family = "poisson" or "gamma", log link)
+# ============================================================================
+#
+# Same strategy as .ares_refit_binomial: forward + backward already picked
+# terms via OLS; here we refit the chosen basis under poisson(link='log') or
+# Gamma(link='log') via stats::glm.fit. The intercept column is included so
+# we pass intercept = FALSE to glm.fit. Linear predictor is clamped to a
+# wide band ([-50, 50] for poisson, [-20, 20] for gamma) so exp() stays
+# finite under extrapolation; well-conditioned in-sample designs never hit
+# the clamp.
+#
+# @keywords internal
+.ares_refit_glm_loglink <- function(out, y, family_name, weights = NULL) {
+  bx <- out$bx
+  if (is.null(bx) || nrow(bx) == 0L)
+    stop("ares: family='", family_name, "' but $bx is empty; cannot fit GLM.")
+  fam_obj <- switch(family_name,
+                    poisson = stats::poisson(link = "log"),
+                    gamma   = stats::Gamma(link = "log"))
+  # glm.fit starts from a family-specific default mu. For Gamma, default
+  # starting mu = y can blow up the IRLS when y has order-of-magnitude
+  # variation; passing an explicit mustart = y is fine here because y > 0
+  # by validation upstream.
+  must <- if (family_name == "gamma") y else NULL
+  w_use <- if (is.null(weights)) rep(1, length(y)) else weights
+  g <- suppressWarnings(stats::glm.fit(
+    x = bx, y = y, family = fam_obj,
+    weights = w_use, mustart = must,
+    intercept = FALSE,
+    control = list(maxit = 100L, epsilon = 1e-8, trace = FALSE)
+  ))
+  cf <- g$coefficients
+  if (any(!is.finite(cf))) cf[!is.finite(cf)] <- 0
+  names(cf) <- colnames(bx)
+  lp <- drop(bx %*% cf)
+  clamp_hi <- if (family_name == "poisson") 50 else 20
+  clamp_lo <- if (family_name == "poisson") -50 else -20
+  lp_clamped <- pmin(pmax(lp, clamp_lo), clamp_hi)
+  out$coefficients     <- cf
+  out$linear.predictor <- lp_clamped
+  out$fitted.values    <- exp(lp_clamped)
+  out$residuals        <- as.numeric(y) - out$fitted.values
+  out$glm <- list(
+    deviance      = g$deviance,
+    null.deviance = g$null.deviance,
+    df.null       = g$df.null,
+    df.residual   = g$df.residual,
+    aic           = g$aic,
+    converged     = isTRUE(g$converged),
+    iter          = g$iter,
+    family        = family_name,
+    link          = "log"
+  )
+  out
+}
+
+# Internal: refit each bag replicate under the log-link GLM family. Mirrors
+# .ares_refit_boot_binomial.
+#
+# @keywords internal
+.ares_refit_boot_glm_loglink <- function(fits, x_full, y_full, family_name,
+                                          seed_cv, weights = NULL) {
+  n_full <- nrow(x_full)
+  has_seed <- !is.null(seed_cv)
+  if (has_seed) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed_cv) + 1009L)
+  }
+  fam_obj <- switch(family_name,
+                    poisson = stats::poisson(link = "log"),
+                    gamma   = stats::Gamma(link = "log"))
+  for (b in seq_along(fits)) {
+    idx <- sample.int(n_full, n_full, replace = TRUE)
+    x_b <- x_full[idx, , drop = FALSE]
+    y_b <- y_full[idx]
+    bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
+                           as.integer(fits[[b]]$selected.terms))
+    must <- if (family_name == "gamma") y_b else NULL
+    w_b <- if (!is.null(weights)) {
+      ww <- weights[idx]; m <- mean(ww); if (m > 0) ww / m else ww
+    } else rep(1, length(y_b))
+    g <- tryCatch(
+      suppressWarnings(stats::glm.fit(
+        x = bx_b, y = y_b, weights = w_b,
+        family = fam_obj, intercept = FALSE,
+        mustart = must,
+        control = list(maxit = 100L, epsilon = 1e-8, trace = FALSE))),
       error = function(e) NULL
     )
     if (!is.null(g)) {
@@ -838,7 +1051,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          minspan, endspan, adjust_endspan, auto_linpreds,
                          fast_k, fast_beta, nprune, trace, nthreads,
                          nfold, ncross, stratify, seed_cv,
-                         cv_1se = FALSE) {
+                         cv_1se = FALSE,
+                         weights = NULL) {
   n <- nrow(x)
   if (n < nfold + 1L)
     stop("ares: nfold (", nfold, ") must be < n (", n, ").")
@@ -874,22 +1088,29 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     fold_ids
   }
 
-  # Run one fold and return per-size MSE on holdout.
+  # Run one fold and return per-size (weighted) MSE on holdout.
+  # With weights supplied, the fold fit uses sample-weighted least squares
+  # via mars_fit_cpp(weights_in = ...). Holdout scoring uses weighted-MSE
+  # = sum(w_te * r^2) / sum(w_te) so model selection is consistent with the
+  # WLS objective. When weights == NULL, both branches reduce to plain MSE.
   run_fold <- function(train_idx, test_idx) {
     x_tr <- x[train_idx, , drop = FALSE]
     y_tr <- y[train_idx]
     x_te <- x[test_idx,  , drop = FALSE]
     y_te <- y[test_idx]
-    # Note: nprune passed through. force_size = 0 (we want the full path);
-    # return_path = 1 to get path.subsets / path.coefs.
+    w_tr <- if (!is.null(weights)) {
+      ww <- weights[train_idx]
+      m <- mean(ww)
+      if (m > 0) ww / m else ww
+    } else NULL
+    w_te <- if (!is.null(weights)) weights[test_idx] else NULL
     fit <- mars_fit_cpp(x_tr, as.numeric(y_tr), degree,
                         as.integer(nk %||% (min(200L, max(20L, 2L * ncol(x_tr))) + 1L)),
                         as.numeric(penalty %||% (if (degree > 1L) 3 else 2)),
                         thresh, minspan, endspan, adjust_endspan, auto_linpreds,
                         fast_k, fast_beta, as.integer(nprune %||% 0L),
-                        0L, trace, nthreads, 0L, 1L)
-    # path.subsets is length M; entries with non-empty subset correspond to
-    # achieved sizes. Build bx_test once for each size and accumulate MSE.
+                        0L, trace, nthreads, 0L, 1L,
+                        weights_in = w_tr)
     M_full <- nrow(fit$dirs)
     out_mse <- rep(NA_real_, M_full)
     for (s in seq_len(M_full)) {
@@ -901,7 +1122,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                               as.integer(subs))
       yhat <- drop(bx_te %*% as.numeric(coefs))
       r <- y_te - yhat
-      out_mse[s] <- mean(r * r)
+      if (is.null(w_te)) {
+        out_mse[s] <- mean(r * r)
+      } else {
+        sw <- sum(w_te)
+        out_mse[s] <- if (sw > 0) sum(w_te * r * r) / sw else mean(r * r)
+      }
     }
     out_mse
   }
@@ -982,7 +1208,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                            auto_linpreds, fast_k, fast_beta,
                            as.integer(nprune %||% 0L),
                            0L, trace, nthreads,
-                           as.integer(size_star), 1L)
+                           as.integer(size_star), 1L,
+                           weights_in = weights)
   # If the full-data forward pass produced fewer terms than size_star, the
   # C++ engine fell back to the GCV-best subset (force_size > M is ignored).
   # Detect and re-pick the best in-range size from cv_mse, then refit.
@@ -1000,7 +1227,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                                auto_linpreds, fast_k, fast_beta,
                                as.integer(nprune %||% 0L),
                                0L, trace, nthreads,
-                               as.integer(size_star), 1L)
+                               as.integer(size_star), 1L,
+                               weights_in = weights)
     }
   }
   # Annotate.
@@ -1071,7 +1299,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                            nprune, nfold, ncross, stratify, seed_cv,
                            cv_1se, trace, nthreads,
                            autotune_speed = "balanced",
-                           warmstart = TRUE) {
+                           warmstart = TRUE,
+                           weights = NULL) {
   n <- nrow(x)
   p <- ncol(x)
 
@@ -1112,6 +1341,11 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     sub_idx <- sample.int(n, n_sub, replace = FALSE)
     x_sub <- x[sub_idx, , drop = FALSE]
     y_sub <- y[sub_idx]
+    w_sub <- if (!is.null(weights)) {
+      ww <- weights[sub_idx]
+      m <- mean(ww)
+      if (m > 0) ww / m else ww
+    } else NULL
     sub_fit <- tryCatch(
       .ares_autotune(
         x = x_sub, y = y_sub,
@@ -1126,7 +1360,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
         seed_cv = if (has_seed) as.integer(seed_cv) + 503L else NULL,
         cv_1se = cv_1se, trace = trace, nthreads = nthreads,
         autotune_speed = "fast",   # fast.k = 5 always inside subsample
-        warmstart = FALSE
+        warmstart = FALSE,
+        weights = w_sub
       ),
       error = function(e) NULL
     )
@@ -1169,7 +1404,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       if (length(nprune) == 0L || is.na(nprune[1])) {
         as.integer(warm_winner$nk)
       } else as.integer(nprune),
-      0L, trace, nthreads, 0L, 0L
+      0L, trace, nthreads, 0L, 0L,
+      weights_in = weights
     )
     fit_full$autotune <- list(
       grid          = data.frame(
@@ -1265,21 +1501,32 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
 
   # Score one fold for one cell. Returns NA on failure.
+  # Currently unused by the shared-forward fast path; kept for clarity/test
+  # comparison. Weights composed identically to the shared-forward path.
   score_one <- function(d, pen, nk_c, fk, tr, te) {
+    w_tr <- if (!is.null(weights)) {
+      ww <- weights[tr]; m <- mean(ww); if (m > 0) ww / m else ww
+    } else NULL
+    w_te <- if (!is.null(weights)) weights[te] else NULL
     fit_k <- mars_fit_cpp(
       x[tr, , drop = FALSE], as.numeric(y[tr]),
       as.integer(d), as.integer(nk_c), as.numeric(pen),
       thresh, minspan, endspan, adjust_endspan, auto_linpreds,
       as.integer(fk), fast_beta,
       if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_c) else as.integer(nprune),
-      0L, trace, nthreads, 0L, 0L
+      0L, trace, nthreads, 0L, 0L,
+      weights_in = w_tr
     )
     bx_te <- mars_basis_cpp(x[te, , drop = FALSE],
                             fit_k$dirs, fit_k$cuts,
                             as.integer(fit_k$selected.terms))
     yhat <- drop(bx_te %*% as.numeric(fit_k$coefficients))
     r_te <- y[te] - yhat
-    mean(r_te * r_te)
+    if (is.null(w_te)) mean(r_te * r_te)
+    else {
+      sw <- sum(w_te); if (sw > 0) sum(w_te * r_te * r_te) / sw
+      else mean(r_te * r_te)
+    }
   }
 
   # Successive-halving + shared forward pass (v0.20+).
@@ -1323,6 +1570,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     y_tr <- as.numeric(y[tr])
     x_te <- x[te, , drop = FALSE]
     y_te <- y[te]
+    # Fold-level weights: rescale train weights to mean 1 (matches the C++
+    # engine convention); test weights left raw (we score weighted MSE).
+    w_tr <- if (!is.null(weights)) {
+      ww <- weights[tr]; m <- mean(ww); if (m > 0) ww / m else ww
+    } else NULL
+    w_te <- if (!is.null(weights)) weights[te] else NULL
 
     for (g in seq_along(groups)) {
       gi <- groups[[g]]
@@ -1344,7 +1597,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
             as.integer(gi$nk)
           } else as.integer(nprune),
           0L,           # pmethod=backward (need a forward pass)
-          trace, nthreads, 0L, 0L
+          trace, nthreads, 0L, 0L,
+          weights_in = w_tr
         ),
         error = function(e) NULL
       )
@@ -1356,7 +1610,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       dirs_full <- ff$dirs
       cuts_full <- ff$cuts
 
-      # Per-cell backward replay with its own penalty.
+      # Per-cell backward replay with its own penalty. Same fold weights
+      # are passed through so the IRLS/WLS objective stays consistent.
       for (mi in gi$members) {
         if (!alive[mi]) next
         ce <- cells[[mi]]
@@ -1367,7 +1622,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
             if (length(nprune) == 0L || is.na(nprune[1])) {
               as.integer(ce$nk)
             } else as.integer(nprune),
-            nthreads, 0L, 0L
+            nthreads, 0L, 0L,
+            weights_in = w_tr
           ),
           error = function(e) NULL
         )
@@ -1376,7 +1632,13 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                                 as.integer(bk$selected.terms))
         yhat <- drop(bx_te %*% as.numeric(bk$coefficients))
         r_te <- y_te - yhat
-        fold_mse[mi, fp_i] <- mean(r_te * r_te)
+        if (is.null(w_te)) {
+          fold_mse[mi, fp_i] <- mean(r_te * r_te)
+        } else {
+          sw <- sum(w_te)
+          fold_mse[mi, fp_i] <- if (sw > 0) sum(w_te * r_te * r_te) / sw
+                                 else mean(r_te * r_te)
+        }
       }
     }
 
@@ -1452,7 +1714,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     thresh, minspan, endspan, adjust_endspan, auto_linpreds,
     as.integer(best_fk), fast_beta,
     if (length(nprune) == 0L || is.na(nprune[1])) as.integer(best_nk) else as.integer(nprune),
-    0L, trace, nthreads, 0L, 0L
+    0L, trace, nthreads, 0L, 0L,
+    weights_in = weights
   )
 
   grid_df <- data.frame(

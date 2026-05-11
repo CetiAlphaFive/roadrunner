@@ -741,7 +741,9 @@ List mars_fit_cpp(const NumericMatrix& x_in,
                   int fast_k, double fast_beta,
                   int nprune,
                   int pmethod, int trace, int nthreads,
-                  int force_size, int return_path) {
+                  int force_size, int return_path,
+                  const Rcpp::Nullable<Rcpp::NumericVector>& weights_in =
+                    R_NilValue) {
   using namespace ares;
   int n = x_in.nrow();
   int p = x_in.ncol();
@@ -751,12 +753,50 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   if (nk < 3) nk = 3;
   if (degree < 1) stop("ares: degree must be >= 1.");
 
+  // ---- Weights handling (WLS via sqrt(w) transform) ----------------------
+  // If `weights_in` is NULL / empty (default), unweighted OLS path: w = 1,
+  // sqw = 1 everywhere, and every subsequent computation is byte-identical
+  // to the pre-weights engine. When supplied, the caller MUST have:
+  //   - validated weights (non-negative, finite, length == n)
+  //   - normalised so mean(w) == 1 (so n_effective == n and GCV stays valid)
+  // The C++ side trusts those preconditions (R-side enforces them).
+  //
+  // Math: WLS on (X, y, w) equals OLS on (sqw .* X, sqw .* y). We maintain
+  // the basis matrix B in *transformed* form internally: B_internal[:, t] =
+  // sqw .* B_orig[:, t]. The intercept column becomes sqw (not 1). Every
+  // forward emission B[:, M] = parent_col * (x - cut)+ inherits sqw from
+  // parent_col automatically — parent_col is already sqw-prefixed because it
+  // came from B_internal. Y is replaced by Y_tilde = sqw .* y. All inner
+  // products in the KnotScanner become weighted by w_i. The reported RSS is
+  // the *weighted* RSS = sum w_i * (y_i - yhat_i)^2. Output bx is divided by
+  // sqw at return time so predict() (which rebuilds basis from dirs/cuts in
+  // the original scale via mars_basis_cpp) sees a consistent design.
+  bool use_weights = false;
+  std::vector<double> sqw(n, 1.0);
+  if (weights_in.isNotNull()) {
+    NumericVector w_in(weights_in);
+    if (w_in.size() > 0) {
+      if (w_in.size() != n)
+        stop("ares: length(weights) must equal nrow(x).");
+      use_weights = true;
+      for (int i = 0; i < n; ++i) {
+        double w = w_in[i];
+        if (!std::isfinite(w) || w < 0.0)
+          stop("ares: weights must be non-negative and finite.");
+        sqw[i] = std::sqrt(w);
+      }
+    }
+  }
+
   // Flatten to std::vector<double> for thread-safety
   std::vector<double> X(size_t(n) * p);
   for (int j = 0; j < p; ++j)
     for (int i = 0; i < n; ++i)
       X[i + size_t(j) * n] = x_in(i, j);
-  std::vector<double> Y(y_in.begin(), y_in.end());
+  // Y in *transformed* scale: y_tilde = sqw .* y. Identical to y when
+  // use_weights == false (sqw is all 1s).
+  std::vector<double> Y(n);
+  for (int i = 0; i < n; ++i) Y[i] = sqw[i] * y_in[i];
 
   // ms <= 0 means "auto per parent"; KnotScanner derives auto_minspan from
   // the actual N_m at scan time. ms > 0 forces a fixed user value.
@@ -775,8 +815,10 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   std::vector<int> dirs(size_t(nk_cap) * p, 0);
   std::vector<double> cuts(size_t(nk_cap) * p, 0.0);
 
-  // Term 0: intercept
-  for (int i = 0; i < n; ++i) B[i + 0 * size_t(n)] = 1.0;
+  // Term 0: intercept. Under weights, B_internal[:, 0] = sqw (not 1) so the
+  // maintained QR of B_internal corresponds to the WLS QR of (sqw .* X).
+  // sqw is all-ones in the unweighted path, so this matches the original.
+  for (int i = 0; i < n; ++i) B[i + 0 * size_t(n)] = sqw[i];
   int M = 1;
 
   // Incremental QR maintenance (replaces per-step build_Q + ols_qr).
@@ -794,21 +836,28 @@ List mars_fit_cpp(const NumericMatrix& x_in,
   std::vector<double> Qty(nk_cap, 0.0);
   std::vector<double> resid(n);
 
-  // Initialise QR for M=1 (intercept). Column is all-ones; ||1|| = sqrt(n);
-  // Q1[:, 0] = 1/sqrt(n); R[0,0] = sqrt(n); Qty[0] = sum(y)/sqrt(n).
+  // Initialise QR for M=1 (intercept).
+  //   Internal column is sqw[i]; ||sqw||^2 = sum(w) = n (normalised).
+  //   Q1[:, 0] = sqw[i] / ||sqw||;  R[0,0] = ||sqw||;  Qty[0] = (sqw . Y_tilde)/||sqw||
+  //                                                          = sum(w*y) / sqrt(n).
+  // Unweighted path (sqw == 1, ||sqw|| == sqrt(n)) is byte-identical to the
+  // pre-weights init.
   {
-    double sn = std::sqrt(double(n));
-    double inv_sn = 1.0 / sn;
-    double sum_y = 0.0;
-    for (int i = 0; i < n; ++i) sum_y += Y[i];
+    double sw2 = 0.0;
+    for (int i = 0; i < n; ++i) sw2 += sqw[i] * sqw[i];
+    double sn = std::sqrt(sw2);
+    double inv_sn = (sn > 0.0) ? 1.0 / sn : 0.0;
+    double dot_sqw_Y = 0.0;
+    for (int i = 0; i < n; ++i) dot_sqw_Y += sqw[i] * Y[i];
     R[0] = sn;
-    Qty[0] = sum_y * inv_sn;
+    Qty[0] = dot_sqw_Y * inv_sn;
     for (int i = 0; i < n; ++i) {
-      Q1[i] = inv_sn;
-      QT[size_t(i) * nk_cap + 0] = inv_sn;
+      Q1[i] = sqw[i] * inv_sn;
+      QT[size_t(i) * nk_cap + 0] = Q1[i];
     }
-    double fitted0 = Qty[0] * inv_sn;
-    for (int i = 0; i < n; ++i) resid[i] = Y[i] - fitted0;
+    // Fitted on internal scale = Qty[0] * Q1[i] = (sum w*y / n) * sqw[i].
+    // Residual is Y_tilde - fitted_internal.
+    for (int i = 0; i < n; ++i) resid[i] = Y[i] - Qty[0] * Q1[i];
   }
   double sum_y2 = 0.0;
   for (int i = 0; i < n; ++i) sum_y2 += Y[i] * Y[i];
@@ -1333,12 +1382,22 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     gcv_per_subset[M - 1] = final_gcv;
   }
 
-  // Build outputs
+  // Build outputs.
+  //   - bx_internal holds the *transformed* basis (sqw .* B_orig). For the
+  //     R side we return the *untransformed* basis so bx %*% coef directly
+  //     equals the original-scale fitted value. Divide each column by sqw;
+  //     rows where sqw == 0 (zero-weight obs) get 0 (their contribution to
+  //     the fit was already 0 in the transformed problem).
+  //   - coefs are the WLS estimates in the original basis space (because
+  //     the transform is linear and the design columns scale by the same
+  //     sqw): beta = (B_t' B_t)^{-1} B_t' y_t = (B' W B)^{-1} B' W y.
   int L = (int)selected_idx.size();
   NumericMatrix bx(n, L);
   for (int j = 0; j < L; ++j)
-    for (int i = 0; i < n; ++i)
-      bx(i, j) = B[i + size_t(selected_idx[j]) * n];
+    for (int i = 0; i < n; ++i) {
+      double v = B[i + size_t(selected_idx[j]) * n];
+      bx(i, j) = (sqw[i] > 0.0) ? v / sqw[i] : 0.0;
+    }
   NumericVector coefs(final_beta.begin(), final_beta.end());
 
   // dirs and cuts: keep ALL forward-pass rows (size M x p)
@@ -1461,7 +1520,9 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
                             int nprune,
                             int nthreads,
                             int force_size,
-                            int return_path) {
+                            int return_path,
+                            const Rcpp::Nullable<Rcpp::NumericVector>&
+                              weights_in = R_NilValue) {
   using namespace ares;
   int n = x_in.nrow();
   int p = x_in.ncol();
@@ -1471,12 +1532,33 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
   if (y_in.size() != n) stop("ares: length(y) must equal nrow(x).");
   if (M < 1) stop("ares: dirs has zero rows.");
 
+  // Weights: same WLS-via-sqrt(w) transform as mars_fit_cpp. Default NULL
+  // → sqw = 1 → byte-identical to the pre-weights backward replay.
+  bool use_weights = false;
+  std::vector<double> sqw(n, 1.0);
+  if (weights_in.isNotNull()) {
+    NumericVector w_in(weights_in);
+    if (w_in.size() > 0) {
+      if (w_in.size() != n)
+        stop("ares: length(weights) must equal nrow(x).");
+      use_weights = true;
+      for (int i = 0; i < n; ++i) {
+        double w = w_in[i];
+        if (!std::isfinite(w) || w < 0.0)
+          stop("ares: weights must be non-negative and finite.");
+        sqw[i] = std::sqrt(w);
+      }
+    }
+  }
+
   // Flatten inputs.
   std::vector<double> X(size_t(n) * p);
   for (int j = 0; j < p; ++j)
     for (int i = 0; i < n; ++i)
       X[i + size_t(j) * n] = x_in(i, j);
-  std::vector<double> Y(y_in.begin(), y_in.end());
+  // Y in transformed scale.
+  std::vector<double> Y(n);
+  for (int i = 0; i < n; ++i) Y[i] = sqw[i] * y_in[i];
   std::vector<int>    dirs(size_t(M) * p);
   std::vector<double> cuts(size_t(M) * p);
   for (int t = 0; t < M; ++t)
@@ -1485,12 +1567,21 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
       cuts[size_t(t) * p + j] = cuts_in(t, j);
     }
 
-  // Build B (n x M) from dirs/cuts.
+  // Build B (n x M) from dirs/cuts, then pre-multiply each column by sqw
+  // so B holds the *transformed* basis (sqw .* B_orig). The QR / downdate
+  // path below sees only B, so this single multiply propagates weighting
+  // through every downstream computation.
   std::vector<double> B(size_t(n) * M, 0.0);
   for (int t = 0; t < M; ++t) {
     build_term_column(X.data(), n, p,
                       &dirs[size_t(t) * p], &cuts[size_t(t) * p],
                       B.data() + size_t(t) * n);
+  }
+  if (use_weights) {
+    for (int t = 0; t < M; ++t) {
+      double* col = B.data() + size_t(t) * n;
+      for (int i = 0; i < n; ++i) col[i] *= sqw[i];
+    }
   }
 
   // Set thread options (caller passes the effective count).
@@ -1619,26 +1710,39 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
     path_subsets_outer = std::move(path_subsets);
     path_betas_outer   = std::move(path_betas);
   } else {
-    // M == 1: only intercept.
+    // M == 1: only intercept. With the sqw transform, B[:, 0] = sqw and
+    // Y = sqw .* y, so the OLS solution on (B, Y) yields the weighted mean
+    // of y; the residual norm² is the weighted RSS = sum w_i (y_i - mean)^2.
+    // Reduces exactly to mean(y) and sum (y - mean)^2 when sqw == 1.
     selected_idx = {0};
-    double sum_y = 0.0;
-    for (int i = 0; i < n; ++i) sum_y += Y[i];
-    double mean_y = sum_y / double(n);
+    double dot_sqw_Y = 0.0;
+    double sw2 = 0.0;
+    for (int i = 0; i < n; ++i) {
+      dot_sqw_Y += sqw[i] * Y[i];
+      sw2 += sqw[i] * sqw[i];
+    }
+    double mean_y = (sw2 > 0.0) ? dot_sqw_Y / sw2 : 0.0;
     final_beta = {mean_y};
     double rss = 0.0;
-    for (int i = 0; i < n; ++i) rss += (Y[i] - mean_y) * (Y[i] - mean_y);
+    for (int i = 0; i < n; ++i) {
+      double r = Y[i] - mean_y * sqw[i];
+      rss += r * r;
+    }
     final_rss = rss;
     final_gcv = compute_gcv(rss, 1);
     rss_per_subset[0] = rss;
     gcv_per_subset[0] = final_gcv;
   }
 
-  // Build outputs.
+  // Build outputs. Untransform bx by dividing each column by sqw so the
+  // returned basis is on the original scale (consistent with mars_basis_cpp).
   int L = (int)selected_idx.size();
   NumericMatrix bx_out(n, L);
   for (int j = 0; j < L; ++j)
-    for (int i = 0; i < n; ++i)
-      bx_out(i, j) = B[i + size_t(selected_idx[j]) * n];
+    for (int i = 0; i < n; ++i) {
+      double v = B[i + size_t(selected_idx[j]) * n];
+      bx_out(i, j) = (sqw[i] > 0.0) ? v / sqw[i] : 0.0;
+    }
   NumericVector coefs(final_beta.begin(), final_beta.end());
 
   IntegerVector sel(L);
