@@ -49,7 +49,7 @@
   <main id="main" class="col-md-9"><div class="section level1">
 <div class="page-header"><h1 id="roadrunner">roadrunner<a class="anchor" aria-label="anchor" href="#roadrunner"></a>
 </h1></div>
-<p>Fast, low-dependency machine learning algorithms in R.</p>
+<p>Fast, low-dependency machine learning algorithms in R. First algorithm: <code><a href="reference/ares.html">ares()</a></code> — Multivariate Adaptive Regression Splines (Friedman 1991) via <code>Rcpp</code> + <code>RcppParallel</code>. Numerically comparable to <a href="https://cran.r-project.org/package=earth" class="external-link"><code>earth</code></a> on the gaussian core, faster on most cells at 4 threads, and parallel-deterministic (<code>nthreads = 1</code> is bit-for-bit identical to <code>nthreads = N</code>).</p>
 <div class="section level2">
 <h2 id="install">Install<a class="anchor" aria-label="anchor" href="#install"></a>
 </h2>
@@ -58,13 +58,40 @@
 <span><span class="fu">devtools</span><span class="fu">::</span><span class="fu">install_github</span><span class="op">(</span><span class="st">"CetiAlphaFive/roadrunner"</span><span class="op">)</span></span></code></pre></div>
 </div>
 <div class="section level2">
+<h2 id="features">Features<a class="anchor" aria-label="anchor" href="#features"></a>
+</h2>
+<ul>
+<li>Gaussian / binomial / poisson / gamma response families.</li>
+<li>Observation <code>weights</code>.</li>
+<li>Backward (GCV) or <code>pmethod = "cv"</code> K-fold cross-validated pruning.</li>
+<li>
+<code>autotune = TRUE</code> — inner-CV grid search over <code>(degree, penalty, nk, fast.k)</code> with warm-start + successive halving.</li>
+<li>Row-bootstrap <code>n.boot</code> bagging with <code>se.fit</code>.</li>
+<li>Prediction intervals via <code>varmod = "const" | "lm"</code>.</li>
+<li>Built-in NA handling (median impute / drop).</li>
+<li>Factor / character columns expanded via <code>model.matrix</code>.</li>
+</ul>
+</div>
+<div class="section level2">
 <h2 id="usage">Usage<a class="anchor" aria-label="anchor" href="#usage"></a>
 </h2>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://cetialphafive.github.io/roadrunner/">roadrunner</a></span><span class="op">)</span></span>
 <span></span>
+<span><span class="co"># Regression</span></span>
 <span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/ares.html">ares</a></span><span class="op">(</span><span class="va">mpg</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">mtcars</span>, degree <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">mtcars</span><span class="op">)</span><span class="op">)</span></span></code></pre></div>
+<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">mtcars</span><span class="op">)</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Classification</span></span>
+<span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/integer.html" class="external-link">as.integer</a></span><span class="op">(</span><span class="va">mtcars</span><span class="op">$</span><span class="va">am</span><span class="op">)</span></span>
+<span><span class="va">fitc</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/ares.html">ares</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix</a></span><span class="op">(</span><span class="va">mtcars</span><span class="op">[</span>, <span class="op">-</span><span class="fl">9</span><span class="op">]</span><span class="op">)</span>, <span class="va">y</span>, family <span class="op">=</span> <span class="st">"binomial"</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fitc</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Hands-free hyperparameter tuning</span></span>
+<span><span class="va">fitt</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/ares.html">ares</a></span><span class="op">(</span><span class="va">mpg</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">mtcars</span>, autotune <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>             autotune.speed <span class="op">=</span> <span class="st">"fast"</span>, seed.cv <span class="op">=</span> <span class="fl">1L</span><span class="op">)</span></span>
+<span><span class="va">fitt</span><span class="op">$</span><span class="va">autotune</span><span class="op">$</span><span class="va">degree</span></span></code></pre></div>
+<p>See the <a href="vignettes/ares.Rmd"><code>ares</code> vignette</a> for autotune, classification, weights, bagging, and prediction-interval examples.</p>
 </div>
 <div class="section level2">
 <h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
@@ -99,7 +126,7 @@
 <div class="developers">
 <h2 data-toc-skip>Developers</h2>
 <ul class="list-unstyled">
-<li>Jack T. Rametta <br><small class="roles"> Author, maintainer </small>   </li>
+<li>Jack T. Rametta <br><small class="roles"> Author, maintainer </small> <a href="https://orcid.org/0000-0002-9841-146X" target="orcid.widget" aria-label="ORCID" class="external-link"><span class="fab fa-orcid orcid" aria-hidden="true"></span></a>  </li>
 </ul>
 </div>
 

@@ -51,8 +51,8 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>ares: Fast MARS in roadrunner</h1>
-                        <h4 data-toc-skip class="author">Jack
-Trametta</h4>
+                        <h4 data-toc-skip class="author">Jack T.
+Rametta</h4>
             
             <h4 data-toc-skip class="date">2026-05-11</h4>
       
@@ -68,14 +68,18 @@ Trametta</h4>
 <p><code><a href="../reference/ares.html">ares()</a></code> (shipped in the <code>roadrunner</code> package)
 fits Multivariate Adaptive Regression Splines (MARS) models — a flexible
 nonparametric regression technique introduced by Friedman (1991). The
-MARS forward pass adds basis functions of the form
+forward pass adds basis functions of the form
 <code>max(0, ±(x - knot))</code> (called <em>hinges</em>) one pair at a
 time, each scaled by a parent term to allow interactions. A backward
-pass then prunes terms by minimizing the GCV criterion.</p>
+pass prunes terms by minimising the GCV criterion (or a K-fold CV
+criterion when <code>pmethod = "cv"</code> /
+<code>nfold &gt; 0</code>).</p>
 <p><code><a href="../reference/ares.html">ares()</a></code> mirrors the API of <a href="https://cran.r-project.org/package=earth" class="external-link"><code>earth</code></a>
-on the gaussian-only core and is designed for numerical parity with
-<code>earth</code> while taking advantage of multi-core CPUs via
-<code>RcppParallel</code>.</p>
+on the gaussian-only core, takes advantage of multi-core CPUs via
+<code>RcppParallel</code>, and adds non-parity features: built-in
+hyperparameter autotune, K-fold CV pruning, row-bootstrap bagging,
+weights, binomial / poisson / gamma GLM families on the selected basis,
+and residual-variance prediction intervals.</p>
 </div>
 <div class="section level2">
 <h2 id="a-small-example-mtcars">A small example: <code>mtcars</code><a class="anchor" aria-label="anchor" href="#a-small-example-mtcars"></a>
@@ -92,53 +96,7 @@ on the gaussian-only core and is designed for numerical parity with
 <span><span class="co">#&gt;   RSS: 91.81 </span></span>
 <span><span class="co">#&gt;   GCV: 6.662 </span></span>
 <span><span class="co">#&gt;   Degree: 1   Penalty: 2   nthreads: 2</span></span></code></pre></div>
-<p>The fit returns a list with the standard MARS components.</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
-<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/str.html" class="external-link">str</a></span><span class="op">(</span><span class="va">fit</span>, max.level <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
-<span><span class="co">#&gt; List of 27</span></span>
-<span><span class="co">#&gt;  $ coefficients  : Named num [1:6] 19.7106 0.0843 0.0844 3.8551 -2.4501 ...</span></span>
-<span><span class="co">#&gt;   ..- attr(*, "names")= chr [1:6] "(Intercept)" "h(145-disp)" "h(123-hp)" "h(gear-4)" ...</span></span>
-<span><span class="co">#&gt;  $ bx            : num [1:32, 1:6] 1 1 1 1 1 1 1 1 1 1 ...</span></span>
-<span><span class="co">#&gt;   ..- attr(*, "dimnames")=List of 2</span></span>
-<span><span class="co">#&gt;  $ dirs          : int [1:21, 1:10] 0 0 0 0 0 0 0 0 0 0 ...</span></span>
-<span><span class="co">#&gt;   ..- attr(*, "dimnames")=List of 2</span></span>
-<span><span class="co">#&gt;  $ cuts          : num [1:21, 1:10] 0 0 0 0 0 0 0 0 0 0 ...</span></span>
-<span><span class="co">#&gt;   ..- attr(*, "dimnames")=List of 2</span></span>
-<span><span class="co">#&gt;  $ selected.terms: int [1:6] 1 3 5 10 14 16</span></span>
-<span><span class="co">#&gt;  $ rss           : num 91.8</span></span>
-<span><span class="co">#&gt;  $ gcv           : num 6.66</span></span>
-<span><span class="co">#&gt;  $ rss.per.subset: num [1:21] 1126 325 177 143 123 ...</span></span>
-<span><span class="co">#&gt;  $ gcv.per.subset: num [1:21] 37.5 12.35 7.75 7.3 7.42 ...</span></span>
-<span><span class="co">#&gt;  $ path.subsets  : list()</span></span>
-<span><span class="co">#&gt;  $ path.coefs    : list()</span></span>
-<span><span class="co">#&gt;  $ nk            : int 21</span></span>
-<span><span class="co">#&gt;  $ thresh        : num 0.001</span></span>
-<span><span class="co">#&gt;  $ penalty       : num 2</span></span>
-<span><span class="co">#&gt;  $ minspan       : int 5</span></span>
-<span><span class="co">#&gt;  $ endspan       : int 10</span></span>
-<span><span class="co">#&gt;  $ degree        : int 1</span></span>
-<span><span class="co">#&gt;  $ nthreads      : int 2</span></span>
-<span><span class="co">#&gt;  $ fitted.values : num [1:32] 19.4 20.5 25.4 19.5 17.7 ...</span></span>
-<span><span class="co">#&gt;  $ residuals     : num [1:32] 1.638 0.547 -2.559 1.877 1.012 ...</span></span>
-<span><span class="co">#&gt;  $ namesx        : chr [1:10] "cyl" "disp" "hp" "drat" ...</span></span>
-<span><span class="co">#&gt;  $ call          : language ares.formula(x = mpg ~ ., data = mtcars, nthreads = 2)</span></span>
-<span><span class="co">#&gt;  $ pmethod       : chr "backward"</span></span>
-<span><span class="co">#&gt;  $ dropped       : chr(0) </span></span>
-<span><span class="co">#&gt;  $ na.action     : chr "impute"</span></span>
-<span><span class="co">#&gt;  $ family        : chr "gaussian"</span></span>
-<span><span class="co">#&gt;  $ terms         :Classes 'terms', 'formula'  language mpg ~ cyl + disp + hp + drat + wt + qsec + vs + am + gear + carb</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "variables")= language list(mpg, cyl, disp, hp, drat, wt, qsec, vs, am, gear, carb)</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "factors")= int [1:11, 1:10] 0 1 0 0 0 0 0 0 0 0 ...</span></span>
-<span><span class="co">#&gt;   .. .. ..- attr(*, "dimnames")=List of 2</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "term.labels")= chr [1:10] "cyl" "disp" "hp" "drat" ...</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "order")= int [1:10] 1 1 1 1 1 1 1 1 1 1</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "intercept")= int 1</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, "response")= int 1</span></span>
-<span><span class="co">#&gt;   .. ..- attr(*, ".Environment")=&lt;environment: R_GlobalEnv&gt; </span></span>
-<span><span class="co">#&gt;  - attr(*, "class")= chr "ares"</span></span></code></pre></div>
-<p><code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> produces fitted values on training data or new
-data.</p>
-<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt; [1] 19.36172 20.45321 25.35910 19.52265 17.68805 19.22091</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="va">mtcars</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">5</span>, <span class="op">]</span><span class="op">)</span><span class="op">)</span></span>
@@ -147,9 +105,7 @@ data.</p>
 <div class="section level2">
 <h2 id="comparison-with-earth">Comparison with <code>earth</code><a class="anchor" aria-label="anchor" href="#comparison-with-earth"></a>
 </h2>
-<p>When the <code>earth</code> package is available, we can directly
-compare fits.</p>
-<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"earth"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">20260509</span><span class="op">)</span></span>
 <span>  <span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">200</span>; <span class="va">p</span> <span class="op">&lt;-</span> <span class="fl">5</span></span>
@@ -168,50 +124,120 @@ compare fits.</p>
 <span><span class="co">#&gt; ares  RSS: 222.61  GCV: 1.707  nterms: 16 </span></span>
 <span><span class="co">#&gt; earth RSS: 204.18  GCV: 1.518  nterms: 15 </span></span>
 <span><span class="co">#&gt; relative RSS difference: 0.0903</span></span></code></pre></div>
-<p>The relative RSS difference is typically a fraction of a percent at n
-&gt;= 1000 — the two implementations agree numerically even when they
-pick slightly different knot sets.</p>
+<p>The two implementations agree numerically to within a fraction of a
+percent on RSS even when they pick slightly different knot sets.</p>
 </div>
 <div class="section level2">
 <h2 id="threading-determinism">Threading determinism<a class="anchor" aria-label="anchor" href="#threading-determinism"></a>
 </h2>
 <p><code>ares</code> is parallel-deterministic by construction: changing
-<code>nthreads</code> does not change the output.</p>
-<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code>nthreads</code> does not change the output bit-for-bit.</p>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">42</span><span class="op">)</span></span>
 <span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">150</span>; <span class="va">p</span> <span class="op">&lt;-</span> <span class="fl">5</span></span>
 <span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="va">n</span> <span class="op">*</span> <span class="va">p</span><span class="op">)</span>, <span class="va">n</span>, <span class="va">p</span><span class="op">)</span></span>
 <span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fl">5</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">pmax</a></span><span class="op">(</span><span class="fl">0</span>, <span class="va">x</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span> <span class="op">-</span> <span class="fl">0.5</span><span class="op">)</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">pmax</a></span><span class="op">(</span><span class="fl">0</span>, <span class="va">x</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span> <span class="op">-</span> <span class="fl">0.3</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="va">n</span><span class="op">)</span></span>
 <span><span class="va">f1</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">x</span>, <span class="va">y</span>, degree <span class="op">=</span> <span class="fl">2</span>, nthreads <span class="op">=</span> <span class="fl">1</span><span class="op">)</span></span>
 <span><span class="va">f2</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">x</span>, <span class="va">y</span>, degree <span class="op">=</span> <span class="fl">2</span>, nthreads <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"identical selected.terms:"</span>, <span class="fu"><a href="https://rdrr.io/r/base/Logic.html" class="external-link">isTRUE</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/all.equal.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="va">f1</span><span class="op">$</span><span class="va">selected.terms</span>, <span class="va">f2</span><span class="op">$</span><span class="va">selected.terms</span><span class="op">)</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; identical selected.terms: TRUE</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/base/cat.html" class="external-link">cat</a></span><span class="op">(</span><span class="st">"max coef diff:           "</span>, <span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="va">f1</span><span class="op">$</span><span class="va">coefficients</span> <span class="op">-</span> <span class="va">f2</span><span class="op">$</span><span class="va">coefficients</span><span class="op">)</span><span class="op">)</span>, <span class="st">"\n"</span><span class="op">)</span></span>
-<span><span class="co">#&gt; max coef diff:            0</span></span></code></pre></div>
+<span><span class="fu"><a href="https://rdrr.io/r/base/identical.html" class="external-link">identical</a></span><span class="op">(</span><span class="va">f1</span><span class="op">$</span><span class="va">selected.terms</span>, <span class="va">f2</span><span class="op">$</span><span class="va">selected.terms</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] TRUE</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/Extremes.html" class="external-link">max</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/MathFun.html" class="external-link">abs</a></span><span class="op">(</span><span class="va">f1</span><span class="op">$</span><span class="va">coefficients</span> <span class="op">-</span> <span class="va">f2</span><span class="op">$</span><span class="va">coefficients</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 0</span></span></code></pre></div>
 </div>
 <div class="section level2">
-<h2 id="performance-notes">Performance notes<a class="anchor" aria-label="anchor" href="#performance-notes"></a>
+<h2 id="hyperparameter-autotune">Hyperparameter autotune<a class="anchor" aria-label="anchor" href="#hyperparameter-autotune"></a>
 </h2>
-<p><code>ares</code> v0.0.0.9000 is currently <strong>slower in absolute
-wall-clock than <code>earth</code></strong> — this is a documented
-limitation and the headline target for v0.1. Internally,
-<code>ares</code> uses an O(n) per-knot scoring loop where
-<code>earth</code> uses Friedman’s O(1)-per-knot Givens fast-LS update.
-The Givens implementation is on the roadmap.</p>
-<p>What <code>ares</code> v0.0.0.9000 already gets right:</p>
-<ul>
-<li>Numerical correctness — fits track <code>earth</code> to ~1% RSS
-across the smoke grid.</li>
-<li>Threading determinism — bit-identical fits regardless of thread
-count.</li>
-<li>Parallel scaling — 2-thread is consistently ~1.5–1.8× faster than
-1-thread (the <code>RcppParallel</code> worker is doing real work; the
-constant factor lives inside the inner loop, not in the threading
-layer).</li>
-</ul>
-<p>See the <code>inst/sims/</code> directory for the Monte Carlo
-benchmark scripts that generated the headline numbers in
-<code>README.md</code>.</p>
+<p><code>autotune = TRUE</code> runs an inner K-fold CV grid search over
+<code>(degree, penalty, nk, fast.k)</code> and refits the winner on the
+full data. A warm-start phase fits a 20 % subsample first and
+short-circuits if the best-per-degree gap is decisive.</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">7</span><span class="op">)</span></span>
+<span><span class="va">fit_at</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">mpg</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">mtcars</span>, autotune <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>               autotune.speed <span class="op">=</span> <span class="st">"fast"</span>, seed.cv <span class="op">=</span> <span class="fl">1L</span>, nthreads <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
+<span><span class="va">fit_at</span><span class="op">$</span><span class="va">autotune</span><span class="op">$</span><span class="va">degree</span></span>
+<span><span class="co">#&gt; [1] 1</span></span>
+<span><span class="va">fit_at</span><span class="op">$</span><span class="va">autotune</span><span class="op">$</span><span class="va">penalty</span></span>
+<span><span class="co">#&gt; [1] 1</span></span>
+<span><span class="va">fit_at</span><span class="op">$</span><span class="va">autotune</span><span class="op">$</span><span class="va">nk</span></span>
+<span><span class="co">#&gt; [1] 42</span></span></code></pre></div>
+</div>
+<div class="section level2">
+<h2 id="classification-via-family-binomial">Classification via <code>family = "binomial"</code><a class="anchor" aria-label="anchor" href="#classification-via-family-binomial"></a>
+</h2>
+<p>Forward + backward run as gaussian; the selected basis is then refit
+with <code>stats::glm.fit(family = binomial())</code>.
+<code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> returns probabilities by default, or the linear
+predictor via <code>type = "link"</code>.</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span></span>
+<span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">400</span></span>
+<span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="va">n</span> <span class="op">*</span> <span class="fl">4</span><span class="op">)</span>, <span class="va">n</span>, <span class="fl">4</span><span class="op">)</span></span>
+<span><span class="va">p</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/Logistic.html" class="external-link">plogis</a></span><span class="op">(</span><span class="fl">0.5</span> <span class="op">*</span> <span class="va">x</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span> <span class="op">+</span> <span class="fl">1.2</span> <span class="op">*</span> <span class="va">x</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span> <span class="op">*</span> <span class="op">(</span><span class="va">x</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span> <span class="op">&gt;</span> <span class="fl">0</span><span class="op">)</span> <span class="op">-</span> <span class="fl">0.4</span> <span class="op">*</span> <span class="va">x</span><span class="op">[</span>, <span class="fl">3</span><span class="op">]</span><span class="op">)</span></span>
+<span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/Binomial.html" class="external-link">rbinom</a></span><span class="op">(</span><span class="va">n</span>, <span class="fl">1</span>, <span class="va">p</span><span class="op">)</span></span>
+<span><span class="va">fb</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">x</span>, <span class="va">y</span>, family <span class="op">=</span> <span class="st">"binomial"</span>, degree <span class="op">=</span> <span class="fl">2</span>, nthreads <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/range.html" class="external-link">range</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fb</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt; [1] 0.2443712 0.9915275</span></span></code></pre></div>
+</div>
+<div class="section level2">
+<h2 id="prediction-intervals">Prediction intervals<a class="anchor" aria-label="anchor" href="#prediction-intervals"></a>
+</h2>
+<p><code>varmod = "const"</code> or <code>varmod = "lm"</code> (gaussian
+only) stores a residual variance model at fit time.
+<code>predict(interval = "pint")</code> then returns a matrix with
+<code>c("fit", "lwr", "upr")</code> columns.</p>
+<div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">0</span><span class="op">)</span></span>
+<span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">500</span></span>
+<span><span class="va">x</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="va">n</span> <span class="op">*</span> <span class="fl">3</span><span class="op">)</span>, <span class="va">n</span>, <span class="fl">3</span><span class="op">)</span></span>
+<span><span class="va">y</span> <span class="op">&lt;-</span> <span class="fl">3</span> <span class="op">*</span> <span class="va">x</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span> <span class="op">+</span> <span class="fl">2</span> <span class="op">*</span> <span class="fu"><a href="https://rdrr.io/r/base/Trig.html" class="external-link">sin</a></span><span class="op">(</span><span class="fl">2</span> <span class="op">*</span> <span class="va">pi</span> <span class="op">*</span> <span class="va">x</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span><span class="op">)</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="va">n</span>, sd <span class="op">=</span> <span class="fl">0.5</span><span class="op">)</span></span>
+<span><span class="va">fp</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">x</span>, <span class="va">y</span>, degree <span class="op">=</span> <span class="fl">2</span>, varmod <span class="op">=</span> <span class="st">"const"</span>, nthreads <span class="op">=</span> <span class="fl">2</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fp</span>, <span class="va">x</span><span class="op">[</span><span class="fl">1</span><span class="op">:</span><span class="fl">3</span>, <span class="op">]</span>, interval <span class="op">=</span> <span class="st">"pint"</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="co">#&gt;              fit        lwr       upr</span></span>
+<span><span class="co">#&gt; [1,]  3.36826816  2.3545538 4.3819825</span></span>
+<span><span class="co">#&gt; [2,]  0.04725061 -0.9664638 1.0609650</span></span>
+<span><span class="co">#&gt; [3,] -0.63859961 -1.6523140 0.3751148</span></span></code></pre></div>
+</div>
+<div class="section level2">
+<h2 id="performance">Performance<a class="anchor" aria-label="anchor" href="#performance"></a>
+</h2>
+<p>Across the <code>inst/sims</code> mlbench-style benchmark grid at 4
+threads (median across the 10-cell v0.23 grid):</p>
+<table class="table">
+<colgroup>
+<col width="46%">
+<col width="25%">
+<col width="28%">
+</colgroup>
+<thead><tr class="header">
+<th>metric</th>
+<th>ares (default)</th>
+<th>ares (autotune)</th>
+</tr></thead>
+<tbody>
+<tr class="odd">
+<td>wall-clock vs earth (median)</td>
+<td><strong>~0.93×</strong></td>
+<td>sub-second when warmstart fires; 5–15 s on highdim p=20</td>
+</tr>
+<tr class="even">
+<td>cells faster than earth</td>
+<td><strong>11/18</strong></td>
+<td>(autotune wins MSE on high-p cells)</td>
+</tr>
+<tr class="odd">
+<td>holdout MSE vs ranger</td>
+<td>3–4× better on regression cells</td>
+<td>same</td>
+</tr>
+</tbody>
+</table>
+<p>Parallel scaling at n = 1500 deg = 2 is ~1.75–1.85× (2t / 1t).
+Determinism: <code>nthreads = 1</code> produces byte-identical fits to
+<code>nthreads = N</code> at fixed seed. See
+<code>inst/sims/results/v0.23-mlbench.csv</code> and
+<code>inst/sims/results/v0.24-binomial.csv</code> for the full
+benchmark.</p>
 </div>
 <div class="section level2">
 <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a>

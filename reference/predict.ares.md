@@ -1,6 +1,11 @@
 # Predictions from an `ares` fit
 
-Predictions from an `ares` fit
+Predicts the response (or linear predictor) for new data from a fitted
+ares MARS model. For bagged fits, returns the mean across the central
+fit and the bootstrap replicates; with `se.fit = TRUE`, the per-row bag
+standard deviation is attached as an `"sd"` attribute. For gaussian fits
+that stored a variance model (`varmod = "const"` or `"lm"`),
+`interval = "pint"` returns prediction intervals.
 
 ## Usage
 
