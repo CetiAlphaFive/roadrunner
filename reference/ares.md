@@ -1,11 +1,9 @@
 # Fast Multivariate Adaptive Regression Splines
 
-Fits a MARS model (Friedman 1991) using a fast least-squares forward
-pass with a parallelized knot search and a backward subset-selection
-that minimizes the GCV criterion. The implementation aims for numerical
-parity with [`earth::earth()`](https://rdrr.io/pkg/earth/man/earth.html)
-on the gaussian-only core while taking advantage of multi-core CPUs to
-reduce wall-clock fitting time.
+Fits a Multivariate Adaptive Regression Splines (MARS) model (Friedman
+1991). A forward pass adds pairs of hinge basis functions of the form
+`max(0, +/-(x - knot))`; a backward pass prunes terms by minimising the
+GCV criterion (or a K-fold CV criterion if requested).
 
 ## Usage
 
@@ -54,269 +52,241 @@ ares(
 
 - x:
 
-  A numeric matrix or data frame of predictors, OR a model formula when
+  A numeric matrix or data frame of predictors, or a model formula when
   calling the formula method.
 
 - ...:
 
-  Additional arguments. Currently ignored.
+  Currently ignored.
 
 - data:
 
-  Used by the formula method only. A data frame.
+  A data frame. Used only by the formula method.
 
 - y:
 
-  A numeric response vector. Length must equal `nrow(x)`.
+  A numeric response vector with length `nrow(x)`. For
+  `family = "binomial"`, a 0/1 numeric, logical, or 2-level factor.
 
 - degree:
 
-  Maximum interaction degree. Default 1.
+  Maximum interaction degree. Default `1` (additive). Use `2` or `3` for
+  two- or three-way interactions.
 
 - nk:
 
-  Maximum number of basis terms in the forward pass. Default
-  `min(200, max(20, 2 * ncol(x))) + 1`.
+  Maximum number of basis terms in the forward pass. Default scales with
+  `ncol(x)`: `min(200, max(20, 2 * ncol(x))) + 1`.
 
 - penalty:
 
-  GCV penalty. Default `if (degree > 1) 3 else 2`.
+  GCV penalty per knot. Default `2` for `degree = 1`, `3` otherwise.
+  Larger values produce sparser fits.
 
 - thresh:
 
-  Forward-pass relative-RSS early-stop threshold. Default 0.001.
+  Forward-pass early-stop threshold on relative RSS improvement. Default
+  `0.001`.
 
 - minspan:
 
-  Minimum knot span. 0 (default) selects an automatic value.
+  Minimum gap between knots along a variable. `0` (default) picks an
+  automatic value from `n` and `p`.
 
 - endspan:
 
-  Knot offset from the data ends. 0 (default) selects automatic.
+  Distance from the data ends within which knots are forbidden. `0`
+  (default) picks an automatic value.
 
 - adjust.endspan:
 
   Multiplier applied to `endspan` when the candidate hinge would deepen
-  an existing interaction (parent term has degree at least 1). **Default
-  `1` for gaussian / poisson / gamma, `2` for binomial** (auto-flipped
-  at v0.0.0.9026 with the same A/B-test justification as
-  `auto.linpreds`). Pass `1` or `2` explicitly to override the family
-  default.
+  an existing interaction. Default `1` for `gaussian`, `poisson`,
+  `gamma`; `2` for `binomial`. Pass an explicit value to override.
 
 - auto.linpreds:
 
-  If `TRUE`, and the best forward-pass knot for a candidate hinge sits
-  at the boundary of its variable's eligible range, substitutes a linear
-  term (`dirs = 2`) for the hinge pair. **Default `FALSE` for gaussian /
-  poisson / gamma, `TRUE` for binomial** (auto- flipped at v0.0.0.9026
-  based on the inst/sims/v0.25 A/B test: earth- like settings tie or
-  improve AUC on all mlbench binary cells, but regress some gaussian
-  regression cells). Pass an explicit value to override the family
-  default.
+  If `TRUE`, hinge pairs whose best knot sits at a variable's range
+  boundary are replaced by a linear term. Default `FALSE` for
+  `gaussian`, `poisson`, `gamma`; `TRUE` for `binomial`. Pass an
+  explicit value to override.
 
 - fast.k:
 
-  Fast-MARS priority cache size (Friedman 1993). The forward pass always
-  rescores pairs whose parent was added in the previous step; the top
-  `fast.k` of the remaining stale pairs (ranked by age-discounted cached
-  score) are also rescored, and the rest contribute their cached
-  reduction. `0` disables the cache (every pair is rescored every step).
-  Default `10`.
+  Size of the Fast-MARS candidate cache (Friedman 1993). Larger values
+  rescore more candidates each step (slower, slightly more accurate);
+  `0` rescores every candidate every step. Default `10`.
 
 - fast.beta:
 
-  Age-penalty for the fast-MARS priority cache: a stale pair's effective
-  score is `cached_rss_red / (1 + fast.beta * age)`. Default `1.0`. Only
-  matters when `fast.k > 0`.
+  Age penalty for stale entries in the Fast-MARS cache. Default `1.0`.
+  Only relevant when `fast.k > 0`.
 
 - nprune:
 
-  Maximum number of terms after backward pruning (default `nk`).
+  Maximum number of terms after backward pruning. Default `nk`.
 
 - pmethod:
 
-  Pruning method: `"backward"` (default), `"none"`, or `"cv"` for K-fold
-  cross-validated subset selection. `"cv"` requires `nfold > 0` (or
-  implicitly sets `nfold = 5` when not specified).
+  Pruning method.
+
+  - `"backward"` (default): minimise GCV over backward-elimination
+    subsets.
+
+  - `"none"`: keep all forward-pass terms.
+
+  - `"cv"`: K-fold cross-validated subset selection. Requires
+    `nfold > 0` (sets `nfold = 5` if not specified).
 
 - nfold:
 
-  Number of CV folds (default `0` = no CV; GCV-based backward
-  selection). When `nfold > 0`, `pmethod` is promoted to `"cv"`.
+  Number of CV folds for `pmethod = "cv"`. Default `0` (no CV; GCV-based
+  pruning). When `nfold > 0`, `pmethod` is promoted to `"cv"`.
 
 - ncross:
 
-  Number of CV repetitions when `nfold > 0`. Each repetition builds a
-  fresh fold partition; per-size mean MSE is averaged across
-  `nfold * ncross` evaluations. Default `1`.
+  Number of CV repetitions (each builds a fresh fold partition; per-size
+  mean MSE is averaged). Default `1`.
 
 - stratify:
 
-  If `TRUE` (default), folds are quantile-stratified on `y` so each fold
-  has a similar response distribution. Useful on small `n` / skewed
-  responses; cheap.
+  If `TRUE` (default), CV folds are quantile-stratified on `y`. Useful
+  for small `n` or skewed responses.
 
 - seed.cv:
 
-  Optional integer seed for fold partitioning. `NULL` (default) uses the
-  current RNG state; pass an integer for reproducible CV partitions.
+  Optional integer seed for the CV fold partition. Pass an integer for
+  reproducible CV; `NULL` (default) uses the current RNG state.
 
 - cv.1se:
 
-  If `TRUE`, applies the one-standard-error rule for `pmethod="cv"`:
-  among sizes whose mean CV-MSE is within one standard error of the
-  minimum, pick the smallest. Trades a bit of accuracy for parsimony.
-  Default `FALSE` (pick `argmin` of mean CV-MSE, i.e. the size that
-  minimises holdout error directly).
+  If `TRUE`, applies the one-standard-error rule under `pmethod = "cv"`:
+  among sizes within one SE of the minimum mean CV-MSE, pick the
+  smallest. Default `FALSE` (pick the argmin).
 
 - autotune:
 
   If `TRUE`, runs an inner cross-validated grid search over
-  `(degree, penalty)` and refits the winner. The grid is
-  `degree in {1, 2}` (extended to `{1, 2, 3}` when `nk` is large enough)
-  crossed with `penalty in {0.5*d, 1.0*d, 2.0*d, 3.0*d}` at each degree
-  `d`. Inner CV uses `nfold` (default 5 when autotune is on and
-  `nfold == 0`) and respects `seed.cv`. The chosen `(degree, penalty)`
-  and the full grid CV-MSE are returned in `$autotune`. Default `FALSE`
-  (current grf-style fast default path). Subsequent versions extend the
-  grid (v0.16: `nk`, v0.17: `autotune.speed`, v0.18: `n.boot`).
+  `(degree, penalty, nk, fast.k)` and refits the winner on the full
+  data. The chosen settings and full grid scores are returned in
+  `$autotune`. Default `FALSE`.
 
 - autotune.speed:
 
-  One of `"balanced"` (default), `"quality"`, or `"fast"`. Only
-  meaningful when `autotune = TRUE`.
+  Speed/quality trade-off for `autotune`. Only used when
+  `autotune = TRUE`.
 
-  - `"quality"`: forces `fast.k = 0` for every cell (no fast-MARS
-    priority cache; every (parent, var) pair rescored every step).
-    Matches v0.10 quality at v0.10 wall-clock cost.
+  - `"balanced"` (default): explores a moderate `fast.k` range and picks
+    the smallest whose CV-MSE is within 1% of the best.
 
-  - `"fast"`: forces `fast.k = 5`. Most aggressive cache; cheapest.
+  - `"quality"`: disables the Fast-MARS cache (most thorough, slowest).
 
-  - `"balanced"` (default): sweeps `fast.k in {10, 25, Inf}` (where
-    `Inf` means "no cache") inside the autotune grid and picks the
-    smallest `fast.k` whose mean CV-MSE is within 1% of the best. Trades
-    a marginal accuracy hit for a marginal speed gain.
+  - `"fast"`: forces an aggressive cache (cheapest, slight accuracy
+    trade-off).
 
 - autotune.warmstart:
 
-  If `TRUE` (default; only meaningful when `autotune = TRUE`) and
-  `n >= 200`, ares first runs autotune on a 15% subsample (capped at 200
-  rows). If the subsample has a *decisive* winner – best-per-degree
-  CV-MSE more than 5% below the next-best degree's best cell – that
-  `(degree, penalty, nk, fast.k)` is used directly to refit on the full
-  data, skipping the full-data grid. Cuts autotune wall-clock by ~5x on
-  well-separated DGPs.
+  If `TRUE` (default), `autotune` first tunes on a small subsample. If
+  one cell wins decisively, the full grid is skipped and the winner is
+  refit on all rows. Only applies when `autotune = TRUE` and `n >= 200`.
 
 - n.boot:
 
   Number of bootstrap replicate fits for bagging. Default `0` (no
-  bagging). When `> 0`, the result holds a list of `n.boot` ares fits in
-  `$boot$fits`, each fit on a row-bootstrap sample of the data. The
-  augmented [`predict()`](https://rdrr.io/r/stats/predict.html) averages
-  predictions across replicates plus the central fit and reports
-  per-prediction standard deviation in `attr(predictions, "sd")`.
-  Bagging composes with `autotune` – each replicate fits with the
-  central fit's chosen `(degree, penalty, nk, fast.k)` so the cost is
-  `(n.boot + 1) * fit_cost`, not the autotune grid times `n.boot`.
+  bagging). When `> 0`,
+  [`predict()`](https://rdrr.io/r/stats/predict.html) averages over the
+  replicates plus the central fit and (with `se.fit = TRUE`) returns a
+  per-prediction bag standard deviation. Composes with `autotune`: each
+  replicate reuses the central fit's chosen hyperparameters.
 
 - na.action:
 
-  Strategy for missing values in `x`. Either `"impute"` (default) or
-  `"omit"`. `"impute"` replaces each column's `NA`s with that column's
-  median (computed from the non-missing rows) and stores those medians
-  on the fit so [`predict()`](https://rdrr.io/r/stats/predict.html) can
-  reapply them to future newdata. `"omit"` drops every row that has any
-  `NA` in `x`. Both actions emit a warning summarising the affected rows
-  / columns. Missing values in `y` are always a hard error – there is no
-  sensible way to impute the regression target. `NaN` and `+/-Inf` in
-  `x` are also rejected outright regardless of `na.action`.
+  Strategy for missing values in `x`. `"impute"` (default) replaces each
+  column's `NA`s with that column's training median and stores the
+  medians for [`predict()`](https://rdrr.io/r/stats/predict.html) to
+  reuse. `"omit"` drops rows with any `NA`. Either action warns. Missing
+  values in `y`, or `NaN`/`Inf` anywhere in `x`, are always rejected.
 
 - family:
 
-  Response family. One of `"gaussian"` (default; numeric `y`, identity
-  link, OLS coefficients), `"binomial"` (binary `y`, logit link),
-  `"poisson"` (non-negative integer-valued `y`, log link), or `"gamma"`
-  (strictly positive `y`, log link). For the non-gaussian families the
-  forward and backward passes still run on the original numeric `y` as
-  if gaussian (matching earth\\s GLM strategy); after backward pruning
-  the selected basis is refit on the response via
-  [`stats::glm.fit()`](https://rdrr.io/r/stats/glm.html) with the
-  appropriate `family` object, and `$coefficients`, `$fitted.values`,
-  and `$linear.predictor` come from that GLM. Bagging, CV pruning,
-  autotune, and `weights` compose with the GLM families; inner
-  model-selection still uses (weighted) Gaussian MSE on the latent scale
-  (cheap and adequate for term selection — only the final coefficients
-  use IRLS).
+  Response family for the final coefficient fit.
+
+  - `"gaussian"` (default): identity link, OLS.
+
+  - `"binomial"`: logit link. `y` may be 0/1 numeric, logical, or a
+    2-level factor.
+
+  - `"poisson"`: log link. `y` must be non-negative integer-valued.
+
+  - `"gamma"`: log link. `y` must be strictly positive. For non-gaussian
+    families, term selection runs on the numeric `y` (fast); the
+    selected basis is then refit on the response scale via
+    [`stats::glm.fit()`](https://rdrr.io/r/stats/glm.html) with the
+    requested family.
 
 - weights:
 
   Optional non-negative numeric vector of length `nrow(x)` for weighted
-  least squares fitting. Default `NULL` (unweighted OLS). When supplied,
-  the engine implements WLS via a `sqrt(weights)` transform of the
-  design and response, so forward + backward both consume the weights
-  (knot selection, GCV pruning, CV pruning, and autotune are all
-  weight-aware). Weights are renormalised internally so that
-  `mean(weights) = 1`; this keeps the GCV denominator valid (the
-  "effective sample size" equals `n`). NA / NaN / negative weights are
-  rejected. With `weights = rep(1, n)` the fit is byte-identical to the
-  unweighted path.
+  least-squares fitting. Default `NULL` (unweighted). Term selection,
+  GCV / CV pruning, and autotune all respect the weights. Negative,
+  `NA`, or `NaN` weights are rejected.
 
 - varmod:
 
-  Variance-model strategy used by
-  [`predict.ares()`](https://cetialphafive.github.io/roadrunner/reference/predict.ares.md)
-  to build prediction intervals. One of:
+  Residual variance model used by
+  [`predict()`](https://rdrr.io/r/stats/predict.html) for prediction
+  intervals (gaussian only).
 
-  - `"none"` (default): no variance model is stored.
-    [`predict()`](https://rdrr.io/r/stats/predict.html) returns only the
-    conditional mean; `interval = "pint"` is unavailable.
+  - `"none"` (default): no variance model is stored; `interval = "pint"`
+    is unavailable.
 
-  - `"const"`: store a single training residual standard deviation
-    `sigma_hat = sqrt(weighted_RSS / df_residual)`. PIs are
-    `yhat +/- qt(0.975, df) * sigma_hat`.
+  - `"const"`: stores a single residual SD; intervals are
+    `yhat +/- qt(level, df) * sigma`.
 
-  - `"lm"`: fit a small linear model `|resid| ~ yhat` on the training
-    fit and use its prediction (multiplied by sqrt(pi/2) so it estimates
-    sigma) at the new yhat. Captures simple heteroscedasticity. Only
-    meaningful for `family = "gaussian"`. For binomial / poisson / gamma
-    the variance is mean-determined; the argument is silently ignored
-    (PIs would require family-specific intervals not implemented here —
-    see ?stats::predict.glm for that). Defaults to `"none"` (SEs off by
-    default).
+  - `"lm"`: fits a small linear model of `|resid|` on `yhat` to allow
+    simple mean-dependent heteroscedasticity. Ignored for non-gaussian
+    families.
 
 - trace:
 
-  Trace level. 0 = silent (default), 1 = forward-pass progress.
+  Trace level. `0` (default) is silent; `1` reports forward-pass
+  progress.
 
 - nthreads:
 
-  Number of threads. 0 (default) selects
+  Number of threads. `0` (default) uses
   [`RcppParallel::defaultNumThreads()`](https://rdrr.io/pkg/RcppParallel/man/setThreadOptions.html).
-  CRAN-distributed examples and the bundled vignette cap this at 2.
+  Examples and the vignette cap this at `2` for CRAN compliance.
 
 ## Value
 
-An object of class `"ares"` – a list with components `coefficients`,
-`bx`, `dirs`, `cuts`, `selected.terms`, `rss`, `gcv`, `rss.per.subset`,
-`gcv.per.subset`, `fitted.values`, `residuals`, `namesx`, `call`, plus
-echoed control parameters. When `family` is non-gaussian the fit
-additionally carries `$family`, `$glm` (a small list with `deviance`,
-`null.deviance`, `df.null`, `df.residual`, `aic`, `converged`, `iter`,
-plus family-specific fields), `$linear.predictor` (length `n`), and
-`$fitted.values` on the response scale: probabilities for binomial
-(`plogis(lp)`), counts/rates for poisson (`exp(lp)`), positive means for
-gamma (`exp(lp)`).
+An object of class `"ares"`: a list containing the fitted coefficients,
+the basis matrix `bx`, the term directions `dirs` and knots `cuts`, the
+indices of `selected.terms`, training `rss` and `gcv`, `fitted.values`
+and `residuals`, predictor names `namesx`, the call, and echoed control
+parameters. Non-gaussian fits additionally include `$family`, `$glm`
+(with `deviance`, `null.deviance`, `df.null`, `df.residual`, `aic`,
+`converged`, `iter`), and `$linear.predictor`; `$fitted.values` is on
+the response scale (probabilities for binomial, positive means for
+poisson and gamma). Autotune fits carry `$autotune` and bagged fits
+carry `$boot`.
 
 ## Details
 
-Two interfaces are provided. `ares.default()` accepts a numeric
-predictor matrix `x` and a numeric response vector `y`. `ares.formula()`
-accepts a model formula and a data frame.
+Two interfaces are provided. The formula method takes a model formula
+and a data frame. The default method takes a numeric predictor matrix
+`x` and a numeric response vector `y`.
+
+Fits are deterministic across thread counts: at a fixed `seed.cv`,
+results are bit-for-bit identical regardless of `nthreads`.
 
 ## References
 
 Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 *Annals of Statistics* 19(1):1-67.
+
+Friedman, J. H. (1993). *Fast MARS*. Stanford University Department of
+Statistics Technical Report 110.
 
 ## Examples
 

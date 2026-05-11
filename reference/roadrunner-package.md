@@ -26,8 +26,3 @@ Useful links:
 
 **Maintainer**: Jack T. Rametta <jtrametta@gmail.com>
 ([ORCID](https://orcid.org/0000-0002-9841-146X))
-
-Authors:
-
-- Jack T. Rametta <jtrametta@gmail.com>
-  ([ORCID](https://orcid.org/0000-0002-9841-146X))

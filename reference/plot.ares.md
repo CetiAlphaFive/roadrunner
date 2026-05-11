@@ -1,6 +1,8 @@
-# Plot method for `ares` fits (residuals vs fitted)
+# Plot method for `ares` fits
 
-Plot method for `ares` fits (residuals vs fitted)
+Diagnostic plot for a fitted `ares` model. Currently produces a
+residuals-vs-fitted scatter; additional diagnostics may be added in the
+future.
 
 ## Usage
 
@@ -13,15 +15,17 @@ plot(x, which = 1L, ...)
 
 - x:
 
-  an `ares` object
+  An object of class `"ares"`.
 
 - which:
 
-  integer in 1:1 — currently only residuals-vs-fitted is supported
+  Which diagnostic to draw. Only `1` (residuals vs fitted) is
+  implemented.
 
 - ...:
 
-  passed to [`plot()`](https://rdrr.io/r/graphics/plot.default.html)
+  Further graphical parameters passed to
+  [`plot()`](https://rdrr.io/r/graphics/plot.default.html).
 
 ## Value
 

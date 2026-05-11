@@ -15,9 +15,8 @@ a Multivariate Adaptive Regression Splines fitter; more will follow.
   `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread counts
   at a fixed seed.
-- **Familiar API.** Base-R style: formula and matrix interfaces,
-  standard S3 methods (`predict`, `print`, `summary`, `plot`), and
-  argument names that mirror existing R packages where one exists.
+- **Familiar API.** Base-R style: formula and matrix interfaces and
+  standard S3 methods (`predict`, `print`, `summary`, `plot`).
 
 ## Install
 

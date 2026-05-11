@@ -5,17 +5,20 @@
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
 fits Multivariate Adaptive Regression Splines (MARS) models, a flexible
 nonparametric regression technique introduced by Friedman (1991). The
-forward pass adds basis functions of the form `max(0, ±(x - knot))` one
-pair at a time, each scaled by a parent term to allow interactions. A
-backward pass prunes terms by minimising the GCV criterion (or a K-fold
-CV criterion when `pmethod = "cv"` or `nfold > 0`).
+forward pass adds pairs of hinge basis functions of the form
+`max(0, ±(x - knot))`, each optionally multiplied by a parent term to
+capture interactions. A backward pass prunes terms by minimising the GCV
+criterion, or a K-fold CV criterion when `pmethod = "cv"` or
+`nfold > 0`.
 
+Beyond the core MARS fitter,
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-mirrors the API of [`earth`](https://cran.r-project.org/package=earth)
-on the gaussian core and adds: hyperparameter autotune, K-fold CV
-pruning, row-bootstrap bagging, observation weights, binomial / poisson
-/ gamma GLM families on the selected basis, and residual-variance
+supports hyperparameter autotuning, K-fold cross-validated pruning,
+bootstrap bagging, observation weights, binomial / poisson / gamma
+response families on the selected basis, and residual-variance
 prediction intervals.
+
+This vignette walks through each of these features in turn.
 
 ## A small example: `mtcars`
 
@@ -42,7 +45,14 @@ head(predict(fit, mtcars[1:5, ]))
 #> [1] 19.36172 20.45321 25.35910 19.52265 17.68805
 ```
 
-## Comparison with `earth`
+## Comparing to other MARS implementations
+
+If you already use [`earth`](https://cran.r-project.org/package=earth),
+the gaussian-core fits from
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+are numerically very close on the same data, while running on multiple
+cores deterministically. The chunk below illustrates this on a synthetic
+regression problem with both an interaction and a quadratic component.
 
 ``` r
 
@@ -66,13 +76,17 @@ if (requireNamespace("earth", quietly = TRUE)) {
 #> relative RSS difference: 0.0903
 ```
 
-The two implementations agree numerically to within a fraction of a
-percent on RSS even when they pick slightly different knot sets.
+The two implementations typically agree on training RSS to within a
+fraction of a percent, even when they choose slightly different knot
+sets.
 
-## Threading determinism
+## Deterministic threading
 
-`ares` is parallel-deterministic by construction: changing `nthreads`
-does not change the output bit-for-bit.
+A core guarantee of
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+is that varying `nthreads` does not change the result. At a fixed
+`seed.cv`, fits are bit-for-bit identical across thread counts, which
+makes parallel execution safe to reproduce.
 
 ``` r
 
@@ -90,10 +104,13 @@ max(abs(f1$coefficients - f2$coefficients))
 
 ## Hyperparameter autotune
 
-`autotune = TRUE` runs an inner K-fold CV grid search over
-`(degree, penalty, nk, fast.k)` and refits the winner on the full data.
-A warm-start phase fits a small subsample first and short-circuits if
-the best-per-degree gap is decisive.
+Setting `autotune = TRUE` runs an inner K-fold cross-validated grid
+search over `(degree, penalty, nk, fast.k)` and refits the winning
+combination on the full data. When `n` is large enough,
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+first tries the grid on a small subsample to short-circuit the search if
+one configuration wins clearly; this typically cuts wall-clock time
+substantially with no accuracy loss.
 
 ``` r
 
@@ -110,8 +127,10 @@ fit_at$autotune$nk
 
 ## Classification via `family = "binomial"`
 
-Forward + backward run as gaussian; the selected basis is then refit
-with `stats::glm.fit(family = binomial())`.
+For binary outcomes, pass `family = "binomial"`. Term selection runs on
+the numeric response (fast), and the selected basis is then refit on the
+binary response with
+[`stats::glm.fit()`](https://rdrr.io/r/stats/glm.html).
 [`predict()`](https://rdrr.io/r/stats/predict.html) returns
 probabilities by default, or the linear predictor via `type = "link"`.
 
@@ -129,9 +148,11 @@ range(predict(fb))
 
 ## Prediction intervals
 
-`varmod = "const"` or `varmod = "lm"` (gaussian only) stores a residual
-variance model at fit time. `predict(interval = "pint")` then returns a
-matrix with `c("fit", "lwr", "upr")` columns.
+For gaussian fits, passing `varmod = "const"` or `varmod = "lm"` stores
+a residual variance model at fit time. Subsequent calls to
+`predict(interval = "pint")` return a matrix with columns
+`c("fit", "lwr", "upr")`. Use `"const"` for homoscedastic data and
+`"lm"` to allow simple mean-dependent heteroscedasticity.
 
 ``` r
 

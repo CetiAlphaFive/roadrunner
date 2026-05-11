@@ -1,6 +1,8 @@
 # Summary method for `ares` fits
 
-Summary method for `ares` fits
+Returns a compact summary of a fitted `ares` model: the call, the table
+of selected terms and coefficients, training RSS and GCV, and (for
+non-gaussian families) GLM-side fit statistics.
 
 ## Usage
 
@@ -16,15 +18,15 @@ print(x, ...)
 
 - object:
 
-  an `ares` object
+  An object of class `"ares"`.
 
 - ...:
 
-  unused
+  Currently ignored.
 
 - x:
 
-  a `summary.ares` object
+  A `summary.ares` object.
 
 ## Value
 

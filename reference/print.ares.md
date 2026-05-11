@@ -1,6 +1,8 @@
 # Print method for `ares` fits
 
-Print method for `ares` fits
+Prints the call, family, term count, training RSS and GCV, and the
+control parameters used. For `family = "binomial"`, also prints the
+deviance, McFadden pseudo-R^2, AIC, and IRLS convergence.
 
 ## Usage
 
@@ -13,15 +15,15 @@ print(x, digits = max(3L, getOption("digits") - 3L), ...)
 
 - x:
 
-  an `ares` object
+  An object of class `"ares"`.
 
 - digits:
 
-  significant digits for numeric output
+  Significant digits for numeric output.
 
 - ...:
 
-  unused
+  Currently ignored.
 
 ## Value
 

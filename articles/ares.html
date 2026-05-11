@@ -67,16 +67,17 @@ Rametta</h4>
 </h2>
 <p><code><a href="../reference/ares.html">ares()</a></code> fits Multivariate Adaptive Regression Splines
 (MARS) models, a flexible nonparametric regression technique introduced
-by Friedman (1991). The forward pass adds basis functions of the form
-<code>max(0, ±(x - knot))</code> one pair at a time, each scaled by a
-parent term to allow interactions. A backward pass prunes terms by
-minimising the GCV criterion (or a K-fold CV criterion when
-<code>pmethod = "cv"</code> or <code>nfold &gt; 0</code>).</p>
-<p><code><a href="../reference/ares.html">ares()</a></code> mirrors the API of <a href="https://cran.r-project.org/package=earth" class="external-link"><code>earth</code></a>
-on the gaussian core and adds: hyperparameter autotune, K-fold CV
-pruning, row-bootstrap bagging, observation weights, binomial / poisson
-/ gamma GLM families on the selected basis, and residual-variance
-prediction intervals.</p>
+by Friedman (1991). The forward pass adds pairs of hinge basis functions
+of the form <code>max(0, ±(x - knot))</code>, each optionally multiplied
+by a parent term to capture interactions. A backward pass prunes terms
+by minimising the GCV criterion, or a K-fold CV criterion when
+<code>pmethod = "cv"</code> or <code>nfold &gt; 0</code>.</p>
+<p>Beyond the core MARS fitter, <code><a href="../reference/ares.html">ares()</a></code> supports
+hyperparameter autotuning, K-fold cross-validated pruning, bootstrap
+bagging, observation weights, binomial / poisson / gamma response
+families on the selected basis, and residual-variance prediction
+intervals.</p>
+<p>This vignette walks through each of these features in turn.</p>
 </div>
 <div class="section level2">
 <h2 id="a-small-example-mtcars">A small example: <code>mtcars</code><a class="anchor" aria-label="anchor" href="#a-small-example-mtcars"></a>
@@ -100,8 +101,14 @@ prediction intervals.</p>
 <span><span class="co">#&gt; [1] 19.36172 20.45321 25.35910 19.52265 17.68805</span></span></code></pre></div>
 </div>
 <div class="section level2">
-<h2 id="comparison-with-earth">Comparison with <code>earth</code><a class="anchor" aria-label="anchor" href="#comparison-with-earth"></a>
+<h2 id="comparing-to-other-mars-implementations">Comparing to other MARS implementations<a class="anchor" aria-label="anchor" href="#comparing-to-other-mars-implementations"></a>
 </h2>
+<p>If you already use <a href="https://cran.r-project.org/package=earth" class="external-link"><code>earth</code></a>,
+the gaussian-core fits from <code><a href="../reference/ares.html">ares()</a></code> are numerically very
+close on the same data, while running on multiple cores
+deterministically. The chunk below illustrates this on a synthetic
+regression problem with both an interaction and a quadratic
+component.</p>
 <div class="sourceCode" id="cb3"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="kw">if</span> <span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/ns-load.html" class="external-link">requireNamespace</a></span><span class="op">(</span><span class="st">"earth"</span>, quietly <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span> <span class="op">{</span></span>
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">20260509</span><span class="op">)</span></span>
@@ -121,14 +128,17 @@ prediction intervals.</p>
 <span><span class="co">#&gt; ares  RSS: 222.61  GCV: 1.707  nterms: 16 </span></span>
 <span><span class="co">#&gt; earth RSS: 204.18  GCV: 1.518  nterms: 15 </span></span>
 <span><span class="co">#&gt; relative RSS difference: 0.0903</span></span></code></pre></div>
-<p>The two implementations agree numerically to within a fraction of a
-percent on RSS even when they pick slightly different knot sets.</p>
+<p>The two implementations typically agree on training RSS to within a
+fraction of a percent, even when they choose slightly different knot
+sets.</p>
 </div>
 <div class="section level2">
-<h2 id="threading-determinism">Threading determinism<a class="anchor" aria-label="anchor" href="#threading-determinism"></a>
+<h2 id="deterministic-threading">Deterministic threading<a class="anchor" aria-label="anchor" href="#deterministic-threading"></a>
 </h2>
-<p><code>ares</code> is parallel-deterministic by construction: changing
-<code>nthreads</code> does not change the output bit-for-bit.</p>
+<p>A core guarantee of <code><a href="../reference/ares.html">ares()</a></code> is that varying
+<code>nthreads</code> does not change the result. At a fixed
+<code>seed.cv</code>, fits are bit-for-bit identical across thread
+counts, which makes parallel execution safe to reproduce.</p>
 <div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">42</span><span class="op">)</span></span>
 <span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">150</span>; <span class="va">p</span> <span class="op">&lt;-</span> <span class="fl">5</span></span>
@@ -144,10 +154,13 @@ percent on RSS even when they pick slightly different knot sets.</p>
 <div class="section level2">
 <h2 id="hyperparameter-autotune">Hyperparameter autotune<a class="anchor" aria-label="anchor" href="#hyperparameter-autotune"></a>
 </h2>
-<p><code>autotune = TRUE</code> runs an inner K-fold CV grid search over
-<code>(degree, penalty, nk, fast.k)</code> and refits the winner on the
-full data. A warm-start phase fits a small subsample first and
-short-circuits if the best-per-degree gap is decisive.</p>
+<p>Setting <code>autotune = TRUE</code> runs an inner K-fold
+cross-validated grid search over
+<code>(degree, penalty, nk, fast.k)</code> and refits the winning
+combination on the full data. When <code>n</code> is large enough,
+<code><a href="../reference/ares.html">ares()</a></code> first tries the grid on a small subsample to
+short-circuit the search if one configuration wins clearly; this
+typically cuts wall-clock time substantially with no accuracy loss.</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">7</span><span class="op">)</span></span>
 <span><span class="va">fit_at</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ares.html">ares</a></span><span class="op">(</span><span class="va">mpg</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">mtcars</span>, autotune <span class="op">=</span> <span class="cn">TRUE</span>,</span>
@@ -162,8 +175,9 @@ short-circuits if the best-per-degree gap is decisive.</p>
 <div class="section level2">
 <h2 id="classification-via-family-binomial">Classification via <code>family = "binomial"</code><a class="anchor" aria-label="anchor" href="#classification-via-family-binomial"></a>
 </h2>
-<p>Forward + backward run as gaussian; the selected basis is then refit
-with <code>stats::glm.fit(family = binomial())</code>.
+<p>For binary outcomes, pass <code>family = "binomial"</code>. Term
+selection runs on the numeric response (fast), and the selected basis is
+then refit on the binary response with <code><a href="https://rdrr.io/r/stats/glm.html" class="external-link">stats::glm.fit()</a></code>.
 <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> returns probabilities by default, or the linear
 predictor via <code>type = "link"</code>.</p>
 <div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
@@ -179,10 +193,12 @@ predictor via <code>type = "link"</code>.</p>
 <div class="section level2">
 <h2 id="prediction-intervals">Prediction intervals<a class="anchor" aria-label="anchor" href="#prediction-intervals"></a>
 </h2>
-<p><code>varmod = "const"</code> or <code>varmod = "lm"</code> (gaussian
-only) stores a residual variance model at fit time.
-<code>predict(interval = "pint")</code> then returns a matrix with
-<code>c("fit", "lwr", "upr")</code> columns.</p>
+<p>For gaussian fits, passing <code>varmod = "const"</code> or
+<code>varmod = "lm"</code> stores a residual variance model at fit time.
+Subsequent calls to <code>predict(interval = "pint")</code> return a
+matrix with columns <code>c("fit", "lwr", "upr")</code>. Use
+<code>"const"</code> for homoscedastic data and <code>"lm"</code> to
+allow simple mean-dependent heteroscedasticity.</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">0</span><span class="op">)</span></span>
 <span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">500</span></span>
