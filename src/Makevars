@@ -1,19 +1,17 @@
-# ares Makevars
+# ares src/Makevars -- portable, no GNU-make extensions.
 #
-# v0.0.0.9012 dropped -ffp-contract=off after v0.0.0.9011's profiling run-to-run
-# stability check confirmed FMA-vectorised mul-add chains do not actually break
-# bit-exact reproducibility between consecutive ares() calls in a single binary
-# (verified with 10 consecutive `ares()` calls on the same fixed-seed input —
-# all 10 produced the identical RSS to the last bit).
+# RcppParallel linkage is satisfied by `LinkingTo: Rcpp, RcppParallel` in
+# DESCRIPTION on every supported platform we know of (modern RcppParallel
+# embeds TBB and resolves at link time without an explicit -L flag here).
+# An earlier revision called `$(shell Rscript -e RcppParallel::RcppParallelLibs())`
+# but on current systems that helper returns an empty string, and the
+# `$(shell ...)` extension trips the CRAN "Writing R Extensions" portability
+# warning. Drop the call entirely.
 #
-# Removing the flag enables `-O3 -march=native` to emit `vfmaXXX` intrinsics on
-# our AVX2 q-loop and qr_append_col paths; small (~2%) wall-clock improvement.
-# Strict bit-equivalence across compiler / arch / package rebuilds is no longer
-# guaranteed — but it never really was, and v0.0.0.9011 dropped earth-parity
-# as an acceptance criterion anyway.
-#
-# RcppParallel linker flags are fetched via the documented R-side helper.
+# -ffp-contract was dropped at v0.0.0.9012 after a run-to-run determinism
+# check confirmed FMA-vectorised mul-add chains do not break bit-exact
+# reproducibility between consecutive ares() calls in a single binary.
+
 PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
-PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) \
-    $(shell "${R_HOME}/bin/Rscript" -e "RcppParallel::RcppParallelLibs()")
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
 CXX_STD = CXX17

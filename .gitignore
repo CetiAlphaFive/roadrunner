@@ -8,3 +8,4 @@ ares_*.tar.gz
 inst/sims/results/sim_raw.csv
 inst/sims/results/sim_summary.csv
 inst/doc
+.positai

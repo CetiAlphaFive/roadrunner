@@ -1,4 +1,5 @@
-PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS) -ffp-contract=off
-PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) \
-    $(shell "${R_HOME}/bin/Rscript" -e "RcppParallel::RcppParallelLibs()")
+# ares src/Makevars.win -- Windows analogue of src/Makevars. See the
+# Unix Makevars header for the rationale of dropping $(shell ...).
+PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
 CXX_STD = CXX17

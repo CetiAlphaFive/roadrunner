@@ -14,6 +14,15 @@ core while taking advantage of multi-core CPUs.
 Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 \emph{Annals of Statistics}, 19(1):1-67.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://jtrametta.github.io/ares}
+  \item \url{https://github.com/jtrametta/ares}
+  \item Report bugs at \url{https://github.com/jtrametta/ares/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Jack Trametta \email{jtrametta@gmail.com}
 

@@ -12,3 +12,5 @@
 ^README\.Rmd$
 ^ares\.Rcheck$
 ^ares_.*\.tar\.gz$
+^\.positai$
+^\.claude$
