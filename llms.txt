@@ -1,12 +1,24 @@
 # roadrunner
 
-Fast, low-dependency machine learning algorithms in R. First algorithm:
-[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-— Multivariate Adaptive Regression Splines (Friedman 1991) via `Rcpp` +
-`RcppParallel`. Numerically comparable to
-[`earth`](https://cran.r-project.org/package=earth) on the gaussian
-core, faster on most cells at 4 threads, and parallel-deterministic
-(`nthreads = 1` is bit-for-bit identical to `nthreads = N`).
+Fast, low-dependency machine learning algorithms in R.
+
+`roadrunner` ships C++-backed implementations of classical ML algorithms
+with thin, base-R-style interfaces. The first algorithm is
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md),
+a Multivariate Adaptive Regression Splines (MARS) fitter; more will
+follow.
+
+## Package design
+
+- **Low dependency.** Only `Rcpp` and `RcppParallel` at runtime. No
+  tidyverse, no rlang, no S4.
+- **Fast.** C++ engines via `Rcpp` with multi-core scoring via
+  `RcppParallel` (TBB).
+- **Deterministic.** Fits are bit-for-bit identical across thread counts
+  at a fixed seed.
+- **Familiar API.** Base-R style: formula and matrix interfaces,
+  standard S3 methods (`predict`, `print`, `summary`, `plot`), and
+  argument names that mirror existing R packages where one exists.
 
 ## Install
 
@@ -15,18 +27,6 @@ core, faster on most cells at 4 threads, and parallel-deterministic
 # install.packages("devtools")
 devtools::install_github("CetiAlphaFive/roadrunner")
 ```
-
-## Features
-
-- Gaussian / binomial / poisson / gamma response families.
-- Observation `weights`.
-- Backward (GCV) or `pmethod = "cv"` K-fold cross-validated pruning.
-- `autotune = TRUE` — inner-CV grid search over
-  `(degree, penalty, nk, fast.k)` with warm-start + successive halving.
-- Row-bootstrap `n.boot` bagging with `se.fit`.
-- Prediction intervals via `varmod = "const" | "lm"`.
-- Built-in NA handling (median impute / drop).
-- Factor / character columns expanded via `model.matrix`.
 
 ## Usage
 
@@ -49,10 +49,8 @@ fitt <- ares(mpg ~ ., data = mtcars, autotune = TRUE,
 fitt$autotune$degree
 ```
 
-See the [`ares`
-vignette](https://cetialphafive.github.io/roadrunner/vignettes/ares.Rmd)
-for autotune, classification, weights, bagging, and prediction-interval
-examples.
+See the `ares` vignette for autotune, classification, weights, bagging,
+and prediction-interval examples.
 
 ## License
 

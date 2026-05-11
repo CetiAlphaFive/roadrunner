@@ -3,21 +3,19 @@
 ## Introduction
 
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-(shipped in the `roadrunner` package) fits Multivariate Adaptive
-Regression Splines (MARS) models — a flexible nonparametric regression
-technique introduced by Friedman (1991). The forward pass adds basis
-functions of the form `max(0, ±(x - knot))` (called *hinges*) one pair
-at a time, each scaled by a parent term to allow interactions. A
+fits Multivariate Adaptive Regression Splines (MARS) models, a flexible
+nonparametric regression technique introduced by Friedman (1991). The
+forward pass adds basis functions of the form `max(0, ±(x - knot))` one
+pair at a time, each scaled by a parent term to allow interactions. A
 backward pass prunes terms by minimising the GCV criterion (or a K-fold
-CV criterion when `pmethod = "cv"` / `nfold > 0`).
+CV criterion when `pmethod = "cv"` or `nfold > 0`).
 
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
 mirrors the API of [`earth`](https://cran.r-project.org/package=earth)
-on the gaussian-only core, takes advantage of multi-core CPUs via
-`RcppParallel`, and adds non-parity features: built-in hyperparameter
-autotune, K-fold CV pruning, row-bootstrap bagging, weights, binomial /
-poisson / gamma GLM families on the selected basis, and
-residual-variance prediction intervals.
+on the gaussian core and adds: hyperparameter autotune, K-fold CV
+pruning, row-bootstrap bagging, observation weights, binomial / poisson
+/ gamma GLM families on the selected basis, and residual-variance
+prediction intervals.
 
 ## A small example: `mtcars`
 
@@ -94,8 +92,8 @@ max(abs(f1$coefficients - f2$coefficients))
 
 `autotune = TRUE` runs an inner K-fold CV grid search over
 `(degree, penalty, nk, fast.k)` and refits the winner on the full data.
-A warm-start phase fits a 20 % subsample first and short-circuits if the
-best-per-degree gap is decisive.
+A warm-start phase fits a small subsample first and short-circuits if
+the best-per-degree gap is decisive.
 
 ``` r
 
@@ -148,22 +146,6 @@ head(predict(fp, x[1:3, ], interval = "pint"))
 #> [2,]  0.04725061 -0.9664638 1.0609650
 #> [3,] -0.63859961 -1.6523140 0.3751148
 ```
-
-## Performance
-
-Across the `inst/sims` mlbench-style benchmark grid at 4 threads (median
-across the 10-cell v0.23 grid):
-
-| metric | ares (default) | ares (autotune) |
-|----|----|----|
-| wall-clock vs earth (median) | **~0.93×** | sub-second when warmstart fires; 5–15 s on highdim p=20 |
-| cells faster than earth | **11/18** | (autotune wins MSE on high-p cells) |
-| holdout MSE vs ranger | 3–4× better on regression cells | same |
-
-Parallel scaling at n = 1500 deg = 2 is ~1.75–1.85× (2t / 1t).
-Determinism: `nthreads = 1` produces byte-identical fits to
-`nthreads = N` at fixed seed. See `inst/sims/results/v0.23-mlbench.csv`
-and `inst/sims/results/v0.24-binomial.csv` for the full benchmark.
 
 ## References
 

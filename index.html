@@ -49,28 +49,28 @@
   <main id="main" class="col-md-9"><div class="section level1">
 <div class="page-header"><h1 id="roadrunner">roadrunner<a class="anchor" aria-label="anchor" href="#roadrunner"></a>
 </h1></div>
-<p>Fast, low-dependency machine learning algorithms in R. First algorithm: <code><a href="reference/ares.html">ares()</a></code> — Multivariate Adaptive Regression Splines (Friedman 1991) via <code>Rcpp</code> + <code>RcppParallel</code>. Numerically comparable to <a href="https://cran.r-project.org/package=earth" class="external-link"><code>earth</code></a> on the gaussian core, faster on most cells at 4 threads, and parallel-deterministic (<code>nthreads = 1</code> is bit-for-bit identical to <code>nthreads = N</code>).</p>
+<p>Fast, low-dependency machine learning algorithms in R.</p>
+<p><code>roadrunner</code> ships C++-backed implementations of classical ML algorithms with thin, base-R-style interfaces. The first algorithm is <code><a href="reference/ares.html">ares()</a></code>, a Multivariate Adaptive Regression Splines (MARS) fitter; more will follow.</p>
+<div class="section level2">
+<h2 id="package-design">Package design<a class="anchor" aria-label="anchor" href="#package-design"></a>
+</h2>
+<ul>
+<li>
+<strong>Low dependency.</strong> Only <code>Rcpp</code> and <code>RcppParallel</code> at runtime. No tidyverse, no rlang, no S4.</li>
+<li>
+<strong>Fast.</strong> C++ engines via <code>Rcpp</code> with multi-core scoring via <code>RcppParallel</code> (TBB).</li>
+<li>
+<strong>Deterministic.</strong> Fits are bit-for-bit identical across thread counts at a fixed seed.</li>
+<li>
+<strong>Familiar API.</strong> Base-R style: formula and matrix interfaces, standard S3 methods (<code>predict</code>, <code>print</code>, <code>summary</code>, <code>plot</code>), and argument names that mirror existing R packages where one exists.</li>
+</ul>
+</div>
 <div class="section level2">
 <h2 id="install">Install<a class="anchor" aria-label="anchor" href="#install"></a>
 </h2>
 <div class="sourceCode" id="cb1"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># install.packages("devtools")</span></span>
 <span><span class="fu">devtools</span><span class="fu">::</span><span class="fu">install_github</span><span class="op">(</span><span class="st">"CetiAlphaFive/roadrunner"</span><span class="op">)</span></span></code></pre></div>
-</div>
-<div class="section level2">
-<h2 id="features">Features<a class="anchor" aria-label="anchor" href="#features"></a>
-</h2>
-<ul>
-<li>Gaussian / binomial / poisson / gamma response families.</li>
-<li>Observation <code>weights</code>.</li>
-<li>Backward (GCV) or <code>pmethod = "cv"</code> K-fold cross-validated pruning.</li>
-<li>
-<code>autotune = TRUE</code> — inner-CV grid search over <code>(degree, penalty, nk, fast.k)</code> with warm-start + successive halving.</li>
-<li>Row-bootstrap <code>n.boot</code> bagging with <code>se.fit</code>.</li>
-<li>Prediction intervals via <code>varmod = "const" | "lm"</code>.</li>
-<li>Built-in NA handling (median impute / drop).</li>
-<li>Factor / character columns expanded via <code>model.matrix</code>.</li>
-</ul>
 </div>
 <div class="section level2">
 <h2 id="usage">Usage<a class="anchor" aria-label="anchor" href="#usage"></a>
@@ -91,7 +91,7 @@
 <span><span class="va">fitt</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/ares.html">ares</a></span><span class="op">(</span><span class="va">mpg</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">mtcars</span>, autotune <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>             autotune.speed <span class="op">=</span> <span class="st">"fast"</span>, seed.cv <span class="op">=</span> <span class="fl">1L</span><span class="op">)</span></span>
 <span><span class="va">fitt</span><span class="op">$</span><span class="va">autotune</span><span class="op">$</span><span class="va">degree</span></span></code></pre></div>
-<p>See the <a href="vignettes/ares.Rmd"><code>ares</code> vignette</a> for autotune, classification, weights, bagging, and prediction-interval examples.</p>
+<p>See the <code>ares</code> vignette for autotune, classification, weights, bagging, and prediction-interval examples.</p>
 </div>
 <div class="section level2">
 <h2 id="license">License<a class="anchor" aria-label="anchor" href="#license"></a>
