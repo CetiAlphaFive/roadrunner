@@ -66,19 +66,20 @@ when calling the formula method.}
 \item{endspan}{Knot offset from the data ends. 0 (default) selects automatic.}
 
 \item{adjust.endspan}{Multiplier applied to \code{endspan} when the candidate
-hinge would deepen an existing interaction (parent term has
-degree at least 1). Default \code{1} (no adjustment). Earth's analogous
-default is \code{2}; ares's heuristic is empirically mixed on the
-inst/sims grid (helps a few cells, hurts others), so the default
-is conservative. Pass \code{2} to enable.}
+hinge would deepen an existing interaction (parent term has degree at
+least 1). \strong{Default \code{1} for gaussian / poisson / gamma, \code{2} for
+binomial} (auto-flipped at v0.0.0.9026 with the same A/B-test
+justification as \code{auto.linpreds}). Pass \code{1} or \code{2} explicitly to
+override the family default.}
 
 \item{auto.linpreds}{If \code{TRUE}, and the best forward-pass knot for a
 candidate hinge sits at the boundary of its variable's eligible range,
 substitutes a linear term (\code{dirs = 2}) for the hinge pair. \strong{Default
-\code{FALSE}.} Earth's analogous default is \code{TRUE}, but earth applies a
-stricter linearity test that ares's "boundary knot" heuristic only
-approximates; current ares implementation regresses parity on most
-benchmark cells. Treat as experimental.}
+\code{FALSE} for gaussian / poisson / gamma, \code{TRUE} for binomial} (auto-
+flipped at v0.0.0.9026 based on the inst/sims/v0.25 A/B test: earth-
+like settings tie or improve AUC on all mlbench binary cells, but
+regress some gaussian regression cells). Pass an explicit value to
+override the family default.}
 
 \item{fast.k}{Fast-MARS priority cache size (Friedman 1993). The forward
 pass always rescores pairs whose parent was added in the previous step;

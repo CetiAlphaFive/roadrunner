@@ -43,18 +43,19 @@
 #' @param minspan Minimum knot span. 0 (default) selects an automatic value.
 #' @param endspan Knot offset from the data ends. 0 (default) selects automatic.
 #' @param adjust.endspan Multiplier applied to `endspan` when the candidate
-#'   hinge would deepen an existing interaction (parent term has
-#'   degree at least 1). Default `1` (no adjustment). Earth's analogous
-#'   default is `2`; ares's heuristic is empirically mixed on the
-#'   inst/sims grid (helps a few cells, hurts others), so the default
-#'   is conservative. Pass `2` to enable.
+#'   hinge would deepen an existing interaction (parent term has degree at
+#'   least 1). **Default `1` for gaussian / poisson / gamma, `2` for
+#'   binomial** (auto-flipped at v0.0.0.9026 with the same A/B-test
+#'   justification as `auto.linpreds`). Pass `1` or `2` explicitly to
+#'   override the family default.
 #' @param auto.linpreds If `TRUE`, and the best forward-pass knot for a
 #'   candidate hinge sits at the boundary of its variable's eligible range,
 #'   substitutes a linear term (`dirs = 2`) for the hinge pair. **Default
-#'   `FALSE`.** Earth's analogous default is `TRUE`, but earth applies a
-#'   stricter linearity test that ares's "boundary knot" heuristic only
-#'   approximates; current ares implementation regresses parity on most
-#'   benchmark cells. Treat as experimental.
+#'   `FALSE` for gaussian / poisson / gamma, `TRUE` for binomial** (auto-
+#'   flipped at v0.0.0.9026 based on the inst/sims/v0.25 A/B test: earth-
+#'   like settings tie or improve AUC on all mlbench binary cells, but
+#'   regress some gaussian regression cells). Pass an explicit value to
+#'   override the family default.
 #' @param fast.k Fast-MARS priority cache size (Friedman 1993). The forward
 #'   pass always rescores pairs whose parent was added in the previous step;
 #'   the top `fast.k` of the remaining stale pairs (ranked by age-discounted
@@ -314,6 +315,24 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     yv <- y[is.finite(y)]
     if (any(yv <= 0))
       stop("ares: family = 'gamma' requires y > 0; got non-positive values.")
+  }
+
+  # ---- Family-conditional default flip (binomial only) --------------------
+  # For family == "binomial" the empirical sweet spot is the earth-like
+  # configuration auto.linpreds = TRUE, adjust.endspan = 2. The A/B test in
+  # inst/sims/v0.25_ab_binomial.R showed this ties or beats the conservative
+  # defaults on all mlbench binary cells (4 DGPs x 2 sample sizes). Gaussian
+  # remains conservative — the earth-like flip regresses regression cells
+  # in the v0.20-mlbench grid. We only flip arguments the user did not
+  # explicitly pass; users who pin either argument retain their choice.
+  if (family == "binomial") {
+    arg_names <- names(cl)
+    if (!("auto.linpreds" %in% arg_names)) {
+      auto.linpreds <- TRUE
+    }
+    if (!("adjust.endspan" %in% arg_names)) {
+      adjust.endspan <- 2L
+    }
   }
 
   # ---- Observation weights (initial validation) ----------------------------
