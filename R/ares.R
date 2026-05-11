@@ -677,8 +677,15 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     }
     n_full <- length(y)
     boot_fits <- vector("list", n_boot)
+    # BUG-001 (v0.0.0.9029): capture each bag's bootstrap indices up-front so the
+    # post-hoc GLM refit (binomial / poisson / gamma) below re-uses the SAME
+    # rows the basis was selected on. Previously the refit loop redrew its own
+    # indices from the live RNG and got a different bootstrap sample whenever
+    # `seed.cv = NULL` (the unseeded path).
+    idx_list <- vector("list", n_boot)
     for (b in seq_len(n_boot)) {
       idx <- sample.int(n_full, n_full, replace = TRUE)
+      idx_list[[b]] <- idx
       x_b <- x[idx, , drop = FALSE]
       y_b <- as.numeric(y)[idx]
       # Bootstrap-resampled weights, renormalised so mean(w_b) = 1 inside the
@@ -703,7 +710,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     }
     out$boot <- list(
       fits   = boot_fits,
-      n.boot = n_boot
+      n.boot = n_boot,
+      idx    = idx_list
     )
   }
 
@@ -739,7 +747,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       out$boot$fits <- .ares_refit_boot_binomial(out$boot$fits,
                                                   x_full = x,
                                                   y_full = as.integer(y),
-                                                  seed_cv = seed.cv,
+                                                  idx_list = out$boot$idx,
                                                   weights = w_norm)
     }
   } else if (family == "poisson" || family == "gamma") {
@@ -755,7 +763,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                                                     x_full = x,
                                                     y_full = as.numeric(y),
                                                     family_name = family,
-                                                    seed_cv = seed.cv,
+                                                    idx_list = out$boot$idx,
                                                     weights = w_norm)
     }
   }
@@ -832,27 +840,20 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 }
 
 # Internal: refit each bag replicate as binomial. We don't keep each bag's
-# bootstrap rows — only its dirs/cuts/selected.terms. So we rebuild the bag's
-# basis on a fresh bootstrap sample (using the same seed offset as the
-# original bagging loop) and IRLS-fit it against that sample's binary y.
+# bootstrap rows — only its dirs/cuts/selected.terms. BUG-001 (v0.0.0.9029):
+# the bootstrap indices are now captured in the *main* bagging loop and
+# passed in via `idx_list`, so the GLM refit lands on the SAME rows the
+# basis was selected on. Previously this function redrew from the live RNG
+# and got a different bootstrap sample whenever `seed.cv = NULL`.
 #
 # @keywords internal
-.ares_refit_boot_binomial <- function(fits, x_full, y_full, seed_cv,
+.ares_refit_boot_binomial <- function(fits, x_full, y_full, idx_list,
                                       weights = NULL) {
   n_full <- nrow(x_full)
-  has_seed <- !is.null(seed_cv)
-  if (has_seed) {
-    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
-      on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
-              add = TRUE)
-    } else {
-      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
-    }
-    set.seed(as.integer(seed_cv) + 1009L)   # same offset as bagging loop
-  }
+  if (is.null(idx_list) || length(idx_list) != length(fits))
+    stop("ares: internal error -- idx_list length mismatch in bag refit.")
   for (b in seq_along(fits)) {
-    idx <- sample.int(n_full, n_full, replace = TRUE)
+    idx <- idx_list[[b]]
     x_b <- x_full[idx, , drop = FALSE]
     y_b <- y_full[idx]
     bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
@@ -934,28 +935,22 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 }
 
 # Internal: refit each bag replicate under the log-link GLM family. Mirrors
-# .ares_refit_boot_binomial.
+# .ares_refit_boot_binomial. BUG-001 (v0.0.0.9029): bootstrap indices now
+# come in via `idx_list` from the central bagging loop so the GLM refit
+# uses the SAME rows the basis was selected on (previously, redrawing
+# from the live RNG silently desynchronised under `seed.cv = NULL`).
 #
 # @keywords internal
 .ares_refit_boot_glm_loglink <- function(fits, x_full, y_full, family_name,
-                                          seed_cv, weights = NULL) {
+                                          idx_list, weights = NULL) {
   n_full <- nrow(x_full)
-  has_seed <- !is.null(seed_cv)
-  if (has_seed) {
-    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
-      old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
-      on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
-              add = TRUE)
-    } else {
-      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
-    }
-    set.seed(as.integer(seed_cv) + 1009L)
-  }
+  if (is.null(idx_list) || length(idx_list) != length(fits))
+    stop("ares: internal error -- idx_list length mismatch in bag refit.")
   fam_obj <- switch(family_name,
                     poisson = stats::poisson(link = "log"),
                     gamma   = stats::Gamma(link = "log"))
   for (b in seq_along(fits)) {
-    idx <- sample.int(n_full, n_full, replace = TRUE)
+    idx <- idx_list[[b]]
     x_b <- x_full[idx, , drop = FALSE]
     y_b <- y_full[idx]
     bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
