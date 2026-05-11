@@ -221,11 +221,39 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   pmethod_int <- if (pmethod == "none") 1L else 0L
 
   # ---- Input validation ----
+  # When `x` is a data.frame with factor or character columns, expand it to
+  # a numeric model matrix via `model.matrix(~ . , x)` (treatment contrasts,
+  # k-1 dummies per factor; intercept dropped). This matches the formula
+  # method's path so the two interfaces behave the same on mixed-type data.
+  # Levels are stashed on `$factor_info` so predict.ares() can replay the
+  # same expansion on newdata.
+  factor_info <- NULL
   if (is.data.frame(x)) {
-    nm <- names(x)
-    x <- as.matrix(x)
-    storage.mode(x) <- "double"
-    colnames(x) <- nm
+    is_cat <- vapply(x, \(z) is.factor(z) || is.character(z), logical(1L))
+    if (any(is_cat)) {
+      # Coerce character columns to factor with their observed levels (the
+      # natural lexical order; users wanting a specific reference level
+      # should pre-cast to factor with the desired `levels`).
+      for (j in which(is_cat)) {
+        if (is.character(x[[j]])) x[[j]] <- factor(x[[j]])
+      }
+      xlevels <- lapply(x[is_cat], levels)
+      xmm <- stats::model.matrix(~ ., data = x)
+      if ("(Intercept)" %in% colnames(xmm))
+        xmm <- xmm[, colnames(xmm) != "(Intercept)", drop = FALSE]
+      factor_info <- list(
+        xlevels  = xlevels,                 # named list of levels per factor col
+        orig_names = names(x),              # original df column names
+        is_cat   = is_cat,                  # logical(ncol(x_df))
+        expanded_names = colnames(xmm)      # expanded dummy column names
+      )
+      x <- xmm
+    } else {
+      nm <- names(x)
+      x <- as.matrix(x)
+      storage.mode(x) <- "double"
+      colnames(x) <- nm
+    }
   }
   if (!is.matrix(x) || !is.numeric(x))
     stop("ares: x must be a numeric matrix or data frame.")
@@ -467,6 +495,10 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # data had no NAs or `na.action = "omit"` was used.
   out$na.action <- na.action
   out$na.medians <- na_medians
+  # Factor-expansion metadata: NULL when training x was already a numeric
+  # matrix (or a data.frame with no factor/character columns). When set,
+  # predict.ares() replays the same model.matrix expansion on newdata.
+  out$factor_info <- factor_info
 
   class(out) <- c("ares")
   out

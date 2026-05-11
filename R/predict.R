@@ -38,10 +38,45 @@ predict.ares <- function(object, newdata = NULL, se.fit = FALSE, ...) {
     return(yhat)
   }
   if (is.data.frame(newdata)) {
-    if (!all(object$namesx %in% colnames(newdata)))
-      stop("ares: newdata is missing columns: ",
-           paste(setdiff(object$namesx, colnames(newdata)), collapse = ", "))
-    xnew <- as.matrix(newdata[, object$namesx, drop = FALSE])
+    # When the training fit expanded factor / character columns through
+    # `model.matrix`, replay that expansion here using the stored
+    # `$factor_info$xlevels`. The result is a numeric matrix whose
+    # columns line up with the training design.
+    if (!is.null(object$factor_info)) {
+      fi <- object$factor_info
+      # Require the original (pre-expansion) column names to be present.
+      if (!all(fi$orig_names %in% colnames(newdata)))
+        stop("ares: newdata is missing columns: ",
+             paste(setdiff(fi$orig_names, colnames(newdata)), collapse = ", "))
+      newdata <- newdata[, fi$orig_names, drop = FALSE]
+      # Replay character/factor handling: coerce character to factor with
+      # the *training* levels; refactor existing factor columns onto the
+      # training levels. Out-of-vocabulary levels become NA -- they will
+      # be picked up by the predict-side NA handling below.
+      for (jname in names(fi$xlevels)) {
+        col <- newdata[[jname]]
+        if (is.character(col) || is.factor(col)) {
+          newdata[[jname]] <- factor(col, levels = fi$xlevels[[jname]])
+        }
+      }
+      xnew <- stats::model.matrix(~ ., data = newdata)
+      if ("(Intercept)" %in% colnames(xnew))
+        xnew <- xnew[, colnames(xnew) != "(Intercept)", drop = FALSE]
+      # Defensive: line up to training expansion exactly.
+      if (!identical(colnames(xnew), fi$expanded_names)) {
+        missing_cols <- setdiff(fi$expanded_names, colnames(xnew))
+        if (length(missing_cols))
+          stop("ares: newdata expansion is missing columns: ",
+               paste(missing_cols, collapse = ", "),
+               " -- likely an out-of-vocabulary factor level.")
+        xnew <- xnew[, fi$expanded_names, drop = FALSE]
+      }
+    } else {
+      if (!all(object$namesx %in% colnames(newdata)))
+        stop("ares: newdata is missing columns: ",
+             paste(setdiff(object$namesx, colnames(newdata)), collapse = ", "))
+      xnew <- as.matrix(newdata[, object$namesx, drop = FALSE])
+    }
   } else if (is.matrix(newdata) || is.numeric(newdata)) {
     xnew <- as.matrix(newdata)
     if (ncol(xnew) != length(object$namesx))
