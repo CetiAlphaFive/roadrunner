@@ -301,6 +301,14 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       stop("ares: family = 'poisson' requires integer-valued y;",
            " got non-integer values (e.g. ",
            utils::head(yv[abs(yv - round(yv)) > 1e-8], 3)[1], ").")
+    # BUG-007 (v0.0.0.9029): all-zero y is degenerate for poisson(log) --
+    # the engine returns an intercept-only fit with deviance = 0 and the
+    # GLM log-link is mathematically undefined at mu = 0. Reject up
+    # front so the user gets a clear signal that the input is
+    # pathological rather than a silent intercept-only fit.
+    if (length(yv) > 0 && all(yv == 0))
+      stop("ares: family = 'poisson' requires at least one y > 0;",
+           " all observed counts are zero (degenerate fit).")
   } else if (family == "gamma") {
     # gamma (log link): y must be strictly positive and finite.
     if (!is.numeric(y) && !is.integer(y))
@@ -309,6 +317,24 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     yv <- y[is.finite(y)]
     if (any(yv <= 0))
       stop("ares: family = 'gamma' requires y > 0; got non-positive values.")
+  }
+  # BUG-007 (v0.0.0.9029): constant y is degenerate for all families --
+  # only the intercept can be fit. Reject up front rather than silently
+  # returning an intercept-only fit. Use a tight numeric tolerance for
+  # gaussian (so a noisy "constant" with a few atto-perturbations still
+  # passes); for integer/categorical-coded y (binomial / poisson) we
+  # require at least two distinct values.
+  {
+    yv_check <- as.numeric(y)
+    yv_check <- yv_check[is.finite(yv_check)]
+    if (length(yv_check) > 0) {
+      yu <- unique(yv_check)
+      if (length(yu) < 2L) {
+        stop("ares: y is constant (all observed values equal ", yu[1],
+             "); cannot fit a non-trivial model. Drop the offending",
+             " column or supply a non-degenerate response.")
+      }
+    }
   }
 
   # ---- Family-conditional default flip (binomial only) --------------------
