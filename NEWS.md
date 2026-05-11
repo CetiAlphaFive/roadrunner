@@ -1,3 +1,29 @@
+# roadrunner 0.0.0.9029
+
+## Bug fixes
+
+Triage of 2026-05-11 adversarial audit (`audit-2026-05-11/`):
+
+- BUG-001 (high): bagged GLM refits for `family = "binomial" | "poisson" | "gamma"`
+  now reuse the same bootstrap indices used to select the basis. The unseeded
+  path used to redraw indices from the live RNG, so the post-hoc GLM
+  coefficients were fitted on a different bootstrap sample than the basis.
+- BUG-002: `predict(bagged_fit)` (with `newdata = NULL`) now returns the bag
+  mean, matching `predict(bagged_fit, x_train)`. The training `x` is stored
+  on the fit (`out$x`) to support this.
+- BUG-003: `varmod = "lm"` prediction intervals now warn and floor at a
+  meaningful lower bound (rather than `1e-12`) when extrapolation makes the
+  predicted MAD non-positive. In-sample PIs are unchanged.
+- BUG-004: `predict()` errors loudly on out-of-vocabulary factor or character
+  levels in `newdata`, instead of silently dropping the affected rows.
+- BUG-005: `weights` must now be strictly positive. Zero-weight rows used to
+  bias `GCV` downward and produce over-fitting; drop the rows from `x`/`y`
+  instead.
+- BUG-006: documented honestly that `varmod = "lm"` captures only
+  yhat-dependent residual scale, not x-driven heteroscedasticity.
+- BUG-007: `family = "poisson"` rejects `all(y == 0)` (degenerate GLM fit);
+  all families reject constant `y` (only the intercept can be fit).
+
 # roadrunner (development)
 
 ## Package
