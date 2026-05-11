@@ -106,13 +106,38 @@ predict.ares <- function(object, newdata = NULL,
       }
       # Replay character/factor handling: coerce character to factor with
       # the *training* levels; refactor existing factor columns onto the
-      # training levels. Out-of-vocabulary levels become NA -- they will
-      # be picked up by the predict-side NA handling below.
+      # training levels. BUG-004 (v0.0.0.9029): out-of-vocabulary levels
+      # used to become NA and then model.matrix(..., na.action=na.omit)
+      # silently dropped those ROWS from the result, so predict()
+      # returned fewer rows than nrow(newdata). We now detect OOV per
+      # column up front, collect offending row indices and level names,
+      # and stop() with a clear error -- safer than silent row drops.
+      oov_report <- list()
       for (jname in names(fi$xlevels)) {
         col <- newdata[[jname]]
         if (is.character(col) || is.factor(col)) {
-          newdata[[jname]] <- factor(col, levels = fi$xlevels[[jname]])
+          col_chr <- as.character(col)
+          tr_lev <- fi$xlevels[[jname]]
+          bad_rows <- which(!is.na(col_chr) & !(col_chr %in% tr_lev))
+          if (length(bad_rows)) {
+            bad_lev <- unique(col_chr[bad_rows])
+            oov_report[[jname]] <- list(rows = bad_rows, levels = bad_lev)
+          }
+          newdata[[jname]] <- factor(col, levels = tr_lev)
         }
+      }
+      if (length(oov_report)) {
+        msgs <- vapply(names(oov_report), function(jn) {
+          rep <- oov_report[[jn]]
+          sprintf("  column %s: %d row(s) (e.g. row %d) with level(s) not seen at fit time: %s",
+                  jn, length(rep$rows), rep$rows[1],
+                  paste(utils::head(rep$levels, 5), collapse = ", "))
+        }, character(1L))
+        stop("ares: out-of-vocabulary factor level(s) in newdata; ",
+             "cannot expand to the training design matrix. ",
+             "Fix the offending column(s) (e.g. drop those rows or re-fit ",
+             "with the new level(s)) and retry.\n",
+             paste(msgs, collapse = "\n"), call. = FALSE)
       }
       xnew <- stats::model.matrix(~ ., data = newdata)
       if ("(Intercept)" %in% colnames(xnew))
