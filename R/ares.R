@@ -1030,6 +1030,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       denom <- sum(xc * xc)
       slope <- if (denom > 0) sum(xc * rc) / denom else 0
       intercept <- m_r - slope * m_y
+      sigma_const <- sqrt(pi / 2) * m_r
     } else {
       sw <- sum(weights)
       m_y <- sum(weights * yhat) / sw
@@ -1038,13 +1039,34 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       denom <- sum(weights * xc * xc)
       slope <- if (denom > 0) sum(weights * xc * rc) / denom else 0
       intercept <- m_r - slope * m_y
+      sigma_const <- sqrt(pi / 2) * m_r
     }
     # E|N(0,sigma)| = sigma * sqrt(2/pi) -> sigma = |resid| * sqrt(pi/2).
+    # BUG-003 (v0.0.0.9029) extrapolation floor: also stash an in-sample
+    # range of yhat and a meaningful sigma fallback so predict() can warn
+    # and floor (rather than silently collapse to ~1e-12 PI widths) when
+    # the linear MAD model predicts a non-positive value at extrapolation
+    # rows. `sigma_const_floor` is the mean-resid-derived constant sigma
+    # (`varmod = "const"` equivalent on the same fit); we floor at
+    # max(0.05 * sigma_const_floor, smallest positive in-sample MAD).
+    yhat_min <- min(yhat)
+    yhat_max <- max(yhat)
+    # in-sample predicted MAD values (sigma scale)
+    in_mad <- sqrt(pi / 2) * pmax(intercept + slope * yhat, 0)
+    pos_in_mad <- in_mad[in_mad > 0]
+    min_pos_in_mad <- if (length(pos_in_mad)) min(pos_in_mad) else sigma_const
+    sigma_floor <- max(0.05 * sigma_const,
+                       0.5  * min_pos_in_mad,
+                       .Machine$double.eps)
     list(type = "lm",
          intercept = as.numeric(intercept),
          slope     = as.numeric(slope),
          scale     = sqrt(pi / 2),
-         df        = df)
+         df        = df,
+         yhat_min  = as.numeric(yhat_min),
+         yhat_max  = as.numeric(yhat_max),
+         sigma_const_floor = as.numeric(sigma_const),
+         sigma_floor = as.numeric(sigma_floor))
   }
 }
 

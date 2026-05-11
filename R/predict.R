@@ -273,11 +273,34 @@ predict.ares <- function(object, newdata = NULL,
   if (is.null(vm)) return(NULL)
   alpha <- (1 - level) / 2
   qq <- stats::qt(1 - alpha, df = vm$df)
-  sigma_vec <- switch(vm$type,
-    const = rep(vm$sigma_hat, length(yhat)),
-    lm    = pmax(vm$scale * (vm$intercept + vm$slope * yhat),
-                 1e-12)              # floor to keep sigma positive
-  )
+  if (identical(vm$type, "const")) {
+    sigma_vec <- rep(vm$sigma_hat, length(yhat))
+  } else {
+    # vm$type == "lm" -- linear MAD model in yhat. BUG-003 (v0.0.0.9029):
+    # at extrapolation rows the predicted MAD can go non-positive, and
+    # the prior code floored at 1e-12 -- which produced PI widths of
+    # ~4e-12 with NO warning. We now floor at a meaningful lower bound
+    # captured at fit time (max of 5% of the const-equivalent sigma and
+    # half the smallest in-sample positive MAD), and warn when ANY row
+    # hits that floor so the user knows the variance model is being
+    # extrapolated past its validity range.
+    raw_mad <- vm$scale * (vm$intercept + vm$slope * yhat)
+    floor_val <- if (!is.null(vm$sigma_floor)) vm$sigma_floor else 1e-12
+    needs_floor <- raw_mad < floor_val
+    if (any(needs_floor)) {
+      yhat_range_msg <- if (!is.null(vm$yhat_min) && !is.null(vm$yhat_max))
+        sprintf(" (training yhat range [%.3g, %.3g])",
+                vm$yhat_min, vm$yhat_max) else ""
+      warning("ares: varmod = 'lm' produced non-positive predicted",
+              " MAD at ", sum(needs_floor), " of ", length(yhat),
+              " row(s)", yhat_range_msg,
+              "; flooring PI sigma at ", signif(floor_val, 3),
+              ". Predicted intervals at these rows reflect the floor",
+              " (the variance model is being extrapolated outside its",
+              " in-sample range).", call. = FALSE)
+    }
+    sigma_vec <- pmax(raw_mad, floor_val)
+  }
   cbind(fit = yhat, lwr = yhat - qq * sigma_vec,
         upr = yhat + qq * sigma_vec)
 }
