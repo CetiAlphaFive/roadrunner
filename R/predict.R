@@ -67,6 +67,21 @@ predict.ares <- function(object, newdata = NULL,
         stop("ares: newdata is missing columns: ",
              paste(setdiff(fi$orig_names, colnames(newdata)), collapse = ", "))
       newdata <- newdata[, fi$orig_names, drop = FALSE]
+      # Pre-expansion numeric-column NA fill using the training medians
+      # captured in $factor_info$num_medians. Without this, the default
+      # `model.matrix(~ ., newdata)` drops rows with any NA in numeric
+      # columns and the result misaligns with the training expansion.
+      if (!is.null(fi$num_medians)) {
+        for (jn in names(fi$num_medians)) {
+          if (jn %in% names(newdata)) {
+            col <- newdata[[jn]]
+            if (is.numeric(col) && anyNA(col)) {
+              col[is.na(col)] <- fi$num_medians[[jn]]
+              newdata[[jn]] <- col
+            }
+          }
+        }
+      }
       # Replay character/factor handling: coerce character to factor with
       # the *training* levels; refactor existing factor columns onto the
       # training levels. Out-of-vocabulary levels become NA -- they will

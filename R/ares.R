@@ -300,8 +300,60 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # Levels are stashed on `$factor_info` so predict.ares() can replay the
   # same expansion on newdata.
   factor_info <- NULL
+  pre_na_medians <- NULL    # numeric-column medians captured BEFORE factor
+                            # expansion (so we can replay them at predict
+                            # time, before model.matrix runs there too).
   if (is.data.frame(x)) {
     is_cat <- vapply(x, \(z) is.factor(z) || is.character(z), logical(1L))
+    is_num <- vapply(x, is.numeric, logical(1L))
+
+    # ---- Pre-expansion NA handling on numeric columns -------------------
+    # If we call model.matrix(~ ., x) with NAs in any numeric column, the
+    # default na.action is na.omit which silently drops rows -- and the
+    # `na.action` arg we honour at the matrix level below would never see
+    # those rows. Handle numeric-column NAs HERE so the expansion is
+    # clean. Factor / character columns with NAs are left to model.matrix
+    # (which already errors loudly; rare enough that the strict path is
+    # the right default).
+    if (any(is_num)) {
+      num_names <- names(x)[is_num]
+      df_na_mask <- vapply(num_names, \(jn) anyNA(x[[jn]]), logical(1L))
+      if (any(df_na_mask)) {
+        rows_aff <- sum(rowSums(is.na(as.matrix(x[, num_names, drop = FALSE]))) > 0L)
+        cols_aff <- sum(df_na_mask)
+        if (na.action == "impute") {
+          pre_na_medians <- vapply(num_names,
+                                   \(jn) stats::median(x[[jn]], na.rm = TRUE),
+                                   numeric(1L))
+          names(pre_na_medians) <- num_names
+          if (any(!is.finite(pre_na_medians)))
+            stop("ares: na.action='impute' but at least one numeric column",
+                 " is entirely NA; cannot compute median. Drop the column",
+                 " or pass na.action='omit'.")
+          for (jn in num_names) {
+            na_j <- is.na(x[[jn]])
+            if (any(na_j)) x[[jn]][na_j] <- pre_na_medians[[jn]]
+          }
+          warning("Missing values in X: median-imputed ", sum(df_na_mask),
+                  " numeric column(s) across ", rows_aff, " row(s).",
+                  " Column medians are stored on the fit and reapplied at",
+                  " predict() time. Pass `na.action='omit'` to drop",
+                  " incomplete rows instead.", call. = FALSE)
+        } else { # "omit"
+          keep <- stats::complete.cases(x[, num_names, drop = FALSE])
+          dropped <- sum(!keep)
+          warning("Missing values in X: dropped ", dropped,
+                  " incomplete row(s) (across ", cols_aff,
+                  " numeric column(s) with NA). Pass `na.action='impute'`",
+                  " to median-impute instead.", call. = FALSE)
+          x <- x[keep, , drop = FALSE]
+          y <- y[keep]
+          if (length(y) < 3L)
+            stop("ares: na.action='omit' left fewer than 3 rows; aborting.")
+        }
+      }
+    }
+
     if (any(is_cat)) {
       # Coerce character columns to factor with their observed levels (the
       # natural lexical order; users wanting a specific reference level
@@ -317,7 +369,13 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
         xlevels  = xlevels,                 # named list of levels per factor col
         orig_names = names(x),              # original df column names
         is_cat   = is_cat,                  # logical(ncol(x_df))
-        expanded_names = colnames(xmm)      # expanded dummy column names
+        is_num   = is_num,                  # logical(ncol(x_df))
+        expanded_names = colnames(xmm),     # expanded dummy column names
+        # Save numeric medians keyed by ORIGINAL column name so predict.ares
+        # can fill newdata's NAs before model.matrix runs there. (The
+        # post-expansion median map in $na.medians is keyed by expanded
+        # column name and applies only when the matrix path is used.)
+        num_medians = pre_na_medians
       )
       x <- xmm
     } else {
