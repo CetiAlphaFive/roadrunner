@@ -12,14 +12,24 @@ local git only on `main`.
 
 `earth` (`earth::earth`) is a useful diagnostic but not a parity target.
 
-## Current state - v0.0.0.9023
+## Current state - v0.0.0.9024
 
 ### Test suite
-- 164/164 testthat green (was 38 at v0.0.0.9012). Determinism contract:
+- 202/202 testthat green (164 prior + 38 binomial). Determinism contract:
   `nthreads=1` and `nthreads=N` produce byte-identical fits at fixed seed.
 - `R CMD check`: 0 errors, 3 warnings (Makevars GNU extensions, qpdf
   missing, system non-portable compile flags - all pre-existing,
   documented).
+
+### Family
+- v0.0.0.9024 adds `family = "binomial"` (logistic regression via
+  post-hoc `stats::glm.fit` refit on the selected MARS basis). Accepts
+  0/1 numeric, logical, 2-level factor, or character `y`. Forward +
+  backward still run as gaussian; CV / autotune / bagging compose.
+  `predict.ares` gains `type = c("response", "link")`.
+- mlbench bench at n = 1500 (twonorm/threenorm/ringnorm/waveform):
+  ares AUC wins 4/4 vs earth, accuracy >= earth, fit time ~3x earth
+  in milliseconds; trails ranger AUC by 1-2% but is 3-4x faster.
 
 ### Pruning options
 - `pmethod = "backward"` (default) - GCV-based subset selection.
@@ -82,7 +92,9 @@ inst/sims/results/v0.23-mlbench.csv (current). Highlights:
 
 ## Scope discipline (locked-in)
 
-- Gaussian response only. No GLM, no multi-response, no obs weights.
+- Response families: gaussian (default) and binomial (v0.0.0.9024+,
+  post-hoc GLM refit on selected basis). Multinomial is a roadmap
+  stretch. No multi-response, no obs weights.
 - `pmethod` in `{"backward", "none", "cv"}`. No exhaustive/forward/seqrep.
 - No `fast.k` heuristic past the default (10) is intended; user can
   override via `autotune.speed`.
@@ -105,10 +117,12 @@ unaffected. Before any CRAN submission, rename to `aresMARS`.
   `mars_fit_cpp` (forward + backward),
   `mars_basis_cpp` (basis builder for predict),
   `mars_backward_only_cpp` (backward replay - v0.20 shared forward).
-- `tests/testthat/` - 8 test files, 164 tests.
+- `tests/testthat/` - 9 test files, 202 tests.
 - `inst/sims/` - Monte Carlo + bench scripts. Latest results in
-  `results/v0.23-mlbench.csv` (`v0.20-mlbench.csv` is the
-  pre-Phase-4 reference).
+  `results/v0.23-mlbench.csv` (gaussian high-p benchmark) and
+  `results/v0.24-binomial.csv` (mlbench classification bench: ares /
+  earth / ranger across twonorm, threenorm, ringnorm, waveform at
+  n = 500, 1500, 10 reps).
 - `brain-contributions-v0.20.md` (root, Rbuildignored) — 10 distilled
   knowledge entries proposed for the statsclaw brain seedbank.
   Awaiting `/contribute` upload from a brain-connected session.
@@ -116,6 +130,7 @@ unaffected. Before any CRAN submission, rename to `aresMARS`.
 ## Commit history (post-tuning roadmap)
 
 ```
+5c4b22a v0.0.0.9024: family = "binomial" classification (Phase A)
 e07139a v0.0.0.9023: nfold defaults to 3 on high-p autotune
 a4623de v0.0.0.9022: drop fast.k=0 from balanced fk_grid on high-p
 0045135 v0.0.0.9021: cap autotune nk-grid at 2x for high-p
@@ -147,12 +162,15 @@ bb3f858 v0.0.0.9018: Phase 2 - n.boot bagging (earth has no bag)
 
 ## Likely next sessions
 
-1. **`/contribute`** the 10 entries in `brain-contributions-v0.20.md`
+1. **Multinomial family** (stretch). Either K-1 binomial via softmax
+   decomposition OR `nnet::multinom` on the selected basis (would add
+   a Suggests dep). Skipped in v0.0.0.9024 to keep the scope tight.
+2. **`/contribute`** the 10 entries in `brain-contributions-v0.20.md`
    from a brain-connected session.
-2. **Further high-p autotune speed** — remaining bottleneck is
+3. **Further high-p autotune speed** — remaining bottleneck is
    `auto_linpreds = FALSE` default at p=20 deg=2/3 inflating forward
    emit count; the v0.21-v0.23 gates attacked symptoms, not the
    default. Revisit if a user reports highdim wall-clock issues.
-3. **GitHub publish** - user has not yet authorized remote push.
-4. **Rename for CRAN** - `aresMARS` is the proposed name (avoids
+4. **GitHub publish** - user has not yet authorized remote push.
+5. **Rename for CRAN** - `aresMARS` is the proposed name (avoids
    collision with archived `ARES` package).

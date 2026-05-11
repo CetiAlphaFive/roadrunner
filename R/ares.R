@@ -614,13 +614,30 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     stop("ares: family='binomial' but $bx is empty; cannot fit GLM.")
   # The intercept column is the first basis term (all ones), so glm.fit gets
   # the full design and we pass `intercept = FALSE` to avoid duplicating it.
-  g <- stats::glm.fit(x = bx, y = y_int, family = stats::binomial(),
-                      intercept = FALSE)
+  # Suppress glm.fit's own warnings about non-convergence / numerically 0-1
+  # probabilities -- we surface those via $glm$converged so callers can act
+  # on them, but in normal use (well-separated DGP at small n) they are
+  # routine and shouldn't spam the console.
+  g <- suppressWarnings(stats::glm.fit(
+    x = bx, y = y_int, family = stats::binomial(),
+    intercept = FALSE,
+    control = list(maxit = 50L, epsilon = 1e-8, trace = FALSE)
+  ))
   cf <- g$coefficients
+  # On rank-deficient basis or perfect separation, glm.fit can emit NA
+  # coefficients. Replace NA with 0 so downstream prediction stays finite
+  # (this is the same fallback earth uses internally; the affected terms
+  # contribute nothing to the linear predictor).
+  if (any(!is.finite(cf))) cf[!is.finite(cf)] <- 0
   names(cf) <- colnames(bx)
+  # Clamp the linear predictor to +/- 30 so plogis stays in (1e-13, 1-1e-13).
+  # This is a defensive bound; with a well-conditioned design it never
+  # activates. Earth applies a similar clamp inside its predict.earth().
+  lp <- drop(bx %*% cf)
+  lp_clamped <- pmin(pmax(lp, -30), 30)
   out$coefficients   <- cf
-  out$linear.predictor <- drop(bx %*% cf)
-  out$fitted.values  <- stats::plogis(out$linear.predictor)
+  out$linear.predictor <- lp_clamped
+  out$fitted.values  <- stats::plogis(lp_clamped)
   # Residuals = response - probability (working / response residuals).
   out$residuals      <- as.numeric(y_int) - out$fitted.values
   out$glm <- list(
@@ -662,11 +679,17 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     bx_b <- mars_basis_cpp(x_b, fits[[b]]$dirs, fits[[b]]$cuts,
                            as.integer(fits[[b]]$selected.terms))
     g <- tryCatch(
-      stats::glm.fit(x = bx_b, y = y_b,
-                     family = stats::binomial(), intercept = FALSE),
+      suppressWarnings(stats::glm.fit(
+        x = bx_b, y = y_b,
+        family = stats::binomial(), intercept = FALSE,
+        control = list(maxit = 50L, epsilon = 1e-8, trace = FALSE))),
       error = function(e) NULL
     )
-    if (!is.null(g)) fits[[b]]$coefficients <- as.numeric(g$coefficients)
+    if (!is.null(g)) {
+      cf_b <- as.numeric(g$coefficients)
+      if (any(!is.finite(cf_b))) cf_b[!is.finite(cf_b)] <- 0
+      fits[[b]]$coefficients <- cf_b
+    }
   }
   fits
 }

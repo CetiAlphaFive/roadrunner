@@ -41,6 +41,29 @@ probabilities (`plogis(linear.predictor)`).
   across thread counts) are gated behind `ARES_FULL_TESTS=1`.
 - Full suite: 202/202 passing (164 prior + 38 binomial).
 
+### Benchmark (`inst/sims/v0.24_bench_binomial.R`)
+mlbench classification DGPs (twonorm, threenorm, ringnorm, waveform)
+at n = 500 and n = 1500, 10 reps, 70/30 holdout. Mean AUC:
+
+|       DGP | n=500 ares | n=500 earth | n=1500 ares | n=1500 earth |
+|----------:|-----------:|------------:|------------:|-------------:|
+|  twonorm  |     0.963  |       0.966 |       0.997 |        0.975 |
+| threenorm |     0.873  |       0.808 |       0.914 |        0.844 |
+|  ringnorm |     0.952  |       0.967 |       0.989 |        0.973 |
+|  waveform |     0.917  |       0.919 |       0.942 |        0.939 |
+
+ares accuracy >= earth on every cell. ares fit time ~3x earth (still in
+milliseconds); ranger trails ares on AUC by 1-2% but takes 3-4x longer.
+Full numbers in `inst/sims/results/v0.24-binomial.csv`.
+
+### Robustness
+- `glm.fit` warnings (non-convergence, numerically 0-1 probabilities)
+  are suppressed; the converged / iter / deviance fields are still
+  surfaced via `$glm` so callers can detect failures. NA coefficients
+  (rank-deficient basis or perfect separation) are set to 0, matching
+  earth's behaviour. The linear predictor is clamped to +/- 30 at both
+  fit and predict time, so `plogis` stays in (1e-13, 1-1e-13).
+
 ### Notes
 - The inner CV / autotune step still picks terms by gaussian MSE on the
   latent scale, then GLM-refits the winner. This matches earth's

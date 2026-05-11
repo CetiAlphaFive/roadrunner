@@ -134,7 +134,12 @@ predict.ares <- function(object, newdata = NULL,
   # Single-fit path.
   if (is.null(object$boot)) {
     if (fam == "binomial") {
-      return(if (type == "link") eta_central else stats::plogis(eta_central))
+      if (type == "link") return(eta_central)
+      # Clamp eta to +/- 30 so plogis stays in (1e-13, 1-1e-13). Matches
+      # the clamp applied at fit time in .ares_refit_binomial() so a
+      # well-conditioned design is never affected (clamp only fires on
+      # quasi-perfect-separation extrapolation).
+      return(stats::plogis(pmin(pmax(eta_central, -30), 30)))
     }
     return(eta_central)
   }
@@ -146,12 +151,12 @@ predict.ares <- function(object, newdata = NULL,
   preds <- matrix(NA_real_, nrow = nrow(xnew),
                   ncol = length(object$boot$fits) + 1L)
   if (fam == "binomial") {
-    preds[, 1] <- stats::plogis(eta_central)
+    preds[, 1] <- stats::plogis(pmin(pmax(eta_central, -30), 30))
     for (b in seq_along(object$boot$fits)) {
       fb <- object$boot$fits[[b]]
       bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
       eta_b <- drop(bx_b %*% fb$coefficients)
-      preds[, b + 1L] <- stats::plogis(eta_b)
+      preds[, b + 1L] <- stats::plogis(pmin(pmax(eta_b, -30), 30))
     }
   } else {
     preds[, 1] <- eta_central
