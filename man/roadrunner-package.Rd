@@ -26,11 +26,11 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: Jack Trametta \email{jtrametta@gmail.com}
+\strong{Maintainer}: Jack T. Rametta \email{jtrametta@gmail.com}
 
 Authors:
 \itemize{
-  \item Jack Trametta \email{jtrametta@gmail.com}
+  \item Jack T. Rametta \email{jtrametta@gmail.com}
 }
 
 }

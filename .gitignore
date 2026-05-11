@@ -9,3 +9,11 @@ inst/sims/results/sim_raw.csv
 inst/sims/results/sim_summary.csv
 inst/doc
 .positai
+roadrunner.Rcheck/
+roadrunner_*.tar.gz
+
+# Internal session / handoff notes (not for public repo)
+CLAUDE.md
+ARCHITECTURE.md
+brain-contributions*.md
+cran-comments.md

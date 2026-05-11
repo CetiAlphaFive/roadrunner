@@ -2,7 +2,7 @@ Package: roadrunner
 Title: Fast, Low-Dependency Machine Learning Algorithms
 Version: 0.0.0.9028
 Authors@R:
-    person("Jack", "Trametta", , "jtrametta@gmail.com", role = c("aut", "cre"))
+    person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com", role = c("aut", "cre"))
 Description: A collection of fast, low-dependency implementations of
     classical machine learning algorithms. The first algorithm is
     'ares()', a Multivariate Adaptive Regression Splines (MARS) fitter
