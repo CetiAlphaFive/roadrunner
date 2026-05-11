@@ -45,6 +45,17 @@ predict.ares <- function(object, newdata = NULL,
   interval <- match.arg(interval)
   fam  <- if (is.null(object$family)) "gaussian" else object$family
   if (is.null(newdata)) {
+    # BUG-002 (v0.0.0.9029): for bagged fits, `predict(object)` must return
+    # the bag mean (matching `predict(object, x_train)`). Previously the
+    # NULL branch short-circuited to `$fitted.values` (the central fit
+    # only), silently diverging from the newdata-supplied path. We now
+    # re-route through the bag path using the stored training x. The
+    # short-circuit is kept for single (non-bagged) fits where central ==
+    # bag-mean by definition.
+    if (!is.null(object$boot) && !is.null(object$x)) {
+      return(Recall(object, newdata = object$x, type = type,
+                    se.fit = se.fit, interval = interval, level = level))
+    }
     yhat <- if (fam == "binomial" && type == "link") {
       object$linear.predictor %||% object$fitted.values
     } else {

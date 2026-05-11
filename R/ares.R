@@ -720,6 +720,14 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # data had no NAs or `na.action = "omit"` was used.
   out$na.action <- na.action
   out$na.medians <- na_medians
+  # BUG-002 (v0.0.0.9029): keep the (post-NA-imputed, post-factor-expansion,
+  # post-constant-drop) training x on the fit so `predict(fit)` -- the
+  # natural form with `newdata = NULL` -- can re-route through the bag-
+  # averaging path for bagged fits. Without this the NULL branch
+  # short-circuited to `$fitted.values` (the central fit only), silently
+  # diverging from `predict(fit, x_train)` on bagged fits. Memory cost is
+  # 8 * n * p bytes; cheap relative to bx (n * M) which we already store.
+  out$x <- x
   # Factor-expansion metadata: NULL when training x was already a numeric
   # matrix (or a data.frame with no factor/character columns). When set,
   # predict.ares() replays the same model.matrix expansion on newdata.
