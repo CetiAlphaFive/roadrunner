@@ -24,7 +24,7 @@ Triage of 2026-05-11 adversarial audit (`audit-2026-05-11/`):
 - BUG-007: `family = "poisson"` rejects `all(y == 0)` (degenerate GLM fit);
   all families reject constant `y` (only the intercept can be fit).
 
-# roadrunner (development)
+# roadrunner 0.0.0.9028
 
 ## Package
 
