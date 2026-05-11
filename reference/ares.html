@@ -13,7 +13,7 @@ minimising the GCV criterion (or a K-fold CV criterion if requested)."></head><b
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9028</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9029</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -274,7 +274,14 @@ is unavailable.</p></li>
 <li><p><code>"const"</code>: stores a single residual SD; intervals are
 <code>yhat +/- qt(level, df) * sigma</code>.</p></li>
 <li><p><code>"lm"</code>: fits a small linear model of <code>|resid|</code> on <code>yhat</code> to allow
-simple mean-dependent heteroscedasticity.
+simple <strong>yhat-dependent</strong> heteroscedasticity. Captures residual scale
+that changes linearly with the fitted mean. Does NOT capture residual
+scale that depends on a predictor whose contribution to <code>yhat</code> is
+small – in that case the |resid| ~ yhat slope is close to zero and
+<code>"lm"</code> collapses to roughly the same as <code>"const"</code>. If you suspect
+x-driven heteroscedasticity (e.g. variance depends on a covariate
+orthogonal to the mean structure), <code>varmod = "lm"</code> will not help
+and coverage will degrade in high-variance regions.
 Ignored for non-gaussian families.</p></li>
 </ul></dd>
 

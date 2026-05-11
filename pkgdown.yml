@@ -3,7 +3,7 @@ pkgdown: 2.2.0
 pkgdown_sha: ~
 articles:
   ares: ares.html
-last_built: 2026-05-11T14:33Z
+last_built: 2026-05-11T19:15Z
 urls:
   reference: https://cetialphafive.github.io/roadrunner/reference
   article: https://cetialphafive.github.io/roadrunner/articles

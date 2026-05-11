@@ -244,8 +244,15 @@ ares(
     `yhat +/- qt(level, df) * sigma`.
 
   - `"lm"`: fits a small linear model of `|resid|` on `yhat` to allow
-    simple mean-dependent heteroscedasticity. Ignored for non-gaussian
-    families.
+    simple **yhat-dependent** heteroscedasticity. Captures residual
+    scale that changes linearly with the fitted mean. Does NOT capture
+    residual scale that depends on a predictor whose contribution to
+    `yhat` is small – in that case the \|resid\| ~ yhat slope is close
+    to zero and `"lm"` collapses to roughly the same as `"const"`. If
+    you suspect x-driven heteroscedasticity (e.g. variance depends on a
+    covariate orthogonal to the mean structure), `varmod = "lm"` will
+    not help and coverage will degrade in high-variance regions. Ignored
+    for non-gaussian families.
 
 - trace:
 

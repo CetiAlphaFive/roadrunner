@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9028</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9029</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,7 +32,57 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
-  </main></div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9029" id="roadrunner-0009029">roadrunner 0.0.0.9029<a class="anchor" aria-label="anchor" href="#roadrunner-0009029"></a></h2>
+<div class="section level3">
+<h3 id="bug-fixes-0-0-0-9029">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-0-0-9029"></a></h3>
+<p>Triage of 2026-05-11 adversarial audit (<code>audit-2026-05-11/</code>):</p>
+<ul><li>BUG-001 (high): bagged GLM refits for <code>family = "binomial" | "poisson" | "gamma"</code> now reuse the same bootstrap indices used to select the basis. The unseeded path used to redraw indices from the live RNG, so the post-hoc GLM coefficients were fitted on a different bootstrap sample than the basis.</li>
+<li>BUG-002: <code>predict(bagged_fit)</code> (with <code>newdata = NULL</code>) now returns the bag mean, matching <code>predict(bagged_fit, x_train)</code>. The training <code>x</code> is stored on the fit (<code>out$x</code>) to support this.</li>
+<li>BUG-003: <code>varmod = "lm"</code> prediction intervals now warn and floor at a meaningful lower bound (rather than <code>1e-12</code>) when extrapolation makes the predicted MAD non-positive. In-sample PIs are unchanged.</li>
+<li>BUG-004: <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> errors loudly on out-of-vocabulary factor or character levels in <code>newdata</code>, instead of silently dropping the affected rows.</li>
+<li>BUG-005: <code>weights</code> must now be strictly positive. Zero-weight rows used to bias <code>GCV</code> downward and produce over-fitting; drop the rows from <code>x</code>/<code>y</code> instead.</li>
+<li>BUG-006: documented honestly that <code>varmod = "lm"</code> captures only yhat-dependent residual scale, not x-driven heteroscedasticity.</li>
+<li>BUG-007: <code>family = "poisson"</code> rejects <code>all(y == 0)</code> (degenerate GLM fit); all families reject constant <code>y</code> (only the intercept can be fit).</li>
+</ul></div>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9028" id="roadrunner-0009028">roadrunner 0.0.0.9028<a class="anchor" aria-label="anchor" href="#roadrunner-0009028"></a></h2>
+<div class="section level3">
+<h3 id="package-0-0-0-9028">Package<a class="anchor" aria-label="anchor" href="#package-0-0-0-9028"></a></h3>
+<ul><li>Renamed from <code>ares</code> to <code>roadrunner</code>. The MARS fitter remains available as <code><a href="../reference/ares.html">ares()</a></code>, with the <code>"ares"</code> S3 class and methods unchanged. Update <code><a href="https://rdrr.io/r/base/library.html" class="external-link">library(ares)</a></code> calls to <code><a href="https://cetialphafive.github.io/roadrunner/">library(roadrunner)</a></code>.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="ares-0-0-0-9028"><code>ares()</code><a class="anchor" aria-label="anchor" href="#ares-0-0-0-9028"></a></h3>
+<ul><li>
+<code>family</code> accepts <code>"gaussian"</code> (default), <code>"binomial"</code>, <code>"poisson"</code>, and <code>"gamma"</code>. The forward + backward MARS pass runs on the numeric response; the selected basis is then refit with <code><a href="https://rdrr.io/r/stats/glm.html" class="external-link">stats::glm.fit()</a></code> for non-gaussian families. <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> gains <code>type = c("response", "link")</code>.</li>
+<li>
+<code>weights</code> argument for observation weights. Composes with CV pruning, autotune, and bagging.</li>
+<li>
+<code>pmethod = "cv"</code> (and the convenience trigger <code>nfold &gt; 0</code>) performs K-fold cross-validated subset-size selection. Optional <code>ncross</code> repetitions, quantile-based stratification, and the 1-SE rule via <code>cv.1se = TRUE</code>.</li>
+<li>
+<code>autotune = TRUE</code> runs an inner-CV grid search over <code>(degree, penalty, nk, fast.k)</code>. <code>autotune.speed</code> chooses among <code>"balanced"</code> (default), <code>"quality"</code>, and <code>"fast"</code>. A 20 % subsample warm-start short-circuits the full grid when the best-per-degree gap is decisive.</li>
+<li>
+<code>n.boot &gt; 0</code> fits row-bootstrap replicates of the central model. <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> averages across replicates; <code>se.fit = TRUE</code> attaches the per-row bag standard deviation.</li>
+<li>
+<code>varmod = "const" | "lm"</code> (gaussian only) stores a residual variance model at fit time, enabling <code>predict(interval = "pint")</code> for approximate prediction intervals.</li>
+<li>
+<code>na.action = c("impute", "omit")</code> handles missing values in <code>x</code>. Default <code>"impute"</code> median-imputes numeric columns and stores the medians for reapplication at predict time.</li>
+<li>Factor and character columns in a data-frame <code>x</code> are expanded via <code>model.matrix</code> and replayed on new data.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="engine-0-0-0-9028">Engine<a class="anchor" aria-label="anchor" href="#engine-0-0-0-9028"></a></h3>
+<ul><li>Fits are parallel-deterministic: at a fixed <code>seed.cv</code>, results are byte-identical across thread counts.</li>
+<li>Default <code>auto.linpreds = TRUE</code> and <code>adjust.endspan = 2L</code> for <code>family = "binomial"</code> (matches <code>earth</code>’s binomial defaults). Other families keep the gaussian-conservative defaults.</li>
+</ul></div>
+<div class="section level3">
+<h3 id="compatibility-0-0-0-9028">Compatibility<a class="anchor" aria-label="anchor" href="#compatibility-0-0-0-9028"></a></h3>
+<ul><li>Requires R (&gt;= 4.1.0).</li>
+<li>Depends only on <code>Rcpp</code> and <code>RcppParallel</code>. <code>earth</code>, <code>bench</code>, and <code>testthat</code> are Suggests only.</li>
+</ul></div>
+</div>
+  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
+    </nav></aside></div>
 
 
     <footer><div class="pkgdown-footer-left">
