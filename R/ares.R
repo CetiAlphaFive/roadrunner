@@ -1,4 +1,4 @@
-# ares — main fitting function
+# ares -- main fitting function
 
 #' Fast Multivariate Adaptive Regression Splines
 #'
@@ -24,11 +24,11 @@
 #' @param minspan Minimum knot span. 0 (default) selects an automatic value.
 #' @param endspan Knot offset from the data ends. 0 (default) selects automatic.
 #' @param adjust.endspan Multiplier applied to `endspan` when the candidate
-#'   hinge would deepen an existing interaction (parent term has degree
-#'   >= 1). Default `1` (no adjustment). Earth's analogous default is `2`;
-#'   ares's heuristic is empirically mixed on the inst/sims grid (helps a
-#'   few cells, hurts others), so the default is conservative. Pass `2`
-#'   to enable.
+#'   hinge would deepen an existing interaction (parent term has
+#'   degree at least 1). Default `1` (no adjustment). Earth's analogous
+#'   default is `2`; ares's heuristic is empirically mixed on the
+#'   inst/sims grid (helps a few cells, hurts others), so the default
+#'   is conservative. Pass `2` to enable.
 #' @param auto.linpreds If `TRUE`, and the best forward-pass knot for a
 #'   candidate hinge sits at the boundary of its variable's eligible range,
 #'   substitutes a linear term (`dirs = 2`) for the hinge pair. **Default
@@ -88,8 +88,8 @@
 #' @param autotune.warmstart If `TRUE` (default; only meaningful when
 #'   `autotune = TRUE`) and `n >= 200`, ares first runs autotune on a
 #'   15% subsample (capped at 200 rows). If the subsample has a
-#'   *decisive* winner — best-per-degree CV-MSE more than 5% below the
-#'   next-best degree's best cell — that `(degree, penalty, nk, fast.k)`
+#'   *decisive* winner -- best-per-degree CV-MSE more than 5% below the
+#'   next-best degree's best cell -- that `(degree, penalty, nk, fast.k)`
 #'   is used directly to refit on the full data, skipping the full-data
 #'   grid. Cuts autotune wall-clock by ~5x on well-separated DGPs.
 #' @param n.boot Number of bootstrap replicate fits for bagging. Default
@@ -97,7 +97,7 @@
 #'   fits in `$boot$fits`, each fit on a row-bootstrap sample of the data.
 #'   The augmented `predict()` averages predictions across replicates plus
 #'   the central fit and reports per-prediction standard deviation in
-#'   `attr(predictions, "sd")`. Bagging composes with `autotune` —
+#'   `attr(predictions, "sd")`. Bagging composes with `autotune` --
 #'   each replicate fits with the central fit's chosen
 #'   `(degree, penalty, nk, fast.k)` so the cost is `(n.boot + 1) * fit_cost`,
 #'   not the autotune grid times `n.boot`.
@@ -106,7 +106,7 @@
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
 #'   bundled vignette cap this at 2.
 #' @param ... Additional arguments. Currently ignored.
-#' @return An object of class `"ares"` — a list with components
+#' @return An object of class `"ares"` -- a list with components
 #'   `coefficients`, `bx`, `dirs`, `cuts`, `selected.terms`, `rss`, `gcv`,
 #'   `rss.per.subset`, `gcv.per.subset`, `fitted.values`, `residuals`, `namesx`,
 #'   `call`, plus echoed control parameters.
@@ -249,7 +249,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # ---- Coerce x to plain numeric matrix ----
   storage.mode(x) <- "double"
 
-  # ---- Autotune dispatch (Phase 2 — v0.15+) ----
+  # ---- Autotune dispatch (Phase 2 -- v0.15+) ----
   if (isTRUE(autotune)) {
     # Promote nfold to a sensible default if user didn't ask. v0.0.0.9023:
     # on high-p problems (p >= 15, where nk_eff >= 31), default to nfold = 3
@@ -309,7 +309,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   out$pmethod <- if (isTRUE(autotune)) "backward" else pmethod
   out$dropped <- dropped_names
 
-  # ---- Bagging (Phase 2 — v0.18+) ----
+  # ---- Bagging (Phase 2 -- v0.18+) ----
   # Refit on n_boot row-bootstrap samples using the central fit's tuned
   # hyperparameters. Stored in $boot$fits as plain mars_fit_cpp returns
   # (with dirs/cuts/selected.terms suitable for predict via mars_basis_cpp).
@@ -351,7 +351,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
         if (length(nprune) == 0L || is.na(nprune[1])) as.integer(nk_b) else as.integer(nprune),
         pmethod_int_b, trace, nthreads_eff, 0L, 0L
       )
-      # Strip heavy fields that bagging doesn't need (bx is n_full × M).
+      # Strip heavy fields that bagging doesn't need (bx is n_full x M).
       f_b$bx <- NULL
       boot_fits[[b]] <- f_b
     }
@@ -411,7 +411,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
 #   - Each fold's forward pass is independent. A future optimisation could
 #     reuse the fast.k cache across folds (see Phase 3 v0.20). v0.13 uses
 #     plain repeated calls for clarity.
-#   - Stratification: regression-only — quantile-bin y into nfold bins and
+#   - Stratification: regression-only -- quantile-bin y into nfold bins and
 #     round-robin within bins. ncross > 1 reseeds the partition.
 .ares_cv_fit <- function(x, y, degree, nk, penalty, thresh,
                          minspan, endspan, adjust_endspan, auto_linpreds,
@@ -499,7 +499,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
     }
   }
   if (!length(mse_list))
-    stop("ares: CV produced no evaluations — check nfold / ncross.")
+    stop("ares: CV produced no evaluations -- check nfold / ncross.")
   max_M <- max(vapply(mse_list, length, integer(1L)))
   mse_mat <- matrix(NA_real_, nrow = length(mse_list), ncol = max_M)
   for (i in seq_along(mse_list)) {
@@ -838,7 +838,7 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   # independent of penalty, so for each fold we run forward ONCE per group
   # and call mars_backward_only_cpp() per cell within the group with its
   # specific penalty. mars_backward_only_cpp builds B from dirs/cuts on the
-  # fold's training rows and replays GCV-backward — same numerical path as
+  # fold's training rows and replays GCV-backward -- same numerical path as
   # mars_fit_cpp's backward block. Halving factor 1.5 (eliminate cells whose
   # fold-1 MSE exceeds 1.5 x running_best).
   halving_factor <- 1.5

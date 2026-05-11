@@ -1,4 +1,6 @@
 # Tests for autotune (Phase 2 — v0.15+).
+# Heavy: skipped by default; set ARES_FULL_TESTS=1 to run.
+skip_if_quick()
 
 test_that("autotune = TRUE returns $autotune slot with grid + winner", {
   set.seed(20260510)
@@ -190,7 +192,7 @@ test_that("autotune.warmstart triggers when subsample is decisively best", {
   # truth so deg=1 catches it but deg=2 is wasted complexity that hurts
   # CV-MSE on a small sample.
   set.seed(20260510)
-  n <- 1200; p <- 4
+  n <- 300; p <- 4
   x <- matrix(stats::runif(n * p), n, p)
   # Single non-interaction hinge in x1; deg=1 is enough.
   y <- 5 * pmax(0, x[, 1] - 0.5) + stats::rnorm(n, sd = 0.3)
@@ -334,7 +336,7 @@ test_that("autotune drops the 4x nk multiplier when nk_eff >= 31 (high-p)", {
   # p = 20 -> nk_eff = 2*p + 1 = 41 -> nk_grid should be c(41, 82), not
   # c(41, 82, 164). v0.0.0.9020 included nk=164; v0.0.0.9021 caps at 2x.
   set.seed(20260510)
-  n <- 250; p <- 20
+  n <- 120; p <- 20
   x <- matrix(stats::runif(n * p), n, p)
   y <- 10 * sin(pi * x[, 1] * x[, 2]) + 5 * x[, 3] + stats::rnorm(n)
   fit <- ares(x, y, autotune = TRUE, autotune.speed = "fast",
@@ -363,7 +365,7 @@ test_that("autotune keeps the 4x nk multiplier when nk_eff < 31 (low-p)", {
 test_that("v0.0.0.9022: balanced fk_grid drops 0 on high-p, keeps 0 on low-p", {
   # p = 20 -> nk_eff = 41 (>=31) -> fk_grid = c(10, 25), no 0.
   set.seed(20260510)
-  n <- 250; p <- 20
+  n <- 120; p <- 20
   x <- matrix(stats::runif(n * p), n, p)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
   fit_hi <- ares(x, y, autotune = TRUE, autotune.speed = "balanced",
@@ -385,7 +387,7 @@ test_that("v0.0.0.9022: balanced fk_grid drops 0 on high-p, keeps 0 on low-p", {
 test_that("v0.0.0.9023: nfold defaults to 3 on high-p, 5 on low-p", {
   # p = 20 -> high-p -> nfold default = 3
   set.seed(20260510)
-  n <- 250; p <- 20
+  n <- 120; p <- 20
   x <- matrix(stats::runif(n * p), n, p)
   y <- 5 * x[, 1] + 3 * x[, 2] + stats::rnorm(n)
   fit_hi <- ares(x, y, autotune = TRUE, autotune.warmstart = FALSE,

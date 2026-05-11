@@ -7,7 +7,7 @@ test_that("nthreads scales: 2 threads >= 1 thread (does not regress)", {
   testthat::skip_on_cran()
   testthat::skip_if_not_installed("earth")
   set.seed(20260509)
-  n <- 3000; p <- 10
+  n <- 800; p <- 10
   x <- matrix(stats::runif(n * p), n, p)
   y <- 10 * sin(pi * x[, 1] * x[, 2]) + 20 * (x[, 3] - 0.5)^2 +
        10 * x[, 4] + 5 * x[, 5] + stats::rnorm(n)

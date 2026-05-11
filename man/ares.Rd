@@ -63,7 +63,11 @@ when calling the formula method.}
 \item{endspan}{Knot offset from the data ends. 0 (default) selects automatic.}
 
 \item{adjust.endspan}{Multiplier applied to \code{endspan} when the candidate
-hinge would deepen an existing interaction (parent term has degree= 1). Default 1 (no adjustment). Earth's analogous default is 2;ares's heuristic is empirically mixed on the inst/sims grid (helps afew cells, hurts others), so the default is conservative. Pass 2to enable.}
+hinge would deepen an existing interaction (parent term has
+degree at least 1). Default \code{1} (no adjustment). Earth's analogous
+default is \code{2}; ares's heuristic is empirically mixed on the
+inst/sims grid (helps a few cells, hurts others), so the default
+is conservative. Pass \code{2} to enable.}
 
 \item{auto.linpreds}{If \code{TRUE}, and the best forward-pass knot for a
 candidate hinge sits at the boundary of its variable's eligible range,
@@ -138,8 +142,8 @@ Trades a marginal accuracy hit for a marginal speed gain.
 \item{autotune.warmstart}{If \code{TRUE} (default; only meaningful when
 \code{autotune = TRUE}) and \code{n >= 200}, ares first runs autotune on a
 15\% subsample (capped at 200 rows). If the subsample has a
-\emph{decisive} winner — best-per-degree CV-MSE more than 5\% below the
-next-best degree's best cell — that \verb{(degree, penalty, nk, fast.k)}
+\emph{decisive} winner -- best-per-degree CV-MSE more than 5\% below the
+next-best degree's best cell -- that \verb{(degree, penalty, nk, fast.k)}
 is used directly to refit on the full data, skipping the full-data
 grid. Cuts autotune wall-clock by ~5x on well-separated DGPs.}
 
@@ -148,7 +152,7 @@ grid. Cuts autotune wall-clock by ~5x on well-separated DGPs.}
 fits in \verb{$boot$fits}, each fit on a row-bootstrap sample of the data.
 The augmented \code{predict()} averages predictions across replicates plus
 the central fit and reports per-prediction standard deviation in
-\code{attr(predictions, "sd")}. Bagging composes with \code{autotune} —
+\code{attr(predictions, "sd")}. Bagging composes with \code{autotune} --
 each replicate fits with the central fit's chosen
 \verb{(degree, penalty, nk, fast.k)} so the cost is \code{(n.boot + 1) * fit_cost},
 not the autotune grid times \code{n.boot}.}
@@ -160,7 +164,7 @@ not the autotune grid times \code{n.boot}.}
 bundled vignette cap this at 2.}
 }
 \value{
-An object of class \code{"ares"} — a list with components
+An object of class \code{"ares"} -- a list with components
 \code{coefficients}, \code{bx}, \code{dirs}, \code{cuts}, \code{selected.terms}, \code{rss}, \code{gcv},
 \code{rss.per.subset}, \code{gcv.per.subset}, \code{fitted.values}, \code{residuals}, \code{namesx},
 \code{call}, plus echoed control parameters.

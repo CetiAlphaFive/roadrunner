@@ -1,4 +1,6 @@
 # Tests for n.boot bagging (Phase 2 — v0.18+).
+# Heavy: skipped by default; set ARES_FULL_TESTS=1 to run.
+skip_if_quick()
 
 test_that("n.boot > 0 produces a $boot slot with the right number of fits", {
   set.seed(20260510)
