@@ -1,0 +1,24 @@
+url: https://jtrametta.github.io/ares/
+destination: docs
+template:
+  bootstrap: 5
+
+reference:
+- title: "Fitting"
+  desc: "Fit MARS models with optional CV pruning and hyperparameter autotune."
+  contents:
+  - ares
+  - ares-package
+- title: "Prediction"
+  contents:
+  - predict.ares
+- title: "S3 methods"
+  contents:
+  - print.ares
+  - summary.ares
+  - plot.ares
+
+navbar:
+  structure:
+    left:  [intro, reference, news]
+    right: [search, github]

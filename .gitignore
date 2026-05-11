@@ -2,8 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
-*.Rproj
 ares.Rcheck/
+docs/
 ares_*.tar.gz
 inst/sims/results/sim_raw.csv
 inst/sims/results/sim_summary.csv

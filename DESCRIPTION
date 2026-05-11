@@ -10,6 +10,8 @@ Description: Fits Multivariate Adaptive Regression Splines (MARS) models
     core while taking advantage of multi-core CPUs to reduce wall-clock
     fitting time on large datasets.
 License: MIT + file LICENSE
+URL: https://jtrametta.github.io/ares, https://github.com/jtrametta/ares
+BugReports: https://github.com/jtrametta/ares/issues
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
