@@ -34,6 +34,7 @@ ares(x, ...)
   autotune.speed = c("balanced", "quality", "fast"),
   autotune.warmstart = TRUE,
   n.boot = 0L,
+  na.action = c("impute", "omit"),
   trace = 0L,
   nthreads = 0L,
   ...
@@ -156,6 +157,16 @@ the central fit and reports per-prediction standard deviation in
 each replicate fits with the central fit's chosen
 \verb{(degree, penalty, nk, fast.k)} so the cost is \code{(n.boot + 1) * fit_cost},
 not the autotune grid times \code{n.boot}.}
+
+\item{na.action}{Strategy for missing values in \code{x}. Either \code{"impute"}
+(default) or \code{"omit"}. \code{"impute"} replaces each column's \code{NA}s with
+that column's median (computed from the non-missing rows) and stores
+those medians on the fit so \code{predict()} can reapply them to future
+newdata. \code{"omit"} drops every row that has any \code{NA} in \code{x}. Both
+actions emit a warning summarising the affected rows / columns.
+Missing values in \code{y} are always a hard error -- there is no sensible
+way to impute the regression target. \code{NaN} and \verb{+/-Inf} in \code{x} are
+also rejected outright regardless of \code{na.action}.}
 
 \item{trace}{Trace level. 0 = silent (default), 1 = forward-pass progress.}
 

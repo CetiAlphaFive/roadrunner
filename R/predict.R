@@ -51,6 +51,30 @@ predict.ares <- function(object, newdata = NULL, se.fit = FALSE, ...) {
     stop("ares: newdata must be a matrix or data frame.")
   }
   storage.mode(xnew) <- "double"
+
+  # Reapply the fit's NA-imputation to newdata so predictions don't go NA
+  # downstream. The medians are the same ones used at fit time (stored in
+  # `$na.medians` by ares.default when `na.action = "impute"`). If the
+  # fit used `na.action = "omit"`, no medians were stored; in that case
+  # newdata NAs propagate to NA predictions and we just warn.
+  if (any(is.na(xnew))) {
+    nrow_aff <- sum(rowSums(is.na(xnew)) > 0L)
+    if (!is.null(object$na.medians)) {
+      for (j in seq_len(ncol(xnew))) {
+        na_j <- is.na(xnew[, j])
+        if (any(na_j)) xnew[na_j, j] <- object$na.medians[j]
+      }
+      warning("Missing values in newdata: median-imputed ", nrow_aff,
+              " row(s) using the column medians stored from training.",
+              call. = FALSE)
+    } else {
+      warning("Missing values in newdata but no medians stored",
+              " (training used na.action='omit'); the affected ",
+              nrow_aff, " row(s) will return NA predictions.",
+              call. = FALSE)
+    }
+  }
+
   bx_new <- mars_basis_cpp(xnew, object$dirs, object$cuts, object$selected.terms)
   yhat_central <- drop(bx_new %*% object$coefficients)
 

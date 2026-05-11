@@ -120,6 +120,15 @@
 #'   each replicate fits with the central fit's chosen
 #'   `(degree, penalty, nk, fast.k)` so the cost is `(n.boot + 1) * fit_cost`,
 #'   not the autotune grid times `n.boot`.
+#' @param na.action Strategy for missing values in `x`. Either `"impute"`
+#'   (default) or `"omit"`. `"impute"` replaces each column's `NA`s with
+#'   that column's median (computed from the non-missing rows) and stores
+#'   those medians on the fit so `predict()` can reapply them to future
+#'   newdata. `"omit"` drops every row that has any `NA` in `x`. Both
+#'   actions emit a warning summarising the affected rows / columns.
+#'   Missing values in `y` are always a hard error -- there is no sensible
+#'   way to impute the regression target. `NaN` and `+/-Inf` in `x` are
+#'   also rejected outright regardless of `na.action`.
 #' @param trace Trace level. 0 = silent (default), 1 = forward-pass progress.
 #' @param nthreads Number of threads. 0 (default) selects
 #'   `RcppParallel::defaultNumThreads()`. CRAN-distributed examples and the
@@ -149,7 +158,12 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
   formula <- x
   if (is.null(data)) data <- environment(formula)
   cl <- match.call()
-  mf <- stats::model.frame(formula, data = data)
+  # Use `na.action = na.pass` so model.frame doesn't blow up on NAs; the
+  # default method then applies its own (median-impute or omit) rule per
+  # its `na.action` argument. y-side NAs still trigger a hard stop in
+  # ares.default(), which is correct -- model.response should fail loud
+  # when the target is missing.
+  mf <- stats::model.frame(formula, data = data, na.action = stats::na.pass)
   yv <- stats::model.response(mf)
   if (is.null(yv)) stop("ares: response variable is missing from formula/data.")
   mm <- stats::model.matrix(formula, mf)
@@ -186,10 +200,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                          autotune.speed = c("balanced", "quality", "fast"),
                          autotune.warmstart = TRUE,
                          n.boot = 0L,
+                         na.action = c("impute", "omit"),
                          trace = 0L, nthreads = 0L, ...) {
   cl <- match.call()
   pmethod <- match.arg(pmethod)
   autotune_speed <- match.arg(autotune.speed)
+  na.action <- match.arg(na.action)
   # nfold > 0 implies CV pruning. Promote pmethod to "cv" so downstream
   # branches share the same code path; a user explicitly asking for
   # pmethod="cv" with nfold==0 gets a default of 5 folds.
@@ -213,14 +229,66 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
   }
   if (!is.matrix(x) || !is.numeric(x))
     stop("ares: x must be a numeric matrix or data frame.")
-  if (any(!is.finite(x)))
-    stop("ares: x contains NA, NaN, or non-finite values.")
   if (!is.numeric(y))
     stop("ares: y must be numeric.")
+  # Missing values in y are a hard error (no sensible imputation when y is
+  # the regression target). NaN / +-Inf are also rejected — they would
+  # propagate through OLS and break the fit.
   if (any(!is.finite(y)))
-    stop("ares: y contains NA, NaN, or non-finite values.")
+    stop("ares: y contains NA, NaN, or non-finite values; aborting fit.")
   if (length(y) != nrow(x))
     stop("ares: length(y) (", length(y), ") must equal nrow(x) (", nrow(x), ").")
+
+  # ---- Missing-X handling --------------------------------------------------
+  # NaN / +-Inf in x are still rejected outright (they break the basis
+  # evaluation arithmetic regardless of any imputation rule). NA values are
+  # handled by `na.action`:
+  #   - "impute" (default): fill each column's NAs with that column's
+  #     median (computed from the non-missing rows). Column medians are
+  #     stashed on the fit as `$na.medians` so predict.ares() can apply
+  #     the same imputation to future newdata.
+  #   - "omit": drop every row that has any NA in x.
+  # Either action emits a warning summarising what happened.
+  na_medians <- NULL
+  if (any(is.nan(x)) || any(is.infinite(x)))
+    stop("ares: x contains NaN or +/-Inf values; aborting fit.",
+         " (NA is handled via `na.action`; NaN / Inf are not.)")
+  na_x <- is.na(x)
+  if (any(na_x)) {
+    rows_aff <- sum(rowSums(na_x) > 0L)
+    cols_aff <- sum(colSums(na_x) > 0L)
+    if (na.action == "impute") {
+      na_medians <- vapply(seq_len(ncol(x)),
+                           \(j) stats::median(x[, j], na.rm = TRUE),
+                           numeric(1L))
+      names(na_medians) <- colnames(x)
+      if (any(!is.finite(na_medians)))
+        stop("ares: na.action='impute' but at least one x column is",
+             " entirely NA; cannot compute median. Drop the column or",
+             " pass na.action='omit'.")
+      for (j in seq_len(ncol(x))) {
+        na_j <- na_x[, j]
+        if (any(na_j)) x[na_j, j] <- na_medians[j]
+      }
+      warning("Missing values in X: median-imputed ",
+              sum(na_x), " NA value(s) across ", rows_aff,
+              " row(s) and ", cols_aff, " column(s). Column medians are",
+              " stored on the fit and reapplied at predict() time.",
+              " Pass `na.action='omit'` to drop incomplete rows instead.",
+              call. = FALSE)
+    } else { # "omit"
+      keep <- rowSums(na_x) == 0L
+      dropped <- sum(!keep)
+      warning("Missing values in X: dropped ", dropped,
+              " incomplete row(s) (across ", cols_aff,
+              " column(s) with NA). Pass `na.action='impute'` to",
+              " median-impute instead.", call. = FALSE)
+      x <- x[keep, , drop = FALSE]
+      y <- y[keep]
+      if (length(y) < 3L)
+        stop("ares: na.action='omit' left fewer than 3 rows; aborting.")
+    }
+  }
   if (!is.numeric(degree) || length(degree) != 1L || degree < 1)
     stop("ares: degree must be a single integer >= 1.")
   degree <- as.integer(degree)
@@ -393,6 +461,12 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       n.boot = n_boot
     )
   }
+
+  # Persist the NA-handling metadata so predict.ares() can reapply the
+  # same imputation to newdata. `na.medians` is NULL when the training
+  # data had no NAs or `na.action = "omit"` was used.
+  out$na.action <- na.action
+  out$na.medians <- na_medians
 
   class(out) <- c("ares")
   out
