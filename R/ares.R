@@ -334,10 +334,22 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
            ") must equal length(y) (", length(y), ").")
     if (any(!is.finite(weights)))
       stop("ares: weights contain NA / NaN / Inf; all weights must be finite.")
-    if (any(weights < 0))
-      stop("ares: weights must be non-negative.")
-    if (mean(weights) <= 0)
-      stop("ares: weights are all zero (or non-positive sum); cannot fit.")
+    # BUG-005 (v0.0.0.9029): require strictly positive weights. Zero
+    # weights used to be permitted, but the C++ engines GCV denominator
+    # (and varmod df, and auto_minspan / auto_endspan) all use the raw
+    # row count n -- under sum(w)=n normalisation, n_effective should be
+    # sum(w_i > 0). With zero-weight rows present, n > n_effective and
+    # the GCV penalty per knot is implicitly under-estimated, causing
+    # over-fitting (probe 12 in the audit: 50 zero-weight rows kept 10
+    # terms vs 7 in the dropped-rows fit). Rejecting up front is
+    # lossless: the user can drop those rows from x/y themselves with
+    # identical semantics, and the determinism invariant is preserved
+    # because no C++ engine code changes.
+    if (any(weights <= 0))
+      stop("ares: weights must be strictly positive. To omit a row, drop",
+           " it from x/y; weights = 0 is not a substitute (it would bias",
+           " GCV and the variance-model df under the engines",
+           " sum(w) = n normalisation).")
   }
   # nfold > 0 implies CV pruning. Promote pmethod to "cv" so downstream
   # branches share the same code path; a user explicitly asking for

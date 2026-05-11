@@ -55,10 +55,18 @@ test_that("weights validation: length, finiteness, negativity", {
   expect_error(ares(d$x, d$y, weights = bad_na, nthreads = 2),
                "finite")
   bad_neg <- d$w; bad_neg[1] <- -1
+  # BUG-005 (v0.0.0.9029): the "non-negative" check was tightened to
+  # "strictly positive" -- negative weights still error, the message just
+  # changed.
   expect_error(ares(d$x, d$y, weights = bad_neg, nthreads = 2),
-               "non-negative")
+               "strictly positive")
   expect_error(ares(d$x, d$y, weights = rep(0, length(d$y)), nthreads = 2),
-               "zero")
+               "strictly positive")
+  # BUG-005: a single zero weight is also rejected (the old behaviour
+  # silently biased GCV downward).
+  one_zero <- d$w; one_zero[1] <- 0
+  expect_error(ares(d$x, d$y, weights = one_zero, nthreads = 2),
+               "strictly positive")
 })
 
 test_that("weighted fit produces sensible predictions on a clean DGP", {
