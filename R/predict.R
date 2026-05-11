@@ -18,6 +18,14 @@
 
 #' Predictions from an `ares` fit
 #'
+#' @description
+#' Predicts the response (or linear predictor) for new data from a fitted
+#' ares MARS model. For bagged fits, returns the mean across the central
+#' fit and the bootstrap replicates; with `se.fit = TRUE`, the per-row bag
+#' standard deviation is attached as an `"sd"` attribute. For gaussian
+#' fits that stored a variance model (`varmod = "const"` or `"lm"`),
+#' `interval = "pint"` returns prediction intervals.
+#'
 #' @param object An object of class `"ares"`.
 #' @param newdata A numeric matrix or data frame of new predictors. If `NULL`
 #'   (default), returns `object$fitted.values`.

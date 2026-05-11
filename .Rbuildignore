@@ -17,3 +17,5 @@
 ^roadrunner_.*\.tar\.gz$
 ^\.positai$
 ^\.claude$
+^doc$
+^Meta$

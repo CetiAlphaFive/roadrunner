@@ -1,6 +1,6 @@
 ---
 title: "ares: Fast MARS in roadrunner"
-author: "Jack Trametta"
+author: "Jack T. Rametta"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
 output: rmarkdown::html_vignette
 vignette: >
@@ -22,14 +22,18 @@ knitr::opts_chunk$set(
 
 `ares()` (shipped in the `roadrunner` package) fits Multivariate Adaptive
 Regression Splines (MARS) models — a flexible nonparametric regression
-technique introduced by Friedman (1991). The MARS forward pass adds basis
+technique introduced by Friedman (1991). The forward pass adds basis
 functions of the form `max(0, ±(x - knot))` (called *hinges*) one pair at a
 time, each scaled by a parent term to allow interactions. A backward pass
-then prunes terms by minimizing the GCV criterion.
+prunes terms by minimising the GCV criterion (or a K-fold CV criterion when
+`pmethod = "cv"` / `nfold > 0`).
 
 `ares()` mirrors the API of [`earth`](https://cran.r-project.org/package=earth)
-on the gaussian-only core and is designed for numerical parity with `earth`
-while taking advantage of multi-core CPUs via `RcppParallel`.
+on the gaussian-only core, takes advantage of multi-core CPUs via
+`RcppParallel`, and adds non-parity features: built-in hyperparameter
+autotune, K-fold CV pruning, row-bootstrap bagging, weights, binomial /
+poisson / gamma GLM families on the selected basis, and residual-variance
+prediction intervals.
 
 ## A small example: `mtcars`
 
@@ -39,22 +43,12 @@ fit <- ares(mpg ~ ., data = mtcars, nthreads = 2)
 print(fit)
 ```
 
-The fit returns a list with the standard MARS components.
-
-```{r}
-str(fit, max.level = 1)
-```
-
-`predict()` produces fitted values on training data or new data.
-
 ```{r}
 head(predict(fit))
 head(predict(fit, mtcars[1:5, ]))
 ```
 
 ## Comparison with `earth`
-
-When the `earth` package is available, we can directly compare fits.
 
 ```{r}
 if (requireNamespace("earth", quietly = TRUE)) {
@@ -74,14 +68,13 @@ if (requireNamespace("earth", quietly = TRUE)) {
 }
 ```
 
-The relative RSS difference is typically a fraction of a percent at n >= 1000 —
-the two implementations agree numerically even when they pick slightly different
-knot sets.
+The two implementations agree numerically to within a fraction of a
+percent on RSS even when they pick slightly different knot sets.
 
 ## Threading determinism
 
-`ares` is parallel-deterministic by construction: changing `nthreads` does not
-change the output.
+`ares` is parallel-deterministic by construction: changing `nthreads`
+does not change the output bit-for-bit.
 
 ```{r}
 set.seed(42)
@@ -90,28 +83,72 @@ x <- matrix(runif(n * p), n, p)
 y <- 5 * pmax(0, x[, 1] - 0.5) * pmax(0, x[, 2] - 0.3) + rnorm(n)
 f1 <- ares(x, y, degree = 2, nthreads = 1)
 f2 <- ares(x, y, degree = 2, nthreads = 2)
-cat("identical selected.terms:", isTRUE(all.equal(f1$selected.terms, f2$selected.terms)), "\n")
-cat("max coef diff:           ", max(abs(f1$coefficients - f2$coefficients)), "\n")
+identical(f1$selected.terms, f2$selected.terms)
+max(abs(f1$coefficients - f2$coefficients))
 ```
 
-## Performance notes
+## Hyperparameter autotune
 
-`ares` v0.0.0.9000 is currently **slower in absolute wall-clock than `earth`** —
-this is a documented limitation and the headline target for v0.1.
-Internally, `ares` uses an O(n) per-knot scoring loop where `earth` uses
-Friedman's O(1)-per-knot Givens fast-LS update. The Givens implementation is on
-the roadmap.
+`autotune = TRUE` runs an inner K-fold CV grid search over
+`(degree, penalty, nk, fast.k)` and refits the winner on the full data.
+A warm-start phase fits a 20 % subsample first and short-circuits if the
+best-per-degree gap is decisive.
 
-What `ares` v0.0.0.9000 already gets right:
+```{r}
+set.seed(7)
+fit_at <- ares(mpg ~ ., data = mtcars, autotune = TRUE,
+               autotune.speed = "fast", seed.cv = 1L, nthreads = 2)
+fit_at$autotune$degree
+fit_at$autotune$penalty
+fit_at$autotune$nk
+```
 
-- Numerical correctness — fits track `earth` to ~1% RSS across the smoke grid.
-- Threading determinism — bit-identical fits regardless of thread count.
-- Parallel scaling — 2-thread is consistently ~1.5–1.8× faster than 1-thread
-  (the `RcppParallel` worker is doing real work; the constant factor lives
-  inside the inner loop, not in the threading layer).
+## Classification via `family = "binomial"`
 
-See the `inst/sims/` directory for the Monte Carlo benchmark scripts that
-generated the headline numbers in `README.md`.
+Forward + backward run as gaussian; the selected basis is then refit with
+`stats::glm.fit(family = binomial())`. `predict()` returns probabilities
+by default, or the linear predictor via `type = "link"`.
+
+```{r}
+set.seed(1)
+n <- 400
+x <- matrix(rnorm(n * 4), n, 4)
+p <- plogis(0.5 * x[, 1] + 1.2 * x[, 2] * (x[, 2] > 0) - 0.4 * x[, 3])
+y <- rbinom(n, 1, p)
+fb <- ares(x, y, family = "binomial", degree = 2, nthreads = 2)
+range(predict(fb))
+```
+
+## Prediction intervals
+
+`varmod = "const"` or `varmod = "lm"` (gaussian only) stores a residual
+variance model at fit time. `predict(interval = "pint")` then returns a
+matrix with `c("fit", "lwr", "upr")` columns.
+
+```{r}
+set.seed(0)
+n <- 500
+x <- matrix(runif(n * 3), n, 3)
+y <- 3 * x[, 1] + 2 * sin(2 * pi * x[, 2]) + rnorm(n, sd = 0.5)
+fp <- ares(x, y, degree = 2, varmod = "const", nthreads = 2)
+head(predict(fp, x[1:3, ], interval = "pint"))
+```
+
+## Performance
+
+Across the `inst/sims` mlbench-style benchmark grid at 4 threads (median
+across the 10-cell v0.23 grid):
+
+| metric                       | ares (default) | ares (autotune) |
+|------------------------------|----------------|------------------|
+| wall-clock vs earth (median) | **~0.93×**     | sub-second when warmstart fires; 5–15 s on highdim p=20 |
+| cells faster than earth      | **11/18**      | (autotune wins MSE on high-p cells) |
+| holdout MSE vs ranger        | 3–4× better on regression cells | same |
+
+Parallel scaling at n = 1500 deg = 2 is ~1.75–1.85× (2t / 1t).
+Determinism: `nthreads = 1` produces byte-identical fits to
+`nthreads = N` at fixed seed. See `inst/sims/results/v0.23-mlbench.csv`
+and `inst/sims/results/v0.24-binomial.csv` for the full benchmark.
 
 ## References
 

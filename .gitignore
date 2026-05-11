@@ -2,18 +2,18 @@
 .Rhistory
 .RData
 .Ruserdata
-ares.Rcheck/
+.positai
 docs/
-ares_*.tar.gz
+inst/doc/
 inst/sims/results/sim_raw.csv
 inst/sims/results/sim_summary.csv
-inst/doc
-.positai
 roadrunner.Rcheck/
 roadrunner_*.tar.gz
+/doc/
+/Meta/
 
 # Internal session / handoff notes (not for public repo)
-CLAUDE.md
 ARCHITECTURE.md
 brain-contributions*.md
+CLAUDE.md
 cran-comments.md

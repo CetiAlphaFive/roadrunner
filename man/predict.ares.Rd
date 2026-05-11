@@ -49,7 +49,12 @@ A numeric vector of length \code{nrow(newdata)}, or a matrix with
 \code{attr(., "sd")} with the per-row sample SD across replicates.
 }
 \description{
-Predictions from an \code{ares} fit
+Predicts the response (or linear predictor) for new data from a fitted
+ares MARS model. For bagged fits, returns the mean across the central
+fit and the bootstrap replicates; with \code{se.fit = TRUE}, the per-row bag
+standard deviation is attached as an \code{"sd"} attribute. For gaussian
+fits that stored a variance model (\code{varmod = "const"} or \code{"lm"}),
+\code{interval = "pint"} returns prediction intervals.
 }
 \examples{
 fit <- ares(as.matrix(mtcars[, -1]), mtcars$mpg, nthreads = 2)

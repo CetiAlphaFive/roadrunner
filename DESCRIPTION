@@ -2,7 +2,9 @@ Package: roadrunner
 Title: Fast, Low-Dependency Machine Learning Algorithms
 Version: 0.0.0.9028
 Authors@R:
-    person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com", role = c("aut", "cre"))
+    person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com",
+           role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-9841-146X"))
 Description: A collection of fast, low-dependency implementations of
     classical machine learning algorithms. The first algorithm is
     'ares()', a Multivariate Adaptive Regression Splines (MARS) fitter
@@ -14,9 +16,10 @@ License: MIT + file LICENSE
 URL: https://cetialphafive.github.io/roadrunner/, https://github.com/CetiAlphaFive/roadrunner
 BugReports: https://github.com/CetiAlphaFive/roadrunner/issues
 Encoding: UTF-8
-LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
+Depends:
+    R (>= 4.1.0)
 LinkingTo: 
     Rcpp,
     RcppParallel
