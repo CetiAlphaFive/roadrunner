@@ -33,4 +33,4 @@ Fit MARS models with optional CV pruning and hyperparameter autotune.
 - [`plot(`*`<ares>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.ares.md)
   :
 
-  Plot method for `ares` fits
+  Diagnostic plots for an `ares` fit

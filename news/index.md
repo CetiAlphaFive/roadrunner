@@ -1,5 +1,20 @@
 # Changelog
 
+## roadrunner 0.0.0.9030
+
+### New features
+
+- `plot(fit)` now produces a 4-panel diagnostic display in a 2x2 grid,
+  modelled on
+  [`stats::plot.lm()`](https://rdrr.io/r/stats/plot.lm.html): residuals
+  vs fitted, normal Q-Q of standardized residuals, scale-location, and
+  residuals vs leverage with Cook’s-distance contours. Panels 4 (Cook’s
+  distance) and 6 (Cook’s vs leverage) are also available via `which`.
+  For binomial / poisson / gamma fits, the residual-vs-fitted panel uses
+  deviance residuals and the hat matrix uses canonical-link IRLS working
+  weights. The training observation weights are now stored on the fitted
+  object (`$weights`).
+
 ## roadrunner 0.0.0.9029
 
 ### Bug fixes
