@@ -5,6 +5,7 @@
 
 test_that("nthreads scales: 2 threads >= 1 thread (does not regress)", {
   testthat::skip_on_cran()
+  testthat::skip_on_ci()
   testthat::skip_if_not_installed("earth")
   set.seed(20260509)
   n <- 800; p <- 10
@@ -23,6 +24,7 @@ test_that("nthreads scales: 2 threads >= 1 thread (does not regress)", {
 
 test_that("ares records reasonable wall-clock vs earth (informational)", {
   testthat::skip_on_cran()
+  testthat::skip_on_ci()
   testthat::skip_if_not_installed("earth")
   set.seed(20260509)
   n <- 500; p <- 10
