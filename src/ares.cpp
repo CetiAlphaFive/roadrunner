@@ -743,7 +743,8 @@ List mars_fit_cpp(const NumericMatrix& x_in,
                   int pmethod, int trace, int nthreads,
                   int force_size, int return_path,
                   const Rcpp::Nullable<Rcpp::NumericVector>& weights_in =
-                    R_NilValue) {
+                    R_NilValue,
+                  int compute_forward_qr = 0) {
   using namespace ares;
   int n = x_in.nrow();
   int p = x_in.ncol();
@@ -1192,6 +1193,30 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     if (rel_imp < thresh) break;
   }
 
+  // ---- Optional: pre-compute Householder R / Qty on the full forward basis
+  // ----
+  // Used by R-side .ares_autotune to skip the redundant initial QR setup
+  // inside each mars_backward_only_cpp call. Householder QR is deterministic,
+  // so the R / Qty produced here is byte-identical to what
+  // mars_backward_only_cpp would compute on the same B[:, 0:M] and Y. Adds
+  // ~ O(n * M^2) FLOPs once here, saved many times downstream.
+  NumericMatrix forward_R_out;
+  NumericVector forward_Qty_out;
+  if (compute_forward_qr != 0 && M >= 1) {
+    std::vector<double> Bw_fwd(B.begin(), B.begin() + size_t(M) * n);
+    std::vector<double> yw_fwd(Y.begin(), Y.end());
+    std::vector<double> R_fwd(size_t(M) * M, 0.0);
+    std::vector<double> Qty_fwd(M, 0.0);
+    double dummy_rss;
+    ares::householder_qr_R(Bw_fwd.data(), n, M, yw_fwd.data(),
+                           R_fwd.data(), M, Qty_fwd.data(), dummy_rss);
+    forward_R_out = NumericMatrix(M, M);
+    for (int j = 0; j < M; ++j)
+      for (int i = 0; i < M; ++i)
+        forward_R_out(i, j) = R_fwd[i + size_t(j) * M];
+    forward_Qty_out = NumericVector(Qty_fwd.begin(), Qty_fwd.end());
+  }
+
   // --- Backward pass (pmethod == 0) ---
   std::vector<int> selected_idx;
   std::vector<double> rss_per_subset(M, NA_REAL);
@@ -1457,7 +1482,9 @@ List mars_fit_cpp(const NumericMatrix& x_in,
     _["minspan"]        = ms_reported,
     _["endspan"]        = es,
     _["degree"]         = degree,
-    _["nthreads"]       = nthreads
+    _["nthreads"]       = nthreads,
+    _["forward_R"]      = forward_R_out,
+    _["forward_Qty"]    = forward_Qty_out
   );
 }
 
@@ -1522,7 +1549,11 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
                             int force_size,
                             int return_path,
                             const Rcpp::Nullable<Rcpp::NumericVector>&
-                              weights_in = R_NilValue) {
+                              weights_in = R_NilValue,
+                            const Rcpp::Nullable<Rcpp::NumericMatrix>&
+                              R_in = R_NilValue,
+                            const Rcpp::Nullable<Rcpp::NumericVector>&
+                              Qty_in = R_NilValue) {
   using namespace ares;
   int n = x_in.nrow();
   int p = x_in.ncol();
@@ -1609,7 +1640,30 @@ List mars_backward_only_cpp(const NumericMatrix& x_in,
     std::vector<double> R_b(size_t(M_alloc) * M_alloc, 0.0);
     std::vector<double> Qty_b(M_alloc, 0.0);
     double cur_rss;
-    {
+    // Cached QR fast path (autotune): when the R-side caller passes the
+    // Householder R / Qty computed in the shared-forward mars_fit_cpp call,
+    // skip the redundant initial Householder pass here. Householder QR is
+    // deterministic on a given (B, Y), so the cached R / Qty are byte-
+    // identical to what we'd recompute. cur_rss = ||Y||^2 - ||Qty||^2
+    // (matches the residue accumulator inside householder_qr_R).
+    bool used_cached_qr = false;
+    if (R_in.isNotNull() && Qty_in.isNotNull()) {
+      NumericMatrix Rmat(R_in);
+      NumericVector Qvec(Qty_in);
+      if (Rmat.nrow() == M && Rmat.ncol() == M && Qvec.size() == M) {
+        for (int j = 0; j < M; ++j)
+          for (int i = 0; i < M; ++i)
+            R_b[i + size_t(j) * M_alloc] = Rmat(i, j);
+        for (int i = 0; i < M; ++i) Qty_b[i] = Qvec[i];
+        double sum_Y2 = 0.0;
+        for (int i = 0; i < n; ++i) sum_Y2 += Y[i] * Y[i];
+        double sum_Qty2 = 0.0;
+        for (int i = 0; i < M; ++i) sum_Qty2 += Qty_b[i] * Qty_b[i];
+        cur_rss = sum_Y2 - sum_Qty2;
+        used_cached_qr = true;
+      }
+    }
+    if (!used_cached_qr) {
       std::vector<double> Bw(B.begin(), B.begin() + size_t(M) * n);
       std::vector<double> yw(Y.begin(), Y.end());
       ares::householder_qr_R(Bw.data(), n, M, yw.data(),

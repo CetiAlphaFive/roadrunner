@@ -1,6 +1,6 @@
 Package: roadrunner
 Title: Fast, Low-Dependency Machine Learning Algorithms
-Version: 0.0.0.9030
+Version: 0.0.0.9031
 Authors@R:
     person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com",
            role = c("aut", "cre"),

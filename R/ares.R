@@ -1753,7 +1753,8 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
           } else as.integer(nprune),
           0L,           # pmethod=backward (need a forward pass)
           trace, nthreads, 0L, 0L,
-          weights_in = w_tr
+          weights_in = w_tr,
+          compute_forward_qr = 1L
         ),
         error = function(e) NULL
       )
@@ -1764,6 +1765,11 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
       }
       dirs_full <- ff$dirs
       cuts_full <- ff$cuts
+      # Cached Householder R / Qty from the shared forward pass. Lets every
+      # per-cell mars_backward_only_cpp call skip its own initial Householder
+      # setup (~ O(n*M^2) FLOPs). Byte-identical to the standalone path.
+      R_fwd_cached <- ff$forward_R
+      Qty_fwd_cached <- ff$forward_Qty
 
       # Per-cell backward replay with its own penalty. Same fold weights
       # are passed through so the IRLS/WLS objective stays consistent.
@@ -1778,7 +1784,9 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
               as.integer(ce$nk)
             } else as.integer(nprune),
             nthreads, 0L, 0L,
-            weights_in = w_tr
+            weights_in = w_tr,
+            R_in = R_fwd_cached,
+            Qty_in = Qty_fwd_cached
           ),
           error = function(e) NULL
         )

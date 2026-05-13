@@ -1,3 +1,22 @@
+# roadrunner 0.0.0.9031
+
+## Performance
+
+- Autotune now reuses the Householder R / Qty computed during the
+  shared forward pass instead of recomputing them inside each
+  `mars_backward_only_cpp` call. Saves the O(n*M^2) initial Householder
+  pass at every per-cell backward replay; the cached R / Qty are
+  byte-identical to the recomputed values, so selected basis,
+  coefficients, and GCV are unchanged. Measured speedup on the v0.26
+  speed baseline (`inst/sims/v0.26-speed-baseline.R`, 24-cell grid x
+  5 reps, nthreads=4): geometric-mean 1.23x across the grid; on the
+  autotune cells specifically 1.05-1.15x (gaussian highdim p=20:
+  1.09x; gamma n=1000 p=10: 1.11x; binomial n=1500 p=20: 1.15x).
+  Determinism invariant (`nthreads=1 == nthreads=N`) preserved.
+  Internal C++ entries gain optional `compute_forward_qr` (mars_fit_cpp)
+  and `R_in` / `Qty_in` (mars_backward_only_cpp) parameters; the public
+  R API is unchanged.
+
 # roadrunner 0.0.0.9030
 
 ## New features

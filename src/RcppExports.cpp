@@ -11,8 +11,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // mars_fit_cpp
-List mars_fit_cpp(const NumericMatrix& x_in, const NumericVector& y_in, int degree, int nk, double penalty, double thresh, int minspan_in, int endspan_in, int adjust_endspan, int auto_linpreds, int fast_k, double fast_beta, int nprune, int pmethod, int trace, int nthreads, int force_size, int return_path, const Rcpp::Nullable<Rcpp::NumericVector>& weights_in);
-RcppExport SEXP _roadrunner_mars_fit_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP degreeSEXP, SEXP nkSEXP, SEXP penaltySEXP, SEXP threshSEXP, SEXP minspan_inSEXP, SEXP endspan_inSEXP, SEXP adjust_endspanSEXP, SEXP auto_linpredsSEXP, SEXP fast_kSEXP, SEXP fast_betaSEXP, SEXP npruneSEXP, SEXP pmethodSEXP, SEXP traceSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP, SEXP weights_inSEXP) {
+List mars_fit_cpp(const NumericMatrix& x_in, const NumericVector& y_in, int degree, int nk, double penalty, double thresh, int minspan_in, int endspan_in, int adjust_endspan, int auto_linpreds, int fast_k, double fast_beta, int nprune, int pmethod, int trace, int nthreads, int force_size, int return_path, const Rcpp::Nullable<Rcpp::NumericVector>& weights_in, int compute_forward_qr);
+RcppExport SEXP _roadrunner_mars_fit_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP degreeSEXP, SEXP nkSEXP, SEXP penaltySEXP, SEXP threshSEXP, SEXP minspan_inSEXP, SEXP endspan_inSEXP, SEXP adjust_endspanSEXP, SEXP auto_linpredsSEXP, SEXP fast_kSEXP, SEXP fast_betaSEXP, SEXP npruneSEXP, SEXP pmethodSEXP, SEXP traceSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP, SEXP weights_inSEXP, SEXP compute_forward_qrSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -35,7 +35,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type force_size(force_sizeSEXP);
     Rcpp::traits::input_parameter< int >::type return_path(return_pathSEXP);
     Rcpp::traits::input_parameter< const Rcpp::Nullable<Rcpp::NumericVector>& >::type weights_in(weights_inSEXP);
-    rcpp_result_gen = Rcpp::wrap(mars_fit_cpp(x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path, weights_in));
+    Rcpp::traits::input_parameter< int >::type compute_forward_qr(compute_forward_qrSEXP);
+    rcpp_result_gen = Rcpp::wrap(mars_fit_cpp(x_in, y_in, degree, nk, penalty, thresh, minspan_in, endspan_in, adjust_endspan, auto_linpreds, fast_k, fast_beta, nprune, pmethod, trace, nthreads, force_size, return_path, weights_in, compute_forward_qr));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -54,8 +55,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // mars_backward_only_cpp
-List mars_backward_only_cpp(const NumericMatrix& x_in, const NumericVector& y_in, const IntegerMatrix& dirs_in, const NumericMatrix& cuts_in, double penalty, int nprune, int nthreads, int force_size, int return_path, const Rcpp::Nullable<Rcpp::NumericVector>& weights_in);
-RcppExport SEXP _roadrunner_mars_backward_only_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP dirs_inSEXP, SEXP cuts_inSEXP, SEXP penaltySEXP, SEXP npruneSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP, SEXP weights_inSEXP) {
+List mars_backward_only_cpp(const NumericMatrix& x_in, const NumericVector& y_in, const IntegerMatrix& dirs_in, const NumericMatrix& cuts_in, double penalty, int nprune, int nthreads, int force_size, int return_path, const Rcpp::Nullable<Rcpp::NumericVector>& weights_in, const Rcpp::Nullable<Rcpp::NumericMatrix>& R_in, const Rcpp::Nullable<Rcpp::NumericVector>& Qty_in);
+RcppExport SEXP _roadrunner_mars_backward_only_cpp(SEXP x_inSEXP, SEXP y_inSEXP, SEXP dirs_inSEXP, SEXP cuts_inSEXP, SEXP penaltySEXP, SEXP npruneSEXP, SEXP nthreadsSEXP, SEXP force_sizeSEXP, SEXP return_pathSEXP, SEXP weights_inSEXP, SEXP R_inSEXP, SEXP Qty_inSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -69,15 +70,17 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type force_size(force_sizeSEXP);
     Rcpp::traits::input_parameter< int >::type return_path(return_pathSEXP);
     Rcpp::traits::input_parameter< const Rcpp::Nullable<Rcpp::NumericVector>& >::type weights_in(weights_inSEXP);
-    rcpp_result_gen = Rcpp::wrap(mars_backward_only_cpp(x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in));
+    Rcpp::traits::input_parameter< const Rcpp::Nullable<Rcpp::NumericMatrix>& >::type R_in(R_inSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::Nullable<Rcpp::NumericVector>& >::type Qty_in(Qty_inSEXP);
+    rcpp_result_gen = Rcpp::wrap(mars_backward_only_cpp(x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in, R_in, Qty_in));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 19},
+    {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
     {"_roadrunner_mars_basis_cpp", (DL_FUNC) &_roadrunner_mars_basis_cpp, 4},
-    {"_roadrunner_mars_backward_only_cpp", (DL_FUNC) &_roadrunner_mars_backward_only_cpp, 10},
+    {"_roadrunner_mars_backward_only_cpp", (DL_FUNC) &_roadrunner_mars_backward_only_cpp, 12},
     {NULL, NULL, 0}
 };
 
