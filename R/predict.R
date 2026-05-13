@@ -176,6 +176,53 @@ predict.ares <- function(object, newdata = NULL,
                " -- likely an out-of-vocabulary factor level.")
         xnew <- xnew[, fi$expanded_names, drop = FALSE]
       }
+    } else if (!is.null(object$terms)) {
+      # BUG-012 (v0.0.0.9032): formula-path fit with derived terms (I(x^2),
+      # poly(x, 2), log(x + 10), scale(x), splines::bs(x), ...) needs the
+      # original terms object to re-evaluate the design at predict time.
+      # The previous fallback (line up newdata columns to object$namesx)
+      # only worked when namesx referenced plain data-frame columns; it
+      # errored on any derived term whose name didn't match a column of
+      # newdata. We now drop the response side of the terms and rebuild
+      # the design via model.matrix(..., xlev = object$xlevels) so factor
+      # and character handling matches the training fit.
+      tt <- stats::delete.response(object$terms)
+      # Detect NA in factor columns referenced by the terms object before
+      # model.matrix's default na.omit silently drops rows.
+      term_vars <- all.vars(tt)
+      fna_report <- character(0)
+      for (jn in intersect(term_vars, colnames(newdata))) {
+        col <- newdata[[jn]]
+        if ((is.character(col) || is.factor(col)) && anyNA(col)) {
+          bad_rows <- which(is.na(col))
+          fna_report <- c(fna_report,
+                          sprintf("  column %s: %d NA row(s) (e.g. row %d)",
+                                  jn, length(bad_rows), bad_rows[1]))
+        }
+      }
+      if (length(fna_report)) {
+        stop("ares: NA value(s) in factor/character newdata column(s) ",
+             "referenced by the model formula; cannot build the design ",
+             "matrix. Drop the offending row(s) or impute the ",
+             "categorical level(s) before predicting.\n",
+             paste(fna_report, collapse = "\n"), call. = FALSE)
+      }
+      xlev <- if (!is.null(object$xlevels)) object$xlevels else NULL
+      mm <- stats::model.matrix(tt, data = newdata, xlev = xlev)
+      if ("(Intercept)" %in% colnames(mm))
+        mm <- mm[, colnames(mm) != "(Intercept)", drop = FALSE]
+      # If the formula references columns we don't have, model.matrix
+      # already errors; if it produced an unexpected column set, surface
+      # a clean message and (defensively) re-order to the training set.
+      if (!identical(colnames(mm), object$namesx)) {
+        missing_cols <- setdiff(object$namesx, colnames(mm))
+        if (length(missing_cols))
+          stop("ares: newdata model-matrix expansion is missing columns: ",
+               paste(missing_cols, collapse = ", "),
+               " -- check that newdata has the same predictors used at fit time.")
+        mm <- mm[, object$namesx, drop = FALSE]
+      }
+      xnew <- mm
     } else {
       if (!all(object$namesx %in% colnames(newdata)))
         stop("ares: newdata is missing columns: ",

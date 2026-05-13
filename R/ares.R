@@ -203,7 +203,15 @@ ares.formula <- function(x, data = NULL, ..., y = NULL) {
     out <- ares.default(x = mm, y = as.numeric(yv), ...)
   }
   out$call <- cl
-  out$terms <- stats::terms(formula, data = data)
+  tt <- stats::terms(formula, data = data)
+  out$terms <- tt
+  # BUG-012 (v0.0.0.9032): stash xlevels alongside the terms object so
+  # predict.ares can rebuild the design matrix via
+  # model.matrix(delete.response(terms), newdata, xlev = xlevels) and
+  # correctly re-evaluate derived terms (I(.), poly(.), scale(.), ...)
+  # and factor expansions. Without xlevels, predict() can't coerce a
+  # newdata factor column back to the training level set.
+  out$xlevels <- stats::.getXlevels(tt, mf)
   out
 }
 

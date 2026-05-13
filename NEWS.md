@@ -2,6 +2,20 @@
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
 
+- **BUG-012 (correctness, medium)**: formula-path fits with derived
+  terms (`I(x^2)`, `poly(x, 2)`, `log(x + 10)`, `scale(x)`,
+  `splines::bs(x)`, ...) used to fit successfully but `predict()` would
+  fail with "newdata is missing columns: I(x^2)" because `predict.ares`
+  looked for the *expanded* column name as a literal column of newdata,
+  not re-evaluating the original `terms` object on newdata. Fix: when
+  `object$terms` is non-null (formula path), use
+  `model.matrix(delete.response(terms), newdata, xlev = object$xlevels)`
+  to rebuild the design with derived terms re-evaluated. Falls back to
+  the prior column-lookup path when no `terms` object is stored (matrix
+  interface). `ares.formula` now also stashes `xlevels` on the fit.
+  Regression test:
+  `tests/testthat/test-bug-012-predict-derived-terms.R`.
+
 - **BUG-010 (robustness, medium)**: sister to BUG-004. `NA` values in
   factor / character newdata columns used to fall through the OOV
   detector (which only handled non-NA character values), then
