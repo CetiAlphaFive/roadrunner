@@ -2,6 +2,19 @@
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
 
+- **BUG-011 (correctness, medium)**: `ares.formula()` silently dropped
+  `subset = ...` (it fell into `...` and went nowhere) and silently
+  absorbed `offset(...)` terms as ordinary predictors. Both produced
+  wrong fits with zero indication. Fix: (a) add explicit `subset` arg
+  to `ares.formula` and pass it through to `model.frame` via the
+  lm()-style `match.call()` construction (so NSE inside model.frame
+  doesn't trip over the `subset` symbol resolving to the base R
+  function); (b) detect `offset()` terms via `attr(terms, "offset")`
+  before `model.frame` runs and `stop()` with an actionable message.
+  Offset pass-through to the post-hoc GLM refit was punted to a later
+  release (touches predict + bag + autotune compose paths). Regression
+  test: `tests/testthat/test-bug-011-formula-subset-offset.R`.
+
 - **BUG-008 (correctness, high)**: `predict()` used to return finite WRONG
   values for newdata rows containing `NA` when training used
   `na.action = "omit"`. The pre-existing warning promised "the affected

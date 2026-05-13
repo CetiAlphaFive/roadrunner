@@ -38,6 +38,10 @@
 #' @param y A numeric response vector with length `nrow(x)`. For
 #'   `family = "binomial"`, a 0/1 numeric, logical, or 2-level factor.
 #' @param data A data frame. Used only by the formula method.
+#' @param subset Optional row-subsetting vector for the formula method
+#'   (integer indices or logical), passed through to
+#'   [stats::model.frame()]. Ignored by the default (matrix/data-frame)
+#'   method.
 #' @param degree Maximum interaction degree. Default `1` (additive).
 #'   Use `2` or `3` for two- or three-way interactions.
 #' @param nk Maximum number of basis terms in the forward pass. Default
@@ -175,16 +179,43 @@ ares <- function(x, ...) UseMethod("ares")
 
 #' @rdname ares
 #' @export
-ares.formula <- function(x, data = NULL, ..., y = NULL) {
+ares.formula <- function(x, data = NULL, subset = NULL, ..., y = NULL) {
   formula <- x
   if (is.null(data)) data <- environment(formula)
   cl <- match.call()
+  # BUG-011 (v0.0.0.9032): reject offset() terms in the formula. They were
+  # previously absorbed silently by model.matrix and treated as ordinary
+  # predictors, so the GLM refit for poisson/gamma never honoured the
+  # offset -- rate estimates were biased with zero indication. Detect via
+  # the parsed terms object before model.frame runs.
+  pre_tt <- stats::terms(formula, data = data)
+  if (length(attr(pre_tt, "offset"))) {
+    stop("ares: offset() terms are not supported in the formula. ",
+         "For non-gaussian families, pre-bake the offset into y on the ",
+         "appropriate scale (e.g. y / exposure for a rate, then pass the ",
+         "log-exposure as a regular predictor only if you understand the ",
+         "interaction with the log link). For gaussian, subtract the ",
+         "offset from y before calling ares().", call. = FALSE)
+  }
   # Use `na.action = na.pass` so model.frame doesn't blow up on NAs; the
   # default method then applies its own (median-impute or omit) rule per
   # its `na.action` argument. y-side NAs still trigger a hard stop in
   # ares.default(), which is correct -- model.response should fail loud
   # when the target is missing.
-  mf <- stats::model.frame(formula, data = data, na.action = stats::na.pass)
+  # BUG-011 (v0.0.0.9032): honour `subset` by passing it through to
+  # model.frame. Previously `subset` fell into `...` and was silently
+  # ignored, so the fit ran on the full data set with no warning. We
+  # use the lm()-style match.call() construction so that NSE inside
+  # model.frame.default resolves `subset` against the user's call
+  # environment rather than picking up the `subset` base R function
+  # symbol via lazy evaluation.
+  mfcall <- match.call(expand.dots = FALSE)
+  mfcall$y <- NULL
+  mfcall[[1L]] <- quote(stats::model.frame)
+  names(mfcall)[names(mfcall) == "x"] <- "formula"
+  mfcall$`...` <- NULL
+  mfcall$na.action <- quote(stats::na.pass)
+  mf <- eval(mfcall, parent.frame())
   yv <- stats::model.response(mf)
   if (is.null(yv)) stop("ares: response variable is missing from formula/data.")
   mm <- stats::model.matrix(formula, mf)

@@ -8,7 +8,7 @@
 \usage{
 ares(x, ...)
 
-\method{ares}{formula}(x, data = NULL, ..., y = NULL)
+\method{ares}{formula}(x, data = NULL, subset = NULL, ..., y = NULL)
 
 \method{ares}{default}(
   x,
@@ -50,6 +50,11 @@ formula when calling the formula method.}
 \item{...}{Currently ignored.}
 
 \item{data}{A data frame. Used only by the formula method.}
+
+\item{subset}{Optional row-subsetting vector for the formula method
+(integer indices or logical), passed through to
+\code{\link[stats:model.frame]{stats::model.frame()}}. Ignored by the default (matrix/data-frame)
+method.}
 
 \item{y}{A numeric response vector with length \code{nrow(x)}. For
 \code{family = "binomial"}, a 0/1 numeric, logical, or 2-level factor.}
