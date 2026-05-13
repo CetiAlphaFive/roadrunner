@@ -2,6 +2,18 @@
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
 
+- **BUG-008 (correctness, high)**: `predict()` used to return finite WRONG
+  values for newdata rows containing `NA` when training used
+  `na.action = "omit"`. The pre-existing warning promised "the affected
+  rows will return NA predictions" but the code never imposed `NA` --
+  `NaN > 0` in the C++ hinge evaluates to `FALSE`, collapsing each
+  affected hinge to 0 and yielding a deterministic but wrong prediction.
+  Fix: detect NA rows in `xnew` before the C++ basis pass, zero-fill the
+  NaN cells, and re-impose `NA` on those rows after the linear-predictor
+  compute (including bag mean, bag SE, and the `interval = "pint"` matrix
+  path). Regression test:
+  `tests/testthat/test-bug-008-predict-na-rows.R`.
+
 - **BUG-009 (correctness, high)**: bagged `predict(..., type = "link")`
   for non-gaussian families used to return `g(mean(g^{-1}(eta_b)))`, i.e.
   the link applied to the response-scale bag mean. By Jensen's

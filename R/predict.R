@@ -243,7 +243,15 @@ predict.ares <- function(object, newdata = NULL,
   # downstream. The medians are the same ones used at fit time (stored in
   # `$na.medians` by ares.default when `na.action = "impute"`). If the
   # fit used `na.action = "omit"`, no medians were stored; in that case
-  # newdata NAs propagate to NA predictions and we just warn.
+  # we honour the prior warning's promise and return NA predictions for
+  # the affected rows (BUG-008, v0.0.0.9032 -- previously the warning
+  # promised NA predictions but `NaN > 0` in the C++ hinge evaluates to
+  # FALSE, silently collapsing the hinge to 0 and yielding finite WRONG
+  # predictions for those rows). We track the affected row mask BEFORE
+  # the C++ basis call, fill the offending cells with 0 so the C++ pass
+  # doesn't propagate NaN/Inf into the basis, and re-impose NA on those
+  # rows immediately after the linear-predictor compute below.
+  na_rows_mask <- logical(nrow(xnew))
   if (any(is.na(xnew))) {
     nrow_aff <- sum(rowSums(is.na(xnew)) > 0L)
     if (!is.null(object$na.medians)) {
@@ -255,6 +263,11 @@ predict.ares <- function(object, newdata = NULL,
               " row(s) using the column medians stored from training.",
               call. = FALSE)
     } else {
+      # na.action = "omit" path: no medians stored. Remember the rows so
+      # we can NA them out post-basis-evaluation, and zero-fill the
+      # source cells so the C++ engine sees finite input.
+      na_rows_mask <- rowSums(is.na(xnew)) > 0L
+      xnew[is.na(xnew)] <- 0
       warning("Missing values in newdata but no medians stored",
               " (training used na.action='omit'); the affected ",
               nrow_aff, " row(s) will return NA predictions.",
@@ -280,6 +293,8 @@ predict.ares <- function(object, newdata = NULL,
     } else {
       eta_central
     }
+    # BUG-008 (v0.0.0.9032): honour the omit-path NA promise.
+    if (any(na_rows_mask)) yhat[na_rows_mask] <- NA_real_
     if (interval == "pint") {
       if (fam != "gaussian")
         stop("ares: interval = 'pint' is only supported for",
@@ -288,6 +303,7 @@ predict.ares <- function(object, newdata = NULL,
       if (is.null(pi_mat))
         stop("ares: interval = 'pint' requires the fit was built",
              " with varmod = 'const' or 'lm'.")
+      if (any(na_rows_mask)) pi_mat[na_rows_mask, ] <- NA_real_
       return(pi_mat)
     }
     return(yhat)
@@ -339,6 +355,15 @@ predict.ares <- function(object, newdata = NULL,
     yhat <- rowMeans(resps)
     if (isTRUE(se.fit)) attr(yhat, "sd") <- apply(resps, 1, stats::sd)
   }
+  # BUG-008 (v0.0.0.9032): honour the omit-path NA promise on bag mean + SE.
+  if (any(na_rows_mask)) {
+    yhat[na_rows_mask] <- NA_real_
+    if (isTRUE(se.fit)) {
+      sdv <- attr(yhat, "sd")
+      sdv[na_rows_mask] <- NA_real_
+      attr(yhat, "sd") <- sdv
+    }
+  }
   if (interval == "pint") {
     if (fam != "gaussian")
       stop("ares: interval = 'pint' is only supported for",
@@ -351,6 +376,7 @@ predict.ares <- function(object, newdata = NULL,
     # variance model component but we don't combine them here (the
     # variance model already captures residual uncertainty). attr 'sd'
     # from bagging is dropped on the PI matrix path for clarity.
+    if (any(na_rows_mask)) pi_mat[na_rows_mask, ] <- NA_real_
     return(pi_mat)
   }
   yhat
