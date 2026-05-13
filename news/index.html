@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9030</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9031</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,13 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9031" id="roadrunner-0009031">roadrunner 0.0.0.9031<a class="anchor" aria-label="anchor" href="#roadrunner-0009031"></a></h2>
+<div class="section level3">
+<h3 id="performance-0-0-0-9031">Performance<a class="anchor" aria-label="anchor" href="#performance-0-0-0-9031"></a></h3>
+<ul><li>Autotune now reuses the Householder R / Qty computed during the shared forward pass instead of recomputing them inside each <code>mars_backward_only_cpp</code> call. Saves the O(n*M^2) initial Householder pass at every per-cell backward replay; the cached R / Qty are byte-identical to the recomputed values, so selected basis, coefficients, and GCV are unchanged. Measured speedup on the v0.26 speed baseline (<code>inst/sims/v0.26-speed-baseline.R</code>, 24-cell grid x 5 reps, nthreads=4): geometric-mean 1.23x across the grid; on the autotune cells specifically 1.05-1.15x (gaussian highdim p=20: 1.09x; gamma n=1000 p=10: 1.11x; binomial n=1500 p=20: 1.15x). Determinism invariant (<code>nthreads=1 == nthreads=N</code>) preserved. Internal C++ entries gain optional <code>compute_forward_qr</code> (mars_fit_cpp) and <code>R_in</code> / <code>Qty_in</code> (mars_backward_only_cpp) parameters; the public R API is unchanged.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9030" id="roadrunner-0009030">roadrunner 0.0.0.9030<a class="anchor" aria-label="anchor" href="#roadrunner-0009030"></a></h2>
 <div class="section level3">
