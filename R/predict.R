@@ -104,6 +104,31 @@ predict.ares <- function(object, newdata = NULL,
           }
         }
       }
+      # BUG-010 (v0.0.0.9032): detect NA in factor / character columns up
+      # front. Otherwise model.matrix(~ ., newdata) with na.action=na.omit
+      # silently drops those rows and the result has fewer rows than
+      # nrow(newdata) -- the predict()-length contract gets violated. We
+      # error with a clear message naming the column(s), mirroring the
+      # BUG-004 OOV pattern. (Numeric NAs are handled upstream via
+      # num_medians or via the na.action="omit" mask in the matrix
+      # branch below.)
+      fna_report <- character(0)
+      for (jname in names(fi$xlevels)) {
+        col <- newdata[[jname]]
+        if ((is.character(col) || is.factor(col)) && anyNA(col)) {
+          bad_rows <- which(is.na(col))
+          fna_report <- c(fna_report,
+                          sprintf("  column %s: %d NA row(s) (e.g. row %d)",
+                                  jname, length(bad_rows), bad_rows[1]))
+        }
+      }
+      if (length(fna_report)) {
+        stop("ares: NA value(s) in factor/character newdata column(s); ",
+             "cannot expand to the training design matrix. Drop the ",
+             "offending row(s) or impute the categorical level(s) before ",
+             "predicting.\n",
+             paste(fna_report, collapse = "\n"), call. = FALSE)
+      }
       # Replay character/factor handling: coerce character to factor with
       # the *training* levels; refactor existing factor columns onto the
       # training levels. BUG-004 (v0.0.0.9029): out-of-vocabulary levels

@@ -1,3 +1,17 @@
+# roadrunner 0.0.0.9032
+
+## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
+
+- **BUG-010 (robustness, medium)**: sister to BUG-004. `NA` values in
+  factor / character newdata columns used to fall through the OOV
+  detector (which only handled non-NA character values), then
+  `model.matrix(~ ., newdata)`'s default `na.action = na.omit` silently
+  dropped those rows -- `length(predict(fit, newdata))` was less than
+  `nrow(newdata)`. Fix: detect NA in factor / character newdata columns
+  up front; error with a clear message naming the column(s), mirroring
+  BUG-004's OOV path. Regression test:
+  `tests/testthat/test-bug-010-predict-factor-na.R`.
+
 # roadrunner 0.0.0.9031
 
 ## Performance
