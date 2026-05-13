@@ -1,5 +1,91 @@
 # Changelog
 
+## roadrunner 0.0.0.9032
+
+### Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
+
+- **BUG-013 (usability, low)**:
+  [`print.ares()`](https://cetialphafive.github.io/roadrunner/reference/print.ares.md)
+  and
+  [`summary.ares()`](https://cetialphafive.github.io/roadrunner/reference/summary.ares.md)
+  used to be silent about bagging (`n.boot > 0`) and autotune state, so
+  a bagged or autotuned fit printed identically to a plain fit. Fix: add
+  one-line `Bagging: n.boot = N replicate(s)` and
+  `Autotune: degree=D penalty=P nk=K fast.k=F warmstart=T/F` blocks to
+  both printers when the corresponding components are present.
+  `summary.ares` also carries `$boot` and `$autotune` through to its
+  print method. Regression test:
+  `tests/testthat/test-bug-013-print-bag-autotune.R`.
+
+- **BUG-011 (correctness, medium)**:
+  [`ares.formula()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+  silently dropped `subset = ...` (it fell into `...` and went nowhere)
+  and silently absorbed `offset(...)` terms as ordinary predictors. Both
+  produced wrong fits with zero indication. Fix: (a) add explicit
+  `subset` arg to `ares.formula` and pass it through to `model.frame`
+  via the lm()-style
+  [`match.call()`](https://rdrr.io/r/base/match.call.html) construction
+  (so NSE inside model.frame doesn’t trip over the `subset` symbol
+  resolving to the base R function); (b) detect
+  [`offset()`](https://rdrr.io/r/stats/offset.html) terms via
+  `attr(terms, "offset")` before `model.frame` runs and
+  [`stop()`](https://rdrr.io/r/base/stop.html) with an actionable
+  message. Offset pass-through to the post-hoc GLM refit was punted to a
+  later release (touches predict + bag + autotune compose paths).
+  Regression test:
+  `tests/testthat/test-bug-011-formula-subset-offset.R`.
+
+- **BUG-008 (correctness, high)**:
+  [`predict()`](https://rdrr.io/r/stats/predict.html) used to return
+  finite WRONG values for newdata rows containing `NA` when training
+  used `na.action = "omit"`. The pre-existing warning promised “the
+  affected rows will return NA predictions” but the code never imposed
+  `NA` – `NaN > 0` in the C++ hinge evaluates to `FALSE`, collapsing
+  each affected hinge to 0 and yielding a deterministic but wrong
+  prediction. Fix: detect NA rows in `xnew` before the C++ basis pass,
+  zero-fill the NaN cells, and re-impose `NA` on those rows after the
+  linear-predictor compute (including bag mean, bag SE, and the
+  `interval = "pint"` matrix path). Regression test:
+  `tests/testthat/test-bug-008-predict-na-rows.R`.
+
+- **BUG-009 (correctness, high)**: bagged `predict(..., type = "link")`
+  for non-gaussian families used to return `g(mean(g^{-1}(eta_b)))`,
+  i.e. the link applied to the response-scale bag mean. By Jensen’s
+  inequality this is not `mean(eta_b)`, and the simulator audit showed
+  divergences of hundreds of log-odds units for binomial bags at
+  moderate signal – making `type = "link"` numerically unreliable for
+  any downstream use. Fix: collect per-replicate linear predictors
+  `etas` and response-scale predictions `resps` separately;
+  `type = "link"` returns `rowMeans(etas)`, `type = "response"` returns
+  `rowMeans(resps)` (unchanged from the prior behaviour). Bag SE is
+  computed on whichever scale was returned. Regression test:
+  `tests/testthat/test-bug-009-bagged-link-jensen.R`.
+
+- **BUG-012 (correctness, medium)**: formula-path fits with derived
+  terms (`I(x^2)`, `poly(x, 2)`, `log(x + 10)`, `scale(x)`,
+  `splines::bs(x)`, …) used to fit successfully but
+  [`predict()`](https://rdrr.io/r/stats/predict.html) would fail with
+  “newdata is missing columns: I(x^2)” because `predict.ares` looked for
+  the *expanded* column name as a literal column of newdata, not
+  re-evaluating the original `terms` object on newdata. Fix: when
+  `object$terms` is non-null (formula path), use
+  `model.matrix(delete.response(terms), newdata, xlev = object$xlevels)`
+  to rebuild the design with derived terms re-evaluated. Falls back to
+  the prior column-lookup path when no `terms` object is stored (matrix
+  interface). `ares.formula` now also stashes `xlevels` on the fit.
+  Regression test:
+  `tests/testthat/test-bug-012-predict-derived-terms.R`.
+
+- **BUG-010 (robustness, medium)**: sister to BUG-004. `NA` values in
+  factor / character newdata columns used to fall through the OOV
+  detector (which only handled non-NA character values), then
+  `model.matrix(~ ., newdata)`’s default `na.action = na.omit` silently
+  dropped those rows – `length(predict(fit, newdata))` was less than
+  `nrow(newdata)`. Fix: detect NA in factor / character newdata columns
+  up front; error with a clear message naming the column(s), mirroring
+  BUG-004’s OOV path. Regression test:
+  `tests/testthat/test-bug-010-predict-factor-na.R`.
+
 ## roadrunner 0.0.0.9031
 
 ### Performance

@@ -11,7 +11,7 @@ GCV criterion (or a K-fold CV criterion if requested).
 ares(x, ...)
 
 # S3 method for class 'formula'
-ares(x, data = NULL, ..., y = NULL)
+ares(x, data = NULL, subset = NULL, ..., y = NULL)
 
 # Default S3 method
 ares(
@@ -62,6 +62,13 @@ ares(
 - data:
 
   A data frame. Used only by the formula method.
+
+- subset:
+
+  Optional row-subsetting vector for the formula method (integer indices
+  or logical), passed through to
+  [`stats::model.frame()`](https://rdrr.io/r/stats/model.frame.html).
+  Ignored by the default (matrix/data-frame) method.
 
 - y:
 
