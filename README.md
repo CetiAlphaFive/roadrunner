@@ -1,5 +1,11 @@
 # roadrunner
 
+<!-- badges: start -->
+[![R-CMD-check](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/R-CMD-check.yaml)
+[![lint](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/lint.yaml/badge.svg)](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/lint.yaml)
+[![Codecov test coverage](https://codecov.io/gh/CetiAlphaFive/roadrunner/graph/badge.svg)](https://app.codecov.io/gh/CetiAlphaFive/roadrunner)
+<!-- badges: end -->
+
 Fast, low-dependency machine learning algorithms in R.
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
