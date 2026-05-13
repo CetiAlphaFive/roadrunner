@@ -293,54 +293,51 @@ predict.ares <- function(object, newdata = NULL,
     return(yhat)
   }
 
-  # Bag predictions: average across (n.boot + 1) fits — the central fit plus
-  # each replicate. For binomial we average on the response (probability)
-  # scale so the bag mean stays in [0, 1]; for gaussian we average on the
-  # raw scale (link == response).
-  preds <- matrix(NA_real_, nrow = nrow(xnew),
-                  ncol = length(object$boot$fits) + 1L)
-  if (fam == "binomial") {
-    preds[, 1] <- stats::plogis(pmin(pmax(eta_central, -30), 30))
-    for (b in seq_along(object$boot$fits)) {
-      fb <- object$boot$fits[[b]]
-      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
-      eta_b <- drop(bx_b %*% fb$coefficients)
-      preds[, b + 1L] <- stats::plogis(pmin(pmax(eta_b, -30), 30))
-    }
+  # Bag predictions: collect per-replicate linear predictors `etas` AND
+  # response-scale predictions `resps` separately. BUG-009 (v0.0.0.9032):
+  # the link-scale return must be mean(eta_b), NOT g(mean(g^{-1}(eta_b))).
+  # The latter (Jensen-violating) form used to drift by ~hundreds of
+  # log-odds units on moderate-signal binomial bags, because
+  # qlogis(mean(plogis(eta_b))) != mean(eta_b) whenever eta_b varies.
+  # Response-scale return stays as before -- mean of the inverse-link
+  # mapping is the right point estimate for type="response".
+  nb1 <- length(object$boot$fits) + 1L
+  etas  <- matrix(NA_real_, nrow = nrow(xnew), ncol = nb1)
+  resps <- matrix(NA_real_, nrow = nrow(xnew), ncol = nb1)
+  etas[, 1]  <- eta_central
+  resps[, 1] <- if (fam == "binomial") {
+    stats::plogis(pmin(pmax(eta_central, -30), 30))
   } else if (fam == "poisson" || fam == "gamma") {
-    # Bag-average on the response (rate / mean) scale so the average stays
-    # positive; convert to link scale (log of the mean) only if the user
-    # asked for it. Matches the binomial probability-scale convention.
     clamp_hi <- if (fam == "poisson") 50 else 20
     clamp_lo <- if (fam == "poisson") -50 else -20
-    preds[, 1] <- exp(pmin(pmax(eta_central, clamp_lo), clamp_hi))
-    for (b in seq_along(object$boot$fits)) {
-      fb <- object$boot$fits[[b]]
-      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
-      eta_b <- drop(bx_b %*% fb$coefficients)
-      preds[, b + 1L] <- exp(pmin(pmax(eta_b, clamp_lo), clamp_hi))
-    }
+    exp(pmin(pmax(eta_central, clamp_lo), clamp_hi))
   } else {
-    preds[, 1] <- eta_central
-    for (b in seq_along(object$boot$fits)) {
-      fb <- object$boot$fits[[b]]
-      bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
-      preds[, b + 1L] <- drop(bx_b %*% fb$coefficients)
+    eta_central
+  }
+  for (b in seq_along(object$boot$fits)) {
+    fb <- object$boot$fits[[b]]
+    bx_b <- mars_basis_cpp(xnew, fb$dirs, fb$cuts, fb$selected.terms)
+    eta_b <- drop(bx_b %*% fb$coefficients)
+    etas[, b + 1L] <- eta_b
+    resps[, b + 1L] <- if (fam == "binomial") {
+      stats::plogis(pmin(pmax(eta_b, -30), 30))
+    } else if (fam == "poisson" || fam == "gamma") {
+      clamp_hi <- if (fam == "poisson") 50 else 20
+      clamp_lo <- if (fam == "poisson") -50 else -20
+      exp(pmin(pmax(eta_b, clamp_lo), clamp_hi))
+    } else {
+      eta_b
     }
   }
-  yhat <- rowMeans(preds)
-  if (isTRUE(se.fit)) {
-    attr(yhat, "sd") <- apply(preds, 1, stats::sd)
-  }
-  # Convert to link scale only after averaging:
-  #   - binomial: invert via qlogis(); clamp to (eps, 1-eps) for finiteness.
-  #   - poisson/gamma: log(); clamp to a small positive epsilon so log is finite.
-  if (fam == "binomial" && type == "link") {
-    eps <- 1e-15
-    yhat <- stats::qlogis(pmin(pmax(yhat, eps), 1 - eps))
-  } else if ((fam == "poisson" || fam == "gamma") && type == "link") {
-    eps <- 1e-300
-    yhat <- log(pmax(yhat, eps))
+  # Aggregate per `type`. Link scale -> mean of linear predictors (correct
+  # Jensen-safe point estimate). Response scale -> mean of inverse-link
+  # mappings (matches single-fit response). Gaussian: link == response.
+  if (type == "link") {
+    yhat <- rowMeans(etas)
+    if (isTRUE(se.fit)) attr(yhat, "sd") <- apply(etas, 1, stats::sd)
+  } else {
+    yhat <- rowMeans(resps)
+    if (isTRUE(se.fit)) attr(yhat, "sd") <- apply(resps, 1, stats::sd)
   }
   if (interval == "pint") {
     if (fam != "gaussian")

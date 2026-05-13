@@ -2,6 +2,19 @@
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
 
+- **BUG-009 (correctness, high)**: bagged `predict(..., type = "link")`
+  for non-gaussian families used to return `g(mean(g^{-1}(eta_b)))`, i.e.
+  the link applied to the response-scale bag mean. By Jensen's
+  inequality this is not `mean(eta_b)`, and the simulator audit showed
+  divergences of hundreds of log-odds units for binomial bags at
+  moderate signal -- making `type = "link"` numerically unreliable for
+  any downstream use. Fix: collect per-replicate linear predictors
+  `etas` and response-scale predictions `resps` separately;
+  `type = "link"` returns `rowMeans(etas)`, `type = "response"` returns
+  `rowMeans(resps)` (unchanged from the prior behaviour). Bag SE is
+  computed on whichever scale was returned. Regression test:
+  `tests/testthat/test-bug-009-bagged-link-jensen.R`.
+
 - **BUG-012 (correctness, medium)**: formula-path fits with derived
   terms (`I(x^2)`, `poly(x, 2)`, `log(x + 10)`, `scale(x)`,
   `splines::bs(x)`, ...) used to fit successfully but `predict()` would
