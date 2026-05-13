@@ -38,6 +38,21 @@ print.ares <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
         "  converged:", g$converged, "\n")
   }
   cat("  Degree:", x$degree, "  Penalty:", x$penalty, "  nthreads:", x$nthreads, "\n")
+  # BUG-013 (v0.0.0.9032): surface bagging + autotune state so users can
+  # see at a glance that predictions are bag-averaged or that hyper-
+  # parameters were cross-validated. Both objects are first-class API
+  # surfaces but used to be invisible in print(); the only signal was
+  # whatever happened to land in the `Call:` line.
+  if (!is.null(x$boot)) {
+    cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  }
+  if (!is.null(x$autotune)) {
+    at <- x$autotune
+    cat(sprintf(
+      "  Autotune: degree=%s  penalty=%s  nk=%s  fast.k=%s  warmstart=%s\n",
+      format(at$degree), format(at$penalty, digits = digits),
+      format(at$nk), format(at$fast_k), format(at$warmstart)))
+  }
   invisible(x)
 }
 
@@ -67,7 +82,11 @@ summary.ares <- function(object, ...) {
               n_forward = nrow(object$dirs),
               degree = object$degree, penalty = object$penalty,
               family = fam,
-              glm = object$glm)
+              glm = object$glm,
+              # BUG-013 (v0.0.0.9032): carry bag + autotune state through
+              # to the summary printer.
+              boot = object$boot,
+              autotune = object$autotune)
   class(out) <- "summary.ares"
   out
 }
@@ -92,6 +111,16 @@ print.summary.ares <- function(x, ...) {
     cat("  AIC =", format(g$aic),
         "  df.resid =", g$df.residual,
         "  converged =", g$converged, "\n")
+  }
+  if (!is.null(x$boot)) {
+    cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  }
+  if (!is.null(x$autotune)) {
+    at <- x$autotune
+    cat(sprintf(
+      "  Autotune: degree=%s  penalty=%s  nk=%s  fast.k=%s  warmstart=%s\n",
+      format(at$degree), format(at$penalty),
+      format(at$nk), format(at$fast_k), format(at$warmstart)))
   }
   cat("\n")
   print(x$terms, row.names = FALSE)

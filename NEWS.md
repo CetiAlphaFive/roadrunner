@@ -2,6 +2,15 @@
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
 
+- **BUG-013 (usability, low)**: `print.ares()` and `summary.ares()` used
+  to be silent about bagging (`n.boot > 0`) and autotune state, so a
+  bagged or autotuned fit printed identically to a plain fit. Fix: add
+  one-line `Bagging: n.boot = N replicate(s)` and `Autotune: degree=D
+  penalty=P nk=K fast.k=F warmstart=T/F` blocks to both printers when
+  the corresponding components are present. `summary.ares` also carries
+  `$boot` and `$autotune` through to its print method. Regression test:
+  `tests/testthat/test-bug-013-print-bag-autotune.R`.
+
 - **BUG-011 (correctness, medium)**: `ares.formula()` silently dropped
   `subset = ...` (it fell into `...` and went nowhere) and silently
   absorbed `offset(...)` terms as ordinary predictors. Both produced
