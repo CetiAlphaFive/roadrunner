@@ -3,15 +3,13 @@
 # RcppParallel linkage is satisfied by `LinkingTo: Rcpp, RcppParallel` in
 # DESCRIPTION on every supported platform we know of (modern RcppParallel
 # embeds TBB and resolves at link time without an explicit -L flag here).
-# An earlier revision called `$(shell Rscript -e RcppParallel::RcppParallelLibs())`
-# but on current systems that helper returns an empty string, and the
-# `$(shell ...)` extension trips the CRAN "Writing R Extensions" portability
-# warning. Drop the call entirely.
+# RcppArmadillo (header-only) drives the krls engine; LAPACK/BLAS/FORTRAN
+# pull in R's BLAS so arma::eig_sym and arma::gemm dispatch correctly.
 #
 # -ffp-contract was dropped at v0.0.0.9012 after a run-to-run determinism
 # check confirmed FMA-vectorised mul-add chains do not break bit-exact
 # reproducibility between consecutive ares() calls in a single binary.
 
 PKG_CXXFLAGS = $(SHLIB_OPENMP_CXXFLAGS)
-PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS)
+PKG_LIBS = $(SHLIB_OPENMP_CXXFLAGS) $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS)
 CXX_STD = CXX17

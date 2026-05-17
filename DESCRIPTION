@@ -1,36 +1,40 @@
 Package: roadrunner
 Title: Fast, Low-Dependency Machine Learning Algorithms
-Version: 0.0.0.9032
+Version: 0.0.0.9033
 Authors@R:
     person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com",
            role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-9841-146X"))
 Description: A collection of fast, low-dependency implementations of
-    classical machine learning algorithms. The first algorithm is
-    'ares()', a Multivariate Adaptive Regression Splines (MARS) fitter
-    using Friedman's (1991) fast least-squares forward selection and a
-    parallelized knot search built on 'Rcpp' and 'RcppParallel'.
-    Additional algorithms will be added as separate exported functions
-    under the same package roof.
+    classical machine learning algorithms. Includes 'ares()', a
+    Multivariate Adaptive Regression Splines (MARS) fitter using
+    Friedman's (1991) fast least-squares forward selection and a
+    parallelized knot search built on 'Rcpp' and 'RcppParallel'; and
+    'krls()', a Kernel Regularized Least Squares fitter
+    (Hainmueller and Hazlett 2014) with a parallelized Gaussian-kernel
+    construction and marginal-effect computation.
 License: MIT + file LICENSE
 URL: https://cetialphafive.github.io/roadrunner/, https://github.com/CetiAlphaFive/roadrunner
 BugReports: https://github.com/CetiAlphaFive/roadrunner/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
 Depends:
     R (>= 4.1.0)
-LinkingTo: 
+LinkingTo:
     Rcpp,
+    RcppArmadillo,
     RcppParallel
-Imports: 
+Imports:
     Rcpp,
+    RcppArmadillo,
     RcppParallel
-Suggests: 
+Suggests:
     bench,
     earth,
+    KRLS,
     knitr,
     rmarkdown,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

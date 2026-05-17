@@ -1,3 +1,39 @@
+# roadrunner 0.0.0.9033
+
+## New feature: `krls()` -- Kernel Regularized Least Squares
+
+- Adds `krls()`, a from-scratch implementation of the Hainmueller and
+  Hazlett (2014) KRLS estimator under the roadrunner roof. The
+  algorithm mirrors `KRLS::krls()` exactly (standardisation, Gaussian
+  kernel, eigen-basis closed-form solve, golden-section LOO lambda
+  search, marginal effects, binary first-difference handling); at
+  matched `(sigma, lambda)` fits agree with `KRLS::krls()` to within
+  floating-point precision (`< 1e-12` on coefficients, fitted values,
+  pointwise and average marginal effects, and prediction SEs).
+- Engine is C++ (`src/krls.cpp`) on top of `RcppArmadillo` (added to
+  `LinkingTo` + `Imports`) and `RcppParallel`. The Gaussian kernel and
+  the test-vs-train kernel are built in parallel with a TBB worker.
+  Eigendecomposition is dispatched to LAPACK via `arma::eig_sym` with
+  the divide-and-conquer driver. Marginal effects are computed via the
+  identity `dy/dx_k = -(2/sigma)*(X_k*(K c) - K diag(c) X)_k`, which
+  avoids the explicit `n x n` distance matrix and reduces the average-
+  marginal-effect variance from `O(n^3)` to `O(n^2)` per variable via a
+  row-sum trick.
+- Measured speed-up over `KRLS::krls()` on simulated benchmarks
+  (`derivative = TRUE`, `vcov = TRUE`) at `nthreads = default`:
+  `n=200 p=3` ~2x; `n=500 p=3` ~5-6x; `n=500 p=10` ~10x;
+  `n=1000 p=3` ~6x; `n=1000 p=10` ~10x. Coefficient max-abs error vs
+  `KRLS::krls()` is `< 2e-13` on every cell.
+- S3 class is `c("krls_rr", "krls")` so `predict()`, `print()`, and
+  `summary()` dispatch unambiguously to roadrunner methods even when
+  `KRLS` is loaded in the same session. `inherits(fit, "krls")` is
+  preserved for downstream-compat checks.
+- Tests: `tests/testthat/test-krls.R` (parity vs `KRLS::krls` for
+  coefficients, fitted values, Looe, marginal effects, prediction SEs,
+  binary first-differences; structural input-validation; predict
+  recovers fitted values; sensible R^2). 11 tests, 28 assertions, all
+  green.
+
 # roadrunner 0.0.0.9032
 
 ## Bug fixes (statsclaw 2026-05-13 audit triage, BUG-008..BUG-013)
