@@ -85,6 +85,13 @@
 #'   `lambda`, `R2`, `derivatives`, `avgderivatives`,
 #'   `var.avgderivatives`, `vcov.c`, `vcov.fitted`, `binaryindicator`.
 #'
+#'   `Looe` follows the `KRLS::krls()` scale convention: it is the sum
+#'   of squared leave-one-out residuals on the *standardised* `y` scale
+#'   multiplied by `sd(y)`, so its units are `[y^2 / sd_y] = [y]`.  This
+#'   is preserved for downstream compatibility with code that consumed
+#'   `KRLS::krls()` output; it is **not** the LOO MSE in raw-`y`
+#'   squared units.
+#'
 #' @references Hainmueller, J. and C. Hazlett (2014).  "Kernel
 #'   Regularized Least Squares: Reducing Misspecification Bias with a
 #'   Flexible and Interpretable Machine Learning Approach."  *Political
@@ -106,8 +113,25 @@ krls <- function(X, y,
                  print.level = 0) {
   ## --- argument validation -----------------------------------------
   if (is.null(X) || is.null(y)) stop("X and y are required")
+  ## Reject non-numeric y BEFORE coercion to avoid silent string->double
+  ## via storage.mode (audit KRLS-AUDIT-002).
+  if (is.factor(y) || is.character(y)) {
+    stop("y must be numeric (got ",
+         if (is.factor(y)) "factor" else "character", ")")
+  }
+  if (is.factor(X) || is.character(X)) {
+    stop("X must be numeric (got ",
+         if (is.factor(X)) "factor" else "character", ")")
+  }
   X <- as.matrix(X)
   y <- as.matrix(y)
+  ## Reject multi-column y explicitly (audit KRLS-AUDIT-001).  Without
+  ## this check the downstream scale() call errors with an opaque
+  ## "length of 'center' must equal the number of columns of 'x'".
+  if (ncol(y) != 1L) {
+    stop("y must be a vector or single-column matrix (got ", ncol(y),
+         " columns)")
+  }
   storage.mode(X) <- "double"
   storage.mode(y) <- "double"
   if (!is.numeric(X)) stop("X must be numeric")
@@ -281,8 +305,32 @@ predict.krls_rr <- function(object, newdata, se.fit = FALSE, ...) {
   if (ncol(object$X) != ncol(newdata)) {
     stop("ncol(newdata) differs from ncol(X) from fitted krls object")
   }
+  ## Reorder newdata columns by name when both training X and newdata
+  ## carry colnames (audit KRLS-AUDIT-004).  Otherwise fall back to
+  ## positional; warn if the caller passed names and they differ
+  ## (mismatch could otherwise be silently wrong).
+  cn_train <- colnames(object$X)
+  cn_new   <- colnames(newdata)
+  if (!is.null(cn_train) && !is.null(cn_new)) {
+    if (!setequal(cn_train, cn_new)) {
+      stop("colnames(newdata) do not match colnames(X) from fit: ",
+           "training = c(", paste(shQuote(cn_train), collapse = ", "),
+           "), newdata = c(", paste(shQuote(cn_new), collapse = ", "),
+           ")")
+    }
+    if (!identical(cn_train, cn_new)) {
+      newdata <- newdata[, cn_train, drop = FALSE]
+    }
+  }
+  if (nrow(object$X) < 2L) {
+    stop("object$X has fewer than 2 rows; sd cannot be recomputed")
+  }
   Xmeans <- colMeans(object$X)
   Xsd    <- apply(object$X, 2L, sd)
+  if (any(!is.finite(Xsd)) || any(Xsd == 0)) {
+    stop("at least one stored X column has zero or non-finite sd; ",
+         "object$X may have been mutated after fit")
+  }
   Xs     <- scale(object$X, center = Xmeans, scale = Xsd)
   Xs     <- matrix(Xs, nrow(object$X), ncol(object$X))
   Xn     <- scale(newdata, center = Xmeans, scale = Xsd)

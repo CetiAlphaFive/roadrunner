@@ -75,6 +75,13 @@ An object of S3 class \code{"krls"} with components mirroring
 \code{KRLS::krls()}: \code{K}, \code{coeffs}, \code{Looe}, \code{fitted}, \code{X}, \code{y}, \code{sigma},
 \code{lambda}, \code{R2}, \code{derivatives}, \code{avgderivatives},
 \code{var.avgderivatives}, \code{vcov.c}, \code{vcov.fitted}, \code{binaryindicator}.
+
+\code{Looe} follows the \code{KRLS::krls()} scale convention: it is the sum
+of squared leave-one-out residuals on the \emph{standardised} \code{y} scale
+multiplied by \code{sd(y)}, so its units are \verb{[y^2 / sd_y] = [y]}.  This
+is preserved for downstream compatibility with code that consumed
+\code{KRLS::krls()} output; it is \strong{not} the LOO MSE in raw-\code{y}
+squared units.
 }
 \description{
 Fits a Kernel Regularized Least Squares model with Gaussian kernel,
