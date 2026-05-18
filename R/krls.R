@@ -223,6 +223,7 @@ krls.default <- function(X, y,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE, autotune.grid = NULL,
                          varmod = c("none", "const"),
+                         n.boot = 0L,
                          na.action = c("impute", "omit"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
@@ -937,6 +938,71 @@ krls.default <- function(X, y,
     out <- .krls_fd_binary(out)
   }
 
+  # --- bagging (Phase 5) -------------------------------------------
+  # Bootstrap n_boot row samples; for each, refit krls inheriting the
+  # central fit's sigma + lambda (so we don't re-run autotune / CV /
+  # LOO search per replicate). Store the minimum predict-ready state
+  # per replicate.
+  n_boot <- as.integer(n.boot)
+  if (is.na(n_boot) || n_boot < 0L) n_boot <- 0L
+  if (n_boot > 0L) {
+    sig_b   <- out$sigma
+    lam_b   <- out$lambda
+    n_full  <- nrow(X)
+    if (!is.null(seed.cv)) {
+      if (exists(".Random.seed", envir = globalenv(),
+                 inherits = FALSE)) {
+        old_seed_b <- get(".Random.seed", envir = globalenv(),
+                           inherits = FALSE)
+        on.exit(assign(".Random.seed", old_seed_b,
+                       envir = globalenv()), add = TRUE)
+      } else {
+        on.exit(rm(list = ".Random.seed", envir = globalenv()),
+                add = TRUE)
+      }
+      set.seed(as.integer(seed.cv) + 31337L)
+    }
+    boot_reps <- vector("list", n_boot)
+    idx_list  <- vector("list", n_boot)
+    for (b in seq_len(n_boot)) {
+      idx <- sample.int(n_full, n_full, replace = TRUE)
+      idx_list[[b]] <- idx
+      X_b <- X[idx, , drop = FALSE]
+      y_b <- as.numeric(y)[idx]
+      w_b <- if (!is.null(w_norm)) {
+        wb <- w_norm[idx]
+        wb / mean(wb)
+      } else NULL
+      # Fit on the bootstrap sample with the inherited (sigma, lambda).
+      # Derivatives / vcov are dropped to keep memory bounded.
+      f_b <- krls.default(
+        X = X_b, y = y_b,
+        sigma = sig_b, lambda = lam_b,
+        derivative = FALSE, binary = FALSE, vcov = FALSE,
+        weights = w_b,
+        lambda.method = "loo",
+        autotune = FALSE,
+        varmod = "none",
+        n.boot = 0L,
+        na.action = na.action,
+        trace = 0L, nthreads = nthreads
+      )
+      # Strip heavy fields; keep what predict needs:
+      #   - X (training rows in raw scale, used to rebuild Xs_b in predict),
+      #   - y (for mean/sd),
+      #   - coeffs, sigma, lambda.
+      boot_reps[[b]] <- list(
+        X      = f_b$X,
+        y      = f_b$y,
+        coeffs = f_b$coeffs,
+        sigma  = f_b$sigma,
+        lambda = f_b$lambda
+      )
+    }
+    out$boot <- list(replicates = boot_reps, n.boot = n_boot,
+                     idx = idx_list)
+  }
+
   if (trace > 0 && isTRUE(derivative)) {
     av <- setNames(as.vector(out$avgderivatives),
                    colnames(out$avgderivatives))
@@ -1069,7 +1135,43 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     vcov.fit    <- sd_y2 * vcov.fitted
     se.fit.out  <- matrix(sqrt(diag(vcov.fit)), ncol = 1L)
   }
-  yhat <- (yhat * as.numeric(apply(object$y, 2L, sd))) + mean(object$y)
+  sd_y_train <- as.numeric(apply(object$y, 2L, sd))
+  mean_y_train <- mean(object$y)
+  yhat <- (yhat * sd_y_train) + mean_y_train
+
+  # --- Bagging mean (Phase 5) --------------------------------------
+  # If the fit carries bootstrap replicates, average the central
+  # prediction with the per-replicate predictions on the same newdata.
+  bag_sd <- NULL
+  if (!is.null(object$boot) && !is.null(object$boot$replicates)) {
+    reps <- object$boot$replicates
+    nrep <- length(reps)
+    if (nrep > 0L) {
+      preds <- matrix(NA_real_, nrow = length(yhat), ncol = nrep + 1L)
+      preds[, 1L] <- as.numeric(yhat)
+      for (b in seq_along(reps)) {
+        Rb <- reps[[b]]
+        Xmeans_b <- colMeans(Rb$X)
+        Xsd_b    <- apply(Rb$X, 2L, sd)
+        # Skip replicates with degenerate X (zero sd).
+        if (any(!is.finite(Xsd_b)) || any(Xsd_b == 0)) next
+        Xs_b <- scale(Rb$X, center = Xmeans_b, scale = Xsd_b)
+        Xs_b <- matrix(Xs_b, nrow(Rb$X), ncol(Rb$X))
+        Xn_b <- scale(xnew, center = Xmeans_b, scale = Xsd_b)
+        Xn_b <- matrix(Xn_b, nrow(xnew), ncol(xnew))
+        Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, Rb$sigma)
+        yhat_b <- as.numeric(Kn_b %*% Rb$coeffs)
+        sd_yb  <- as.numeric(apply(Rb$y, 2L, sd))
+        yhat_b <- yhat_b * sd_yb + mean(Rb$y)
+        preds[, b + 1L] <- yhat_b
+      }
+      bag_mean <- rowMeans(preds, na.rm = TRUE)
+      bag_sd   <- apply(preds, 1L,
+                        function(z) sd(z, na.rm = TRUE))
+      yhat <- matrix(bag_mean, ncol = 1L)
+    }
+  }
+
   if (interval == "pint") {
     sh <- object$varmod$sigma_hat
     df <- object$varmod$df
@@ -1082,7 +1184,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     return(pi_mat)
   }
   list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
-       newdata = Xn, newdataK = Knew)
+       newdata = Xn, newdataK = Knew,
+       bag_sd = bag_sd)
 }
 
 ## -----------------------------------------------------------------

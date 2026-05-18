@@ -34,6 +34,7 @@ krls(X, ...)
   autotune = FALSE,
   autotune.grid = NULL,
   varmod = c("none", "const"),
+  n.boot = 0L,
   na.action = c("impute", "omit"),
   trace = NULL,
   nthreads = 0L,
