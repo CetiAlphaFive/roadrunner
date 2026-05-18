@@ -147,7 +147,10 @@ test_that("krls() rejects bad inputs", {
   expect_error(roadrunner::krls(X, rep(0, 20)), "constant")
   expect_error(roadrunner::krls(cbind(X, 1), y), "constant")
   X_na <- X; X_na[1L, 1L] <- NA
-  expect_error(roadrunner::krls(X_na, y), "missing")
+  # Phase 1 changed default na.action to "impute"; NA in X now warns + imputes
+  expect_warning(roadrunner::krls(X_na, y), "median-imputed")
+  # explicit omit also works (warning, not error)
+  expect_warning(roadrunner::krls(X_na, y, na.action = "omit"), "dropped")
   expect_error(roadrunner::krls(X, y, sigma = -1), "sigma")
   expect_error(roadrunner::krls(X, y, lambda = -0.1), "lambda")
 })

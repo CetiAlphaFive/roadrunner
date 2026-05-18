@@ -2,10 +2,16 @@
 % Please edit documentation in R/krls.R
 \name{krls}
 \alias{krls}
+\alias{krls.formula}
+\alias{krls.default}
 \alias{predict.krls_rr}
 \title{Kernel Regularized Least Squares}
 \usage{
-krls(
+krls(X, ...)
+
+\method{krls}{formula}(X, data = NULL, subset = NULL, ..., y = NULL)
+
+\method{krls}{default}(
   X,
   y,
   sigma = NULL,
@@ -13,18 +19,34 @@ krls(
   derivative = TRUE,
   binary = TRUE,
   vcov = TRUE,
+  weights = NULL,
   L = NULL,
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  print.level = 0
+  na.action = c("impute", "omit"),
+  trace = NULL,
+  nthreads = 0L,
+  print.level = NULL,
+  ...
 )
 
-\method{predict}{krls_rr}(object, newdata, se.fit = FALSE, ...)
+\method{predict}{krls_rr}(object, newdata = NULL, se.fit = FALSE, ...)
 }
 \arguments{
-\item{X}{A numeric matrix of predictors (\verb{n x p}).  Constant columns
-are rejected.  Missing values are not allowed.}
+\item{X}{A numeric matrix or data frame of predictors (\verb{n x p}).
+Constant columns are rejected. Factor / character columns in a
+data frame are expanded via \code{model.matrix(~ ., x)} (treatment
+contrasts, intercept dropped). Missing values are handled via
+\code{na.action} (see below).}
+
+\item{...}{Currently unused (caught for forward compatibility).}
+
+\item{data}{Used only by the formula method. A data frame containing
+the variables referenced by the formula.}
+
+\item{subset}{Used only by the formula method. An optional integer
+or logical vector restricting rows of \code{data} used for the fit.}
 
 \item{y}{A numeric response vector or single-column matrix.  Constant
 \code{y} is rejected.}
@@ -46,6 +68,11 @@ effects are replaced by predicted-Y first differences (matches
 \item{vcov}{Logical.  If \code{TRUE} (default), compute the coefficient
 covariance and the variance of average marginal effects.}
 
+\item{weights}{Optional vector of observation weights (length \code{n},
+strictly positive). Internally normalised to mean 1. Implements
+weighted KRLS via a \verb{D K D} transform where \code{D = diag(sqrt(w))}.
+\code{weights = rep(1, n)} is byte-identical to the unweighted path.}
+
 \item{L, U}{Optional lower / upper bracket for the lambda search.  If
 \code{NULL}, defaults follow \code{KRLS::krls()}.}
 
@@ -56,25 +83,39 @@ covariance and the variance of average marginal effects.}
 When set, eigenvalues below \code{eigtrunc * max(d)} are dropped from
 the solve.  \code{NULL} (default) keeps all eigenvalues.}
 
-\item{print.level}{Integer.  \code{0} is silent, \code{1} prints the chosen
-lambda and marginal-effect summaries.  Default \code{0}.}
+\item{na.action}{How to handle missing values in \code{X}. \code{"impute"}
+(default) replaces NAs with the column median (stored on the fit
+and reapplied at \code{predict()} time). \code{"omit"} drops rows with any
+NA. Missing \code{y} is always an error.}
+
+\item{trace}{Integer. \code{0} is silent, \verb{> 0} enables progress
+diagnostics (currently: prints chosen lambda when \verb{> 1},
+golden-section progress when \verb{> 2}). Replaces \code{print.level}.}
+
+\item{nthreads}{Integer. Number of threads to use for the C++ kernel
+build / decomposition. \code{0} (default) means use
+\code{RcppParallel::defaultNumThreads()}.}
+
+\item{print.level}{Deprecated alias for \code{trace}. Prefer \code{trace}.}
 
 \item{object}{A fitted \code{"krls"} object.}
 
-\item{newdata}{A numeric matrix with the same columns as the training
-\code{X}.}
+\item{newdata}{A numeric matrix or data frame with the same columns
+as the training \code{X} (or matching the training formula).  \code{NULL}
+returns \code{object$fitted}.}
 
 \item{se.fit}{Logical.  If \code{TRUE}, return pointwise standard errors
 of the predictions.  Requires the fit was created with
 \code{vcov = TRUE}.}
-
-\item{...}{Currently unused.}
 }
 \value{
-An object of S3 class \code{"krls"} with components mirroring
-\code{KRLS::krls()}: \code{K}, \code{coeffs}, \code{Looe}, \code{fitted}, \code{X}, \code{y}, \code{sigma},
-\code{lambda}, \code{R2}, \code{derivatives}, \code{avgderivatives},
+An object of S3 class \code{c("krls_rr", "krls")} with components
+mirroring \code{KRLS::krls()}: \code{K}, \code{coeffs}, \code{Looe}, \code{fitted}, \code{X},
+\code{y}, \code{sigma}, \code{lambda}, \code{R2}, \code{derivatives}, \code{avgderivatives},
 \code{var.avgderivatives}, \code{vcov.c}, \code{vcov.fitted}, \code{binaryindicator}.
+Formula-method fits additionally carry \code{call}, \code{terms}, \code{xlevels},
+\code{factor_info}, \code{na.action}, and \code{na.medians} for downstream
+\code{predict()}, \code{update()}, and \code{model.matrix()} support.
 
 \code{Looe} follows the \code{KRLS::krls()} scale convention: it is the sum
 of squared leave-one-out residuals on the \emph{standardised} \code{y} scale
@@ -91,6 +132,17 @@ effects and their variances are computed by default and returned on
 the original \verb{(X, y)} scale.
 }
 \details{
+Three call styles are supported (mirrors \code{ares()}):
+\itemize{
+\item \code{krls(X, y, ...)}  -- matrix / numeric interface (back-compatible).
+\item \code{krls(y ~ x1 + x2 + ..., data = df, ...)} -- formula interface
+with factor expansion and derived terms (\code{I(x^2)}, \code{poly(x, 2)},
+etc).
+\item \code{krls(df, y, ...)} where \code{df} is a data frame with numeric +
+factor / character columns -- expands categorical columns via
+\code{model.matrix(~ ., df)} (treatment contrasts, intercept dropped).
+}
+
 The numerical pipeline mirrors \code{KRLS::krls()} exactly:
 \enumerate{
 \item \code{X} and \code{y} are standardised (column-centred, unit sd).
@@ -128,6 +180,12 @@ fit <- krls(X, y)
 fit
 fit$avgderivatives           # average marginal effect per variable
 summary(fit)
+
+## Formula interface with mixed numeric + factor predictors.
+df <- data.frame(age = X[, 1], income = X[, 2],
+                 region = factor(sample(c("N", "S"), n, replace = TRUE)),
+                 y = y)
+fit_f <- krls(y ~ age + income + region, data = df)
 
 ## Predictions on new data with pointwise SEs.
 Xnew <- matrix(rnorm(20 * 3), 20, 3)
