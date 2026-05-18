@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9033</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9039</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -51,7 +51,13 @@ the original <code>(X, y)</code> scale.</p>
 
     <div class="section level2">
     <h2 id="ref-usage">Usage<a class="anchor" aria-label="anchor" href="#ref-usage"></a></h2>
-    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">krls</span><span class="op">(</span></span>
+    <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">krls</span><span class="op">(</span><span class="va">X</span>, <span class="va">...</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># S3 method for class 'formula'</span></span>
+<span><span class="fu">krls</span><span class="op">(</span><span class="va">X</span>, data <span class="op">=</span> <span class="cn">NULL</span>, subset <span class="op">=</span> <span class="cn">NULL</span>, <span class="va">...</span>, y <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
+<span></span>
+<span><span class="co"># Default S3 method</span></span>
+<span><span class="fu">krls</span><span class="op">(</span></span>
 <span>  <span class="va">X</span>,</span>
 <span>  <span class="va">y</span>,</span>
 <span>  sigma <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -59,15 +65,38 @@ the original <code>(X, y)</code> scale.</p>
 <span>  derivative <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  binary <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  vcov <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  weights <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  L <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  U <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  tol <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  eigtrunc <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  print.level <span class="op">=</span> <span class="fl">0</span></span>
+<span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"cv"</span><span class="op">)</span>,</span>
+<span>  lambda.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  nfold <span class="op">=</span> <span class="fl">0L</span>,</span>
+<span>  ncross <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  stratify <span class="op">=</span> <span class="cn">TRUE</span>,</span>
+<span>  seed.cv <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  cv.1se <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  autotune <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  autotune.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  varmod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"const"</span><span class="op">)</span>,</span>
+<span>  n.boot <span class="op">=</span> <span class="fl">0L</span>,</span>
+<span>  na.action <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"impute"</span>, <span class="st">"omit"</span><span class="op">)</span>,</span>
+<span>  trace <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  nthreads <span class="op">=</span> <span class="fl">0L</span>,</span>
+<span>  print.level <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># S3 method for class 'krls_rr'</span></span>
-<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">object</span>, <span class="va">newdata</span>, se.fit <span class="op">=</span> <span class="cn">FALSE</span>, <span class="va">...</span><span class="op">)</span></span></code></pre></div>
+<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span></span>
+<span>  <span class="va">object</span>,</span>
+<span>  newdata <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  se.fit <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  interval <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"pint"</span><span class="op">)</span>,</span>
+<span>  level <span class="op">=</span> <span class="fl">0.95</span>,</span>
+<span>  <span class="va">...</span></span>
+<span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -75,8 +104,25 @@ the original <code>(X, y)</code> scale.</p>
 
 
 <dl><dt id="arg-x">X<a class="anchor" aria-label="anchor" href="#arg-x"></a></dt>
-<dd><p>A numeric matrix of predictors (<code>n x p</code>).  Constant columns
-are rejected.  Missing values are not allowed.</p></dd>
+<dd><p>A numeric matrix or data frame of predictors (<code>n x p</code>).
+Constant columns are rejected. Factor / character columns in a
+data frame are expanded via <code>model.matrix(~ ., x)</code> (treatment
+contrasts, intercept dropped). Missing values are handled via
+<code>na.action</code> (see below).</p></dd>
+
+
+<dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
+<dd><p>Currently unused (caught for forward compatibility).</p></dd>
+
+
+<dt id="arg-data">data<a class="anchor" aria-label="anchor" href="#arg-data"></a></dt>
+<dd><p>Used only by the formula method. A data frame containing
+the variables referenced by the formula.</p></dd>
+
+
+<dt id="arg-subset">subset<a class="anchor" aria-label="anchor" href="#arg-subset"></a></dt>
+<dd><p>Used only by the formula method. An optional integer
+or logical vector restricting rows of <code>data</code> used for the fit.</p></dd>
 
 
 <dt id="arg-y">y<a class="anchor" aria-label="anchor" href="#arg-y"></a></dt>
@@ -111,6 +157,13 @@ effects are replaced by predicted-Y first differences (matches
 covariance and the variance of average marginal effects.</p></dd>
 
 
+<dt id="arg-weights">weights<a class="anchor" aria-label="anchor" href="#arg-weights"></a></dt>
+<dd><p>Optional vector of observation weights (length <code>n</code>,
+strictly positive). Internally normalised to mean 1. Implements
+weighted KRLS via a <code>D K D</code> transform where <code>D = diag(sqrt(w))</code>.
+<code>weights = rep(1, n)</code> is byte-identical to the unweighted path.</p></dd>
+
+
 <dt id="arg-l-u">L, U<a class="anchor" aria-label="anchor" href="#arg-l-u"></a></dt>
 <dd><p>Optional lower / upper bracket for the lambda search.  If
 <code>NULL</code>, defaults follow <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code>.</p></dd>
@@ -127,9 +180,89 @@ When set, eigenvalues below <code>eigtrunc * max(d)</code> are dropped from
 the solve.  <code>NULL</code> (default) keeps all eigenvalues.</p></dd>
 
 
+<dt id="arg-lambda-method">lambda.method<a class="anchor" aria-label="anchor" href="#arg-lambda-method"></a></dt>
+<dd><p>Lambda-selection rule. <code>"loo"</code> (default) uses
+the closed-form leave-one-out golden-section search; <code>"cv"</code>
+uses K-fold CV over a grid (<code>nfold &gt; 0</code> required).</p></dd>
+
+
+<dt id="arg-lambda-grid">lambda.grid<a class="anchor" aria-label="anchor" href="#arg-lambda-grid"></a></dt>
+<dd><p>Optional numeric vector of lambda candidates for
+<code>lambda.method = "cv"</code>. <code>NULL</code> (default) auto-generates a
+log-spaced grid in <code>[L, U]</code>.</p></dd>
+
+
+<dt id="arg-nfold">nfold<a class="anchor" aria-label="anchor" href="#arg-nfold"></a></dt>
+<dd><p>Number of CV folds for <code>lambda.method = "cv"</code> or for
+<code>autotune</code>. <code>0</code> (default) disables CV.</p></dd>
+
+
+<dt id="arg-ncross">ncross<a class="anchor" aria-label="anchor" href="#arg-ncross"></a></dt>
+<dd><p>Number of CV repetitions (each builds a fresh fold
+partition). Default <code>1</code>.</p></dd>
+
+
+<dt id="arg-stratify">stratify<a class="anchor" aria-label="anchor" href="#arg-stratify"></a></dt>
+<dd><p>If <code>TRUE</code> (default), CV folds are quantile-
+stratified on <code>y</code>.</p></dd>
+
+
+<dt id="arg-seed-cv">seed.cv<a class="anchor" aria-label="anchor" href="#arg-seed-cv"></a></dt>
+<dd><p>Optional integer seed for the CV fold partition.</p></dd>
+
+
+<dt id="arg-cv-se">cv.1se<a class="anchor" aria-label="anchor" href="#arg-cv-se"></a></dt>
+<dd><p>If <code>TRUE</code>, applies the one-standard-error rule when
+picking lambda under CV (smallest model within 1 SE of the
+minimum mean CV-MSE). Default <code>FALSE</code>.</p></dd>
+
+
+<dt id="arg-autotune">autotune<a class="anchor" aria-label="anchor" href="#arg-autotune"></a></dt>
+<dd><p>If <code>TRUE</code>, runs an inner CV grid search over
+<code>sigma</code> (default grid: <code>ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)</code>)
+and refits the winner on the full data. Default <code>FALSE</code>.</p></dd>
+
+
+<dt id="arg-autotune-grid">autotune.grid<a class="anchor" aria-label="anchor" href="#arg-autotune-grid"></a></dt>
+<dd><p>Optional numeric vector of <code>sigma</code> candidates
+for autotune. <code>NULL</code> (default) uses the default multiplicative
+grid.</p></dd>
+
+
+<dt id="arg-varmod">varmod<a class="anchor" aria-label="anchor" href="#arg-varmod"></a></dt>
+<dd><p>Residual variance model used to construct prediction
+intervals via <code>predict(..., interval = "pint")</code>. <code>"none"</code>
+(default) disables PIs; <code>"const"</code> uses a homoscedastic
+<code>sigma_hat</code> estimated from the training residuals.</p></dd>
+
+
+<dt id="arg-n-boot">n.boot<a class="anchor" aria-label="anchor" href="#arg-n-boot"></a></dt>
+<dd><p>Number of bootstrap replicates for bagging. <code>0</code>
+(default) disables bagging. When <code>n.boot &gt; 0</code>, prediction
+averages across <code>n.boot</code> replicate fits.</p></dd>
+
+
+<dt id="arg-na-action">na.action<a class="anchor" aria-label="anchor" href="#arg-na-action"></a></dt>
+<dd><p>How to handle missing values in <code>X</code>. <code>"impute"</code>
+(default) replaces NAs with the column median (stored on the fit
+and reapplied at <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> time). <code>"omit"</code> drops rows with any
+NA. Missing <code>y</code> is always an error.</p></dd>
+
+
+<dt id="arg-trace">trace<a class="anchor" aria-label="anchor" href="#arg-trace"></a></dt>
+<dd><p>Integer. <code>0</code> is silent, <code>&gt; 0</code> enables progress
+diagnostics (currently: prints chosen lambda when <code>&gt; 1</code>,
+golden-section progress when <code>&gt; 2</code>). Replaces <code>print.level</code>.</p></dd>
+
+
+<dt id="arg-nthreads">nthreads<a class="anchor" aria-label="anchor" href="#arg-nthreads"></a></dt>
+<dd><p>Integer. Number of threads to use for the C++ kernel
+build / decomposition. <code>0</code> (default) means use
+<code><a href="https://rdrr.io/pkg/RcppParallel/man/setThreadOptions.html" class="external-link">RcppParallel::defaultNumThreads()</a></code>.</p></dd>
+
+
 <dt id="arg-print-level">print.level<a class="anchor" aria-label="anchor" href="#arg-print-level"></a></dt>
-<dd><p>Integer.  <code>0</code> is silent, <code>1</code> prints the chosen
-lambda and marginal-effect summaries.  Default <code>0</code>.</p></dd>
+<dd><p>Deprecated alias for <code>trace</code>. Prefer <code>trace</code>.</p></dd>
 
 
 <dt id="arg-object">object<a class="anchor" aria-label="anchor" href="#arg-object"></a></dt>
@@ -137,8 +270,9 @@ lambda and marginal-effect summaries.  Default <code>0</code>.</p></dd>
 
 
 <dt id="arg-newdata">newdata<a class="anchor" aria-label="anchor" href="#arg-newdata"></a></dt>
-<dd><p>A numeric matrix with the same columns as the training
-<code>X</code>.</p></dd>
+<dd><p>A numeric matrix or data frame with the same columns
+as the training <code>X</code> (or matching the training formula).  <code>NULL</code>
+returns <code>object$fitted</code>.</p></dd>
 
 
 <dt id="arg-se-fit">se.fit<a class="anchor" aria-label="anchor" href="#arg-se-fit"></a></dt>
@@ -147,16 +281,28 @@ of the predictions.  Requires the fit was created with
 <code>vcov = TRUE</code>.</p></dd>
 
 
-<dt id="arg--">...<a class="anchor" aria-label="anchor" href="#arg--"></a></dt>
-<dd><p>Currently unused.</p></dd>
+<dt id="arg-interval">interval<a class="anchor" aria-label="anchor" href="#arg-interval"></a></dt>
+<dd><p>Prediction-interval mode. <code>"none"</code> (default)
+returns point predictions only; <code>"pint"</code> returns lower/upper
+bounds at confidence level <code>level</code>, requires the fit was
+created with <code>varmod = "const"</code> (or other non-<code>"none"</code>
+<code>varmod</code>).</p></dd>
+
+
+<dt id="arg-level">level<a class="anchor" aria-label="anchor" href="#arg-level"></a></dt>
+<dd><p>Confidence level for <code>interval = "pint"</code>. Default
+<code>0.95</code>.</p></dd>
 
 </dl></div>
     <div class="section level2">
     <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
-    <p>An object of S3 class <code>"krls"</code> with components mirroring
-<code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code>: <code>K</code>, <code>coeffs</code>, <code>Looe</code>, <code>fitted</code>, <code>X</code>, <code>y</code>, <code>sigma</code>,
-<code>lambda</code>, <code>R2</code>, <code>derivatives</code>, <code>avgderivatives</code>,
-<code>var.avgderivatives</code>, <code>vcov.c</code>, <code>vcov.fitted</code>, <code>binaryindicator</code>.</p>
+    <p>An object of S3 class <code>c("krls_rr", "krls")</code> with components
+mirroring <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code>: <code>K</code>, <code>coeffs</code>, <code>Looe</code>, <code>fitted</code>, <code>X</code>,
+<code>y</code>, <code>sigma</code>, <code>lambda</code>, <code>R2</code>, <code>derivatives</code>, <code>avgderivatives</code>,
+<code>var.avgderivatives</code>, <code>vcov.c</code>, <code>vcov.fitted</code>, <code>binaryindicator</code>.
+Formula-method fits additionally carry <code>call</code>, <code>terms</code>, <code>xlevels</code>,
+<code>factor_info</code>, <code>na.action</code>, and <code>na.medians</code> for downstream
+<code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code>, <code><a href="https://rdrr.io/r/stats/update.html" class="external-link">update()</a></code>, and <code><a href="https://rdrr.io/r/stats/model.matrix.html" class="external-link">model.matrix()</a></code> support.</p>
 <p><code>Looe</code> follows the <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> scale convention: it is the sum
 of squared leave-one-out residuals on the <em>standardised</em> <code>y</code> scale
 multiplied by <code>sd(y)</code>, so its units are <code>[y^2 / sd_y] = [y]</code>.  This
@@ -166,7 +312,14 @@ squared units.</p>
     </div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p>The numerical pipeline mirrors <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> exactly:</p><ol><li><p><code>X</code> and <code>y</code> are standardised (column-centred, unit sd).</p></li>
+    <p>Three call styles are supported (mirrors <code><a href="ares.html">ares()</a></code>):</p><ul><li><p><code>krls(X, y, ...)</code>  – matrix / numeric interface (back-compatible).</p></li>
+<li><p><code>krls(y ~ x1 + x2 + ..., data = df, ...)</code> – formula interface
+with factor expansion and derived terms (<code>I(x^2)</code>, <code>poly(x, 2)</code>,
+etc).</p></li>
+<li><p><code>krls(df, y, ...)</code> where <code>df</code> is a data frame with numeric +
+factor / character columns – expands categorical columns via
+<code>model.matrix(~ ., df)</code> (treatment contrasts, intercept dropped).</p></li>
+</ul><p>The numerical pipeline mirrors <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> exactly:</p><ol><li><p><code>X</code> and <code>y</code> are standardised (column-centred, unit sd).</p></li>
 <li><p>The Gaussian kernel <code>K_ij = exp(-||x_i - x_j||^2 / sigma)</code> is built
 in parallel C++.</p></li>
 <li><p><code>K</code> is eigendecomposed.  All subsequent solves use the
@@ -233,26 +386,32 @@ Analysis</em> 22(2):143–168.</p>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 50% 0.7490423 -0.1920135 -0.2998952</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> 75% 0.8713291  0.4931363 -0.2067177</span>
 <span class="r-in"><span></span></span>
+<span class="r-in"><span><span class="co">## Formula interface with mixed numeric + factor predictors.</span></span></span>
+<span class="r-in"><span><span class="va">df</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>age <span class="op">=</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span>, income <span class="op">=</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span>,</span></span>
+<span class="r-in"><span>                 region <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/factor.html" class="external-link">factor</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/sample.html" class="external-link">sample</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"N"</span>, <span class="st">"S"</span><span class="op">)</span>, <span class="va">n</span>, replace <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span><span class="op">)</span>,</span></span>
+<span class="r-in"><span>                 y <span class="op">=</span> <span class="va">y</span><span class="op">)</span></span></span>
+<span class="r-in"><span><span class="va">fit_f</span> <span class="op">&lt;-</span> <span class="fu">krls</span><span class="op">(</span><span class="va">y</span> <span class="op">~</span> <span class="va">age</span> <span class="op">+</span> <span class="va">income</span> <span class="op">+</span> <span class="va">region</span>, data <span class="op">=</span> <span class="va">df</span><span class="op">)</span></span></span>
+<span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co">## Predictions on new data with pointwise SEs.</span></span></span>
 <span class="r-in"><span><span class="va">Xnew</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="fl">20</span> <span class="op">*</span> <span class="fl">3</span><span class="op">)</span>, <span class="fl">20</span>, <span class="fl">3</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">colnames</a></span><span class="op">(</span><span class="va">Xnew</span><span class="op">)</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/colnames.html" class="external-link">colnames</a></span><span class="op">(</span><span class="va">X</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="va">pr</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="va">Xnew</span>, se.fit <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">fit</span><span class="op">)</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>            [,1]</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1,]  1.8514244</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2,]  0.6177231</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] -0.4742385</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [4,]  0.9832079</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [5,] -0.2015325</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [6,]  0.6944200</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>             [,1]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1,]  1.61265745</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [2,]  0.11624507</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] -0.31083262</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] -0.98481768</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [5,]  0.05253484</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [6,]  1.14515989</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">se.fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            [,1]</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.09677354</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2,] 0.12094270</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] 0.05605460</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] 0.09838911</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [5,] 0.07140673</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [6,] 0.14824376</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.08151507</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [2,] 0.13336955</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] 0.08682870</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] 0.09446783</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [5,] 0.10664122</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [6,] 0.12060081</span>
 <span class="r-in"><span></span></span>
 </code></pre></div>
     </div>

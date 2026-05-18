@@ -136,6 +136,8 @@ and marginal effects.
 - [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   [`predict(`*`<krls_rr>`*`)`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   : Kernel Regularized Least Squares
+- [`plot(`*`<krls_rr>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.krls_rr.md)
+  : Diagnostic plot for KRLS fits
 
 ## Package
 

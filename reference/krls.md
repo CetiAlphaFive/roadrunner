@@ -9,6 +9,12 @@ and their variances are computed by default and returned on the original
 ## Usage
 
 ``` r
+krls(X, ...)
+
+# S3 method for class 'formula'
+krls(X, data = NULL, subset = NULL, ..., y = NULL)
+
+# Default S3 method
 krls(
   X,
   y,
@@ -17,23 +23,62 @@ krls(
   derivative = TRUE,
   binary = TRUE,
   vcov = TRUE,
+  weights = NULL,
   L = NULL,
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  print.level = 0
+  lambda.method = c("loo", "cv"),
+  lambda.grid = NULL,
+  nfold = 0L,
+  ncross = 1L,
+  stratify = TRUE,
+  seed.cv = NULL,
+  cv.1se = FALSE,
+  autotune = FALSE,
+  autotune.grid = NULL,
+  varmod = c("none", "const"),
+  n.boot = 0L,
+  na.action = c("impute", "omit"),
+  trace = NULL,
+  nthreads = 0L,
+  print.level = NULL,
+  ...
 )
 
 # S3 method for class 'krls_rr'
-predict(object, newdata, se.fit = FALSE, ...)
+predict(
+  object,
+  newdata = NULL,
+  se.fit = FALSE,
+  interval = c("none", "pint"),
+  level = 0.95,
+  ...
+)
 ```
 
 ## Arguments
 
 - X:
 
-  A numeric matrix of predictors (`n x p`). Constant columns are
-  rejected. Missing values are not allowed.
+  A numeric matrix or data frame of predictors (`n x p`). Constant
+  columns are rejected. Factor / character columns in a data frame are
+  expanded via `model.matrix(~ ., x)` (treatment contrasts, intercept
+  dropped). Missing values are handled via `na.action` (see below).
+
+- ...:
+
+  Currently unused (caught for forward compatibility).
+
+- data:
+
+  Used only by the formula method. A data frame containing the variables
+  referenced by the formula.
+
+- subset:
+
+  Used only by the formula method. An optional integer or logical vector
+  restricting rows of `data` used for the fit.
 
 - y:
 
@@ -67,6 +112,13 @@ predict(object, newdata, se.fit = FALSE, ...)
   Logical. If `TRUE` (default), compute the coefficient covariance and
   the variance of average marginal effects.
 
+- weights:
+
+  Optional vector of observation weights (length `n`, strictly
+  positive). Internally normalised to mean 1. Implements weighted KRLS
+  via a `D K D` transform where `D = diag(sqrt(w))`.
+  `weights = rep(1, n)` is byte-identical to the unweighted path.
+
 - L, U:
 
   Optional lower / upper bracket for the lambda search. If `NULL`,
@@ -83,10 +135,88 @@ predict(object, newdata, se.fit = FALSE, ...)
   eigenvalues below `eigtrunc * max(d)` are dropped from the solve.
   `NULL` (default) keeps all eigenvalues.
 
+- lambda.method:
+
+  Lambda-selection rule. `"loo"` (default) uses the closed-form
+  leave-one-out golden-section search; `"cv"` uses K-fold CV over a grid
+  (`nfold > 0` required).
+
+- lambda.grid:
+
+  Optional numeric vector of lambda candidates for
+  `lambda.method = "cv"`. `NULL` (default) auto-generates a log-spaced
+  grid in `[L, U]`.
+
+- nfold:
+
+  Number of CV folds for `lambda.method = "cv"` or for `autotune`. `0`
+  (default) disables CV.
+
+- ncross:
+
+  Number of CV repetitions (each builds a fresh fold partition). Default
+  `1`.
+
+- stratify:
+
+  If `TRUE` (default), CV folds are quantile- stratified on `y`.
+
+- seed.cv:
+
+  Optional integer seed for the CV fold partition.
+
+- cv.1se:
+
+  If `TRUE`, applies the one-standard-error rule when picking lambda
+  under CV (smallest model within 1 SE of the minimum mean CV-MSE).
+  Default `FALSE`.
+
+- autotune:
+
+  If `TRUE`, runs an inner CV grid search over `sigma` (default grid:
+  `ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`) and refits the winner on the
+  full data. Default `FALSE`.
+
+- autotune.grid:
+
+  Optional numeric vector of `sigma` candidates for autotune. `NULL`
+  (default) uses the default multiplicative grid.
+
+- varmod:
+
+  Residual variance model used to construct prediction intervals via
+  `predict(..., interval = "pint")`. `"none"` (default) disables PIs;
+  `"const"` uses a homoscedastic `sigma_hat` estimated from the training
+  residuals.
+
+- n.boot:
+
+  Number of bootstrap replicates for bagging. `0` (default) disables
+  bagging. When `n.boot > 0`, prediction averages across `n.boot`
+  replicate fits.
+
+- na.action:
+
+  How to handle missing values in `X`. `"impute"` (default) replaces NAs
+  with the column median (stored on the fit and reapplied at
+  [`predict()`](https://rdrr.io/r/stats/predict.html) time). `"omit"`
+  drops rows with any NA. Missing `y` is always an error.
+
+- trace:
+
+  Integer. `0` is silent, `> 0` enables progress diagnostics (currently:
+  prints chosen lambda when `> 1`, golden-section progress when `> 2`).
+  Replaces `print.level`.
+
+- nthreads:
+
+  Integer. Number of threads to use for the C++ kernel build /
+  decomposition. `0` (default) means use
+  [`RcppParallel::defaultNumThreads()`](https://rdrr.io/pkg/RcppParallel/man/setThreadOptions.html).
+
 - print.level:
 
-  Integer. `0` is silent, `1` prints the chosen lambda and
-  marginal-effect summaries. Default `0`.
+  Deprecated alias for `trace`. Prefer `trace`.
 
 - object:
 
@@ -94,24 +224,37 @@ predict(object, newdata, se.fit = FALSE, ...)
 
 - newdata:
 
-  A numeric matrix with the same columns as the training `X`.
+  A numeric matrix or data frame with the same columns as the training
+  `X` (or matching the training formula). `NULL` returns
+  `object$fitted`.
 
 - se.fit:
 
   Logical. If `TRUE`, return pointwise standard errors of the
   predictions. Requires the fit was created with `vcov = TRUE`.
 
-- ...:
+- interval:
 
-  Currently unused.
+  Prediction-interval mode. `"none"` (default) returns point predictions
+  only; `"pint"` returns lower/upper bounds at confidence level `level`,
+  requires the fit was created with `varmod = "const"` (or other
+  non-`"none"` `varmod`).
+
+- level:
+
+  Confidence level for `interval = "pint"`. Default `0.95`.
 
 ## Value
 
-An object of S3 class `"krls"` with components mirroring
+An object of S3 class `c("krls_rr", "krls")` with components mirroring
 [`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html): `K`, `coeffs`,
 `Looe`, `fitted`, `X`, `y`, `sigma`, `lambda`, `R2`, `derivatives`,
 `avgderivatives`, `var.avgderivatives`, `vcov.c`, `vcov.fitted`,
-`binaryindicator`.
+`binaryindicator`. Formula-method fits additionally carry `call`,
+`terms`, `xlevels`, `factor_info`, `na.action`, and `na.medians` for
+downstream [`predict()`](https://rdrr.io/r/stats/predict.html),
+[`update()`](https://rdrr.io/r/stats/update.html), and
+[`model.matrix()`](https://rdrr.io/r/stats/model.matrix.html) support.
 
 `Looe` follows the
 [`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html) scale
@@ -123,6 +266,18 @@ with code that consumed
 **not** the LOO MSE in raw-`y` squared units.
 
 ## Details
+
+Three call styles are supported (mirrors
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)):
+
+- `krls(X, y, ...)` – matrix / numeric interface (back-compatible).
+
+- `krls(y ~ x1 + x2 + ..., data = df, ...)` – formula interface with
+  factor expansion and derived terms (`I(x^2)`, `poly(x, 2)`, etc).
+
+- `krls(df, y, ...)` where `df` is a data frame with numeric + factor /
+  character columns – expands categorical columns via
+  `model.matrix(~ ., df)` (treatment contrasts, intercept dropped).
 
 The numerical pipeline mirrors
 [`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html) exactly:
@@ -204,24 +359,30 @@ summary(fit)
 #> 50% 0.7490423 -0.1920135 -0.2998952
 #> 75% 0.8713291  0.4931363 -0.2067177
 
+## Formula interface with mixed numeric + factor predictors.
+df <- data.frame(age = X[, 1], income = X[, 2],
+                 region = factor(sample(c("N", "S"), n, replace = TRUE)),
+                 y = y)
+fit_f <- krls(y ~ age + income + region, data = df)
+
 ## Predictions on new data with pointwise SEs.
 Xnew <- matrix(rnorm(20 * 3), 20, 3)
 colnames(Xnew) <- colnames(X)
 pr <- predict(fit, Xnew, se.fit = TRUE)
 head(pr$fit)
-#>            [,1]
-#> [1,]  1.8514244
-#> [2,]  0.6177231
-#> [3,] -0.4742385
-#> [4,]  0.9832079
-#> [5,] -0.2015325
-#> [6,]  0.6944200
+#>             [,1]
+#> [1,]  1.61265745
+#> [2,]  0.11624507
+#> [3,] -0.31083262
+#> [4,] -0.98481768
+#> [5,]  0.05253484
+#> [6,]  1.14515989
 head(pr$se.fit)
 #>            [,1]
-#> [1,] 0.09677354
-#> [2,] 0.12094270
-#> [3,] 0.05605460
-#> [4,] 0.09838911
-#> [5,] 0.07140673
-#> [6,] 0.14824376
+#> [1,] 0.08151507
+#> [2,] 0.13336955
+#> [3,] 0.08682870
+#> [4,] 0.09446783
+#> [5,] 0.10664122
+#> [6,] 0.12060081
 ```
