@@ -217,11 +217,16 @@ krls.default <- function(X, y,
                          derivative = TRUE, binary = TRUE, vcov = TRUE,
                          weights = NULL,
                          L = NULL, U = NULL, tol = NULL, eigtrunc = NULL,
+                         lambda.method = c("loo", "cv"),
+                         lambda.grid = NULL,
+                         nfold = 0L, ncross = 1L, stratify = TRUE,
+                         seed.cv = NULL, cv.1se = FALSE,
                          na.action = c("impute", "omit"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
   na.action <- match.arg(na.action)
+  lambda.method <- match.arg(lambda.method)
 
   ## --- print.level / trace harmonisation ---------------------------
   # Phase 8: `trace` is the canonical name (matches ares).  `print.level`
@@ -493,13 +498,185 @@ krls.default <- function(X, y,
   }
 
   ## --- lambda selection --------------------------------------------
+  # Phase 3: lambda.method = c('loo', 'cv'). LOO is the back-compat
+  # default and uses the closed-form Hainmueller-Hazlett identity. CV
+  # does K-fold (or repeated K-fold) over an explicit lambda.grid and
+  # picks argmin held-out MSE (or 1-SE), optionally seeded for
+  # reproducibility.
+  cv_diag <- NULL
   if (is.null(lambda)) {
-    lambda <- .krls_lambdasearch(dvals = dvals, V = V, Vsq = Vsq,
-                                 Vty = Vty, n_y = nrow(y),
-                                 L = L, U = U, tol = tol,
-                                 noisy = isTRUE(trace > 2))
-    if (trace > 1) {
-      cat("Lambda that minimizes Loo-Loss is:", round(lambda, 5), "\n")
+    if (lambda.method == "loo") {
+      lambda <- .krls_lambdasearch(dvals = dvals, V = V, Vsq = Vsq,
+                                   Vty = Vty, n_y = nrow(y),
+                                   L = L, U = U, tol = tol,
+                                   noisy = isTRUE(trace > 2))
+      if (trace > 1) {
+        cat("Lambda that minimizes Loo-Loss is:", round(lambda, 5), "\n")
+      }
+    } else {
+      # CV path. Default nfold = 5 if user asked lambda.method='cv' but
+      # didn't specify nfold. nfold = nrow(X) reproduces LOO via CV.
+      nfold_int <- as.integer(nfold)
+      if (is.na(nfold_int) || nfold_int <= 0L) nfold_int <- 5L
+      if (nfold_int > nrow(X))
+        stop("krls: nfold (", nfold_int, ") exceeds nrow(X) (",
+             nrow(X), ").")
+      ncross_int <- as.integer(ncross)
+      if (is.na(ncross_int) || ncross_int < 1L) ncross_int <- 1L
+
+      # Default lambda.grid: 30 log-spaced points within the standard
+      # (L, U) bracket from the closed-form search (which is itself
+      # derived from the eigenvalues so the grid is data-adaptive).
+      if (is.null(lambda.grid)) {
+        # Reuse the same L/U bracket the golden search would use.
+        U_grid <- if (is.null(U)) {
+          Uloc <- nrow(y)
+          while (sum(dvals / (dvals + Uloc)) < 1) Uloc <- Uloc - 1
+          Uloc
+        } else U
+        L_grid <- if (is.null(L)) {
+          q  <- which.min(abs(dvals - (max(dvals) / 1000)))
+          Lloc  <- .Machine$double.eps
+          while (sum(dvals / (dvals + Lloc)) > q) Lloc <- Lloc + 0.05
+          Lloc
+        } else max(L, .Machine$double.eps)
+        if (U_grid <= L_grid) {
+          U_grid <- max(L_grid * 10, L_grid + 1)
+        }
+        lambda.grid <- exp(seq(log(max(L_grid, .Machine$double.eps)),
+                               log(U_grid), length.out = 30L))
+      } else {
+        stopifnot(is.numeric(lambda.grid),
+                  length(lambda.grid) >= 1L,
+                  all(lambda.grid > 0))
+        lambda.grid <- sort(unique(as.numeric(lambda.grid)))
+      }
+
+      # RNG protection so CV only consumes the user's RNG when
+      # seed.cv = NULL.
+      if (!is.null(seed.cv)) {
+        if (exists(".Random.seed", envir = globalenv(),
+                   inherits = FALSE)) {
+          old_seed <- get(".Random.seed", envir = globalenv(),
+                          inherits = FALSE)
+          on.exit(assign(".Random.seed", old_seed, envir = globalenv()),
+                  add = TRUE)
+        } else {
+          on.exit(rm(list = ".Random.seed", envir = globalenv()),
+                  add = TRUE)
+        }
+        set.seed(as.integer(seed.cv))
+      }
+
+      n_cv <- nrow(X)
+      # Stratification for continuous y: use quantile bins (10 bins or
+      # fewer if n < 50).  For a small-y, fall back to plain shuffle.
+      build_folds <- function(n_pts, k, strat) {
+        if (isTRUE(strat) && n_pts >= 20L) {
+          nb <- min(10L, max(2L, floor(n_pts / 5)))
+          bins <- cut(as.numeric(y), breaks = nb, include.lowest = TRUE,
+                      labels = FALSE)
+          # Distribute each bin's indices round-robin across folds.
+          fid <- integer(n_pts)
+          for (b in seq_len(nb)) {
+            idx_b <- which(bins == b)
+            if (length(idx_b) == 0L) next
+            idx_b <- sample(idx_b)  # shuffle within bin
+            fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
+          }
+          # Any unassigned (NA bin) get round-robin too.
+          if (any(fid == 0L)) {
+            miss <- which(fid == 0L)
+            fid[miss] <- rep_len(seq_len(k), length(miss))
+          }
+          fid
+        } else {
+          rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+        }
+      }
+
+      mse_mat <- matrix(NA_real_, nrow = length(lambda.grid),
+                        ncol = nfold_int * ncross_int)
+      col_idx <- 1L
+      for (cc in seq_len(ncross_int)) {
+        fid <- build_folds(n_cv, nfold_int, stratify)
+        for (k in seq_len(nfold_int)) {
+          test_i  <- which(fid == k)
+          train_i <- which(fid != k)
+          if (length(test_i) == 0L || length(train_i) < 3L) next
+          Xs_tr <- Xs[train_i, , drop = FALSE]
+          ys_tr <- ys[train_i]
+          Xs_te <- Xs[test_i,  , drop = FALSE]
+          ys_te <- ys[test_i]
+          # Fold-local kernel + eigendecomp (the shared piece across
+          # all lambda candidates per fold).
+          K_tr <- krls_kernel_cpp(Xs_tr, sigma)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma)
+          if (!is.null(w_norm)) {
+            sqw_tr <- sqrt(w_norm[train_i])
+            K_tr_use <- K_tr * tcrossprod(sqw_tr)
+            ys_tr_use <- sqw_tr * ys_tr
+          } else {
+            sqw_tr <- NULL
+            K_tr_use <- K_tr
+            ys_tr_use <- ys_tr
+          }
+          eo_k <- krls_eig_cpp(K_tr_use)
+          dvals_k <- as.numeric(eo_k$values)
+          V_k     <- eo_k$vectors
+          Vsq_k   <- krls_vsq_cpp(V_k)
+          Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+          for (li in seq_along(lambda.grid)) {
+            lam_l <- lambda.grid[li]
+            sol_k <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_l)
+            c_solve <- as.numeric(sol_k$coeffs)
+            c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+            yhat_te <- as.numeric(K_te %*% c_fold)
+            err_v   <- (ys_te - yhat_te)
+            if (!is.null(w_norm)) {
+              w_te <- w_norm[test_i]
+              mse_mat[li, col_idx] <-
+                sum(w_te * err_v^2) / max(sum(w_te), .Machine$double.eps)
+            } else {
+              mse_mat[li, col_idx] <- mean(err_v^2)
+            }
+          }
+          col_idx <- col_idx + 1L
+        }
+      }
+      # Average across folds / repeats. Use min().
+      mean_mse <- rowMeans(mse_mat, na.rm = TRUE)
+      if (all(is.na(mean_mse)))
+        stop("krls: lambda.method='cv' produced no usable folds; ",
+             "check nfold / stratify.")
+      best_i <- which.min(mean_mse)
+      lambda <- lambda.grid[best_i]
+      if (isTRUE(cv.1se)) {
+        # 1-SE rule: pick the largest lambda whose mean is within 1 SE
+        # of the best. SE = sd across folds / sqrt(n_folds).
+        sd_mse <- apply(mse_mat, 1L, function(z) sd(z, na.rm = TRUE))
+        nfok <- rowSums(!is.na(mse_mat))
+        se_mse <- sd_mse / sqrt(pmax(nfok, 1L))
+        thresh <- mean_mse[best_i] + se_mse[best_i]
+        cand <- which(mean_mse <= thresh)
+        if (length(cand)) lambda <- max(lambda.grid[cand])
+      }
+      cv_diag <- list(
+        method      = "cv",
+        nfold       = nfold_int,
+        ncross      = ncross_int,
+        stratify    = isTRUE(stratify),
+        seed.cv     = seed.cv,
+        lambda.grid = lambda.grid,
+        mean_mse    = mean_mse,
+        mse_per_fold = mse_mat,
+        best_idx    = best_i,
+        cv.1se      = isTRUE(cv.1se)
+      )
+      if (trace > 1) {
+        cat("CV lambda (", nfold_int, "-fold x ", ncross_int, " cross):",
+            round(lambda, 6), "\n", sep = "")
+      }
     }
   } else {
     stopifnot(is.numeric(lambda), length(lambda) == 1, lambda > 0)
@@ -598,6 +775,7 @@ krls.default <- function(X, y,
   out$na.medians <- na_medians
   out$factor_info <- factor_info
   out$weights <- if (!is.null(w_norm)) w_norm else NULL
+  if (!is.null(cv_diag)) out$cv <- cv_diag
 
   class(out) <- c("krls_rr", "krls")
 
