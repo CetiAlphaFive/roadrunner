@@ -107,6 +107,35 @@
 #' @param eigtrunc Optional eigenvalue truncation cutoff in `(0, 1]`.
 #'   When set, eigenvalues below `eigtrunc * max(d)` are dropped from
 #'   the solve.  `NULL` (default) keeps all eigenvalues.
+#' @param lambda.method Lambda-selection rule. `"loo"` (default) uses
+#'   the closed-form leave-one-out golden-section search; `"cv"`
+#'   uses K-fold CV over a grid (`nfold > 0` required).
+#' @param lambda.grid Optional numeric vector of lambda candidates for
+#'   `lambda.method = "cv"`. `NULL` (default) auto-generates a
+#'   log-spaced grid in `[L, U]`.
+#' @param nfold Number of CV folds for `lambda.method = "cv"` or for
+#'   `autotune`. `0` (default) disables CV.
+#' @param ncross Number of CV repetitions (each builds a fresh fold
+#'   partition). Default `1`.
+#' @param stratify If `TRUE` (default), CV folds are quantile-
+#'   stratified on `y`.
+#' @param seed.cv Optional integer seed for the CV fold partition.
+#' @param cv.1se If `TRUE`, applies the one-standard-error rule when
+#'   picking lambda under CV (smallest model within 1 SE of the
+#'   minimum mean CV-MSE). Default `FALSE`.
+#' @param autotune If `TRUE`, runs an inner CV grid search over
+#'   `sigma` (default grid: `ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`)
+#'   and refits the winner on the full data. Default `FALSE`.
+#' @param autotune.grid Optional numeric vector of `sigma` candidates
+#'   for autotune. `NULL` (default) uses the default multiplicative
+#'   grid.
+#' @param varmod Residual variance model used to construct prediction
+#'   intervals via `predict(..., interval = "pint")`. `"none"`
+#'   (default) disables PIs; `"const"` uses a homoscedastic
+#'   `sigma_hat` estimated from the training residuals.
+#' @param n.boot Number of bootstrap replicates for bagging. `0`
+#'   (default) disables bagging. When `n.boot > 0`, prediction
+#'   averages across `n.boot` replicate fits.
 #' @param na.action How to handle missing values in `X`. `"impute"`
 #'   (default) replaces NAs with the column median (stored on the fit
 #'   and reapplied at `predict()` time). `"omit"` drops rows with any
@@ -1022,6 +1051,13 @@ krls.default <- function(X, y,
 #' @param se.fit Logical.  If `TRUE`, return pointwise standard errors
 #'   of the predictions.  Requires the fit was created with
 #'   `vcov = TRUE`.
+#' @param interval Prediction-interval mode. `"none"` (default)
+#'   returns point predictions only; `"pint"` returns lower/upper
+#'   bounds at confidence level `level`, requires the fit was
+#'   created with `varmod = "const"` (or other non-`"none"`
+#'   `varmod`).
+#' @param level Confidence level for `interval = "pint"`. Default
+#'   `0.95`.
 #' @export
 predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                               interval = c("none", "pint"),

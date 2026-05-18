@@ -26,7 +26,6 @@ LinkingTo:
     RcppParallel
 Imports:
     Rcpp,
-    RcppArmadillo,
     RcppParallel
 Suggests:
     bench,

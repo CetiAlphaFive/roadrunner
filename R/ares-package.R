@@ -34,5 +34,6 @@
 #' @useDynLib roadrunner, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
 #' @importFrom RcppParallel defaultNumThreads setThreadOptions
+#' @importFrom stats printCoefmat pt qt quantile sd setNames var
 ## usethis namespace: end
 NULL

@@ -101,6 +101,46 @@ weighted KRLS via a \verb{D K D} transform where \code{D = diag(sqrt(w))}.
 When set, eigenvalues below \code{eigtrunc * max(d)} are dropped from
 the solve.  \code{NULL} (default) keeps all eigenvalues.}
 
+\item{lambda.method}{Lambda-selection rule. \code{"loo"} (default) uses
+the closed-form leave-one-out golden-section search; \code{"cv"}
+uses K-fold CV over a grid (\code{nfold > 0} required).}
+
+\item{lambda.grid}{Optional numeric vector of lambda candidates for
+\code{lambda.method = "cv"}. \code{NULL} (default) auto-generates a
+log-spaced grid in \verb{[L, U]}.}
+
+\item{nfold}{Number of CV folds for \code{lambda.method = "cv"} or for
+\code{autotune}. \code{0} (default) disables CV.}
+
+\item{ncross}{Number of CV repetitions (each builds a fresh fold
+partition). Default \code{1}.}
+
+\item{stratify}{If \code{TRUE} (default), CV folds are quantile-
+stratified on \code{y}.}
+
+\item{seed.cv}{Optional integer seed for the CV fold partition.}
+
+\item{cv.1se}{If \code{TRUE}, applies the one-standard-error rule when
+picking lambda under CV (smallest model within 1 SE of the
+minimum mean CV-MSE). Default \code{FALSE}.}
+
+\item{autotune}{If \code{TRUE}, runs an inner CV grid search over
+\code{sigma} (default grid: \code{ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)})
+and refits the winner on the full data. Default \code{FALSE}.}
+
+\item{autotune.grid}{Optional numeric vector of \code{sigma} candidates
+for autotune. \code{NULL} (default) uses the default multiplicative
+grid.}
+
+\item{varmod}{Residual variance model used to construct prediction
+intervals via \code{predict(..., interval = "pint")}. \code{"none"}
+(default) disables PIs; \code{"const"} uses a homoscedastic
+\code{sigma_hat} estimated from the training residuals.}
+
+\item{n.boot}{Number of bootstrap replicates for bagging. \code{0}
+(default) disables bagging. When \code{n.boot > 0}, prediction
+averages across \code{n.boot} replicate fits.}
+
 \item{na.action}{How to handle missing values in \code{X}. \code{"impute"}
 (default) replaces NAs with the column median (stored on the fit
 and reapplied at \code{predict()} time). \code{"omit"} drops rows with any
@@ -125,6 +165,15 @@ returns \code{object$fitted}.}
 \item{se.fit}{Logical.  If \code{TRUE}, return pointwise standard errors
 of the predictions.  Requires the fit was created with
 \code{vcov = TRUE}.}
+
+\item{interval}{Prediction-interval mode. \code{"none"} (default)
+returns point predictions only; \code{"pint"} returns lower/upper
+bounds at confidence level \code{level}, requires the fit was
+created with \code{varmod = "const"} (or other non-\code{"none"}
+\code{varmod}).}
+
+\item{level}{Confidence level for \code{interval = "pint"}. Default
+\code{0.95}.}
 }
 \value{
 An object of S3 class \code{c("krls_rr", "krls")} with components
