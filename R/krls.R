@@ -221,6 +221,7 @@ krls.default <- function(X, y,
                          lambda.grid = NULL,
                          nfold = 0L, ncross = 1L, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
+                         autotune = FALSE, autotune.grid = NULL,
                          na.action = c("impute", "omit"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
@@ -425,6 +426,16 @@ krls.default <- function(X, y,
   } else {
     stopifnot(is.numeric(sigma), length(sigma) == 1, sigma > 0)
   }
+  # --- autotune validation (Phase 4) --------------------------------
+  if (isTRUE(autotune)) {
+    if (is.null(autotune.grid)) {
+      autotune.grid <- as.numeric(d) * c(0.25, 0.5, 1, 2, 4, 8)
+    } else {
+      stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
+                all(autotune.grid > 0))
+      autotune.grid <- sort(unique(as.numeric(autotune.grid)))
+    }
+  }
   if (is.null(colnames(X))) colnames(X) <- paste0("x", seq_len(d))
 
   ## --- nthreads (Phase 8) -----------------------------------------
@@ -464,6 +475,120 @@ krls.default <- function(X, y,
     sqw <- sqrt(w_norm)
   } else {
     sqw <- NULL
+  }
+
+  ## --- autotune over sigma (Phase 4) -------------------------------
+  # Inner-CV grid search: for each sigma candidate, run a K-fold
+  # held-out MSE scan (using LOO closed-form per-fold lambda for each
+  # cell) and pick the sigma with the lowest mean held-out MSE.
+  autotune_info <- NULL
+  if (isTRUE(autotune)) {
+    nfold_at <- as.integer(nfold)
+    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 5L
+    if (nfold_at > nrow(X))
+      stop("krls: autotune nfold (", nfold_at,
+           ") exceeds nrow(X) (", nrow(X), ").")
+    if (!is.null(seed.cv)) {
+      if (exists(".Random.seed", envir = globalenv(),
+                 inherits = FALSE)) {
+        old_seed_at <- get(".Random.seed", envir = globalenv(),
+                            inherits = FALSE)
+        on.exit(assign(".Random.seed", old_seed_at,
+                       envir = globalenv()), add = TRUE)
+      } else {
+        on.exit(rm(list = ".Random.seed", envir = globalenv()),
+                add = TRUE)
+      }
+      set.seed(as.integer(seed.cv) + 7919L)  # distinct from CV stream
+    }
+    n_at <- nrow(X)
+    if (isTRUE(stratify) && n_at >= 20L) {
+      nb_at <- min(10L, max(2L, floor(n_at / 5)))
+      bins_at <- cut(as.numeric(y), breaks = nb_at,
+                     include.lowest = TRUE, labels = FALSE)
+      fid_at <- integer(n_at)
+      for (b in seq_len(nb_at)) {
+        idx_b <- which(bins_at == b)
+        if (length(idx_b) == 0L) next
+        idx_b <- sample(idx_b)
+        fid_at[idx_b] <- rep_len(seq_len(nfold_at), length(idx_b))
+      }
+      if (any(fid_at == 0L)) {
+        miss <- which(fid_at == 0L)
+        fid_at[miss] <- rep_len(seq_len(nfold_at), length(miss))
+      }
+    } else {
+      fid_at <- rep_len(seq_len(nfold_at), n_at)[sample.int(n_at)]
+    }
+    mse_sigma <- numeric(length(autotune.grid))
+    for (si in seq_along(autotune.grid)) {
+      sig_s <- autotune.grid[si]
+      mse_folds <- numeric(nfold_at)
+      ok_folds <- 0L
+      for (k in seq_len(nfold_at)) {
+        test_i  <- which(fid_at == k)
+        train_i <- which(fid_at != k)
+        if (length(test_i) == 0L || length(train_i) < 3L) next
+        Xs_tr <- Xs[train_i, , drop = FALSE]
+        ys_tr <- ys[train_i]
+        Xs_te <- Xs[test_i,  , drop = FALSE]
+        ys_te <- ys[test_i]
+        K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
+        K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
+        if (!is.null(sqw)) {
+          sqw_tr <- sqrt(w_norm[train_i])
+          K_tr_use  <- K_tr * tcrossprod(sqw_tr)
+          ys_tr_use <- sqw_tr * ys_tr
+        } else {
+          sqw_tr <- NULL
+          K_tr_use  <- K_tr
+          ys_tr_use <- ys_tr
+        }
+        eo_k    <- krls_eig_cpp(K_tr_use)
+        dvals_k <- as.numeric(eo_k$values)
+        V_k     <- eo_k$vectors
+        Vsq_k   <- krls_vsq_cpp(V_k)
+        Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+        # Per-fold LOO closed-form lambda search for this sigma cell.
+        lam_k <- tryCatch(
+          .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
+                             n_y = length(train_i),
+                             L = L, U = U, tol = tol, noisy = FALSE),
+          error = function(e) NA_real_)
+        if (is.na(lam_k)) next
+        sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
+        c_solve <- as.numeric(sol_k$coeffs)
+        c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+        yhat_te <- as.numeric(K_te %*% c_fold)
+        if (!is.null(sqw)) {
+          w_te <- w_norm[test_i]
+          mse_folds[k] <- sum(w_te * (ys_te - yhat_te)^2) /
+            max(sum(w_te), .Machine$double.eps)
+        } else {
+          mse_folds[k] <- mean((ys_te - yhat_te)^2)
+        }
+        ok_folds <- ok_folds + 1L
+      }
+      mse_sigma[si] <- if (ok_folds > 0L)
+        sum(mse_folds[seq_len(ok_folds)]) / ok_folds
+      else NA_real_
+    }
+    if (all(is.na(mse_sigma)))
+      stop("krls: autotune produced no usable folds.")
+    best_si <- which.min(mse_sigma)
+    sigma <- autotune.grid[best_si]  # winner
+    autotune_info <- list(
+      grid      = autotune.grid,
+      mse       = mse_sigma,
+      winner    = sigma,
+      nfold     = nfold_at,
+      stratify  = isTRUE(stratify),
+      seed.cv   = seed.cv
+    )
+    if (trace > 1) {
+      cat("Autotune sigma winner:", round(sigma, 4),
+          " (mse=", round(mse_sigma[best_si], 6), ")\n", sep = "")
+    }
   }
 
   ## --- kernel + eigendecomposition ---------------------------------
@@ -776,6 +901,7 @@ krls.default <- function(X, y,
   out$factor_info <- factor_info
   out$weights <- if (!is.null(w_norm)) w_norm else NULL
   if (!is.null(cv_diag)) out$cv <- cv_diag
+  if (!is.null(autotune_info)) out$autotune <- autotune_info
 
   class(out) <- c("krls_rr", "krls")
 
@@ -1105,6 +1231,21 @@ print.krls_rr <- function(x, ...) {
   if (!is.null(x$weights)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
   }
+  if (!is.null(x$autotune)) {
+    cat("  Autotune: sigma=", signif(x$autotune$winner, 4),
+        " (grid: ", paste(signif(x$autotune$grid, 3), collapse = ", "),
+        ")\n", sep = "")
+  }
+  if (!is.null(x$cv)) {
+    cat("  CV: ", x$cv$nfold, "-fold x ", x$cv$ncross,
+        " cross  (grid: ", length(x$cv$lambda.grid), " lambda)",
+        if (isTRUE(x$cv$cv.1se)) "  [1-SE rule]" else "",
+        "\n", sep = "")
+  }
+  if (!is.null(x$boot)) {
+    cat("  Bagging: n.boot = ", x$boot$n.boot, " replicate(s)\n",
+        sep = "")
+  }
   if (!is.null(x$avgderivatives)) {
     cat("\nAverage Marginal Effects:\n")
     print(setNames(as.vector(x$avgderivatives),
@@ -1120,6 +1261,9 @@ summary.krls_rr <- function(object, ...) {
                      sigma = object$sigma, lambda = object$lambda,
                      R2 = object$R2)
   out$weighted <- !is.null(object$weights)
+  out$autotune <- object$autotune
+  out$cv <- object$cv
+  out$boot_n <- if (!is.null(object$boot)) object$boot$n.boot else NULL
   if (!is.null(object$avgderivatives)) {
     se <- sqrt(as.numeric(object$var.avgderivatives))
     avg <- as.numeric(object$avgderivatives)
@@ -1150,6 +1294,17 @@ print.summary.krls_rr <- function(x, ...) {
               signif(ci["R2"], 4)))
   if (isTRUE(x$weighted)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
+  }
+  if (!is.null(x$autotune)) {
+    cat("  Autotune: sigma=", signif(x$autotune$winner, 4), "\n",
+        sep = "")
+  }
+  if (!is.null(x$cv)) {
+    cat("  CV: ", x$cv$nfold, "-fold x ", x$cv$ncross,
+        " cross\n", sep = "")
+  }
+  if (!is.null(x$boot_n)) {
+    cat("  Bagging: n.boot = ", x$boot_n, "\n", sep = "")
   }
   if (!is.null(x$avg_eff)) {
     cat("\nAverage Marginal Effects:\n")

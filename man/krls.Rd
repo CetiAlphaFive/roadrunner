@@ -31,6 +31,8 @@ krls(X, ...)
   stratify = TRUE,
   seed.cv = NULL,
   cv.1se = FALSE,
+  autotune = FALSE,
+  autotune.grid = NULL,
   na.action = c("impute", "omit"),
   trace = NULL,
   nthreads = 0L,
