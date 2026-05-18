@@ -1483,3 +1483,215 @@ print.summary.krls_rr <- function(x, ...) {
   }
   invisible(x)
 }
+
+#' Diagnostic plot for KRLS fits
+#'
+#' Four-panel diagnostic display (residuals vs fitted, Q-Q on
+#' standardised residuals, scale-location, residuals vs leverage with
+#' Cook contours) in a 2x2 grid by default. Panels 4 (Cook's distance)
+#' and 6 (Cook vs leverage) are available via `which = 1:6`. Modelled
+#' on `stats::plot.lm()` and `plot.ares()`.
+#'
+#' Leverage uses the KRLS hat matrix
+#' \deqn{H = K (K + \lambda I)^{-1} = V \mathrm{diag}(d/(d+\lambda)) V'}
+#' so `h_i = sum_k V[i,k]^2 * d_k / (d_k + lambda)`. The effective
+#' degrees of freedom is `sum(d/(d+lambda))`. Residual dispersion is
+#' `sqrt(RSS / (n - effdf))` (or `out$varmod$sigma_hat` when present).
+#'
+#' @param x A fitted `krls_rr` object.
+#' @param which Which panels to draw; integer subset of `1:6`. Defaults
+#'   to `c(1L, 2L, 3L, 5L)`.
+#' @param caption Panel titles (length 6).
+#' @param sub.caption Optional sub-caption shown across the figure.
+#' @param main Per-panel title.
+#' @param ask Activate interactive panel paging.
+#' @param id.n Number of extreme points to label per panel.
+#' @param labels.id Optional vector of point labels.
+#' @param cex.id Label cex.
+#' @param qqline Draw the Q-Q line.
+#' @param cook.levels Cook's-distance contour levels.
+#' @param add.smooth Add LOESS smoother overlay.
+#' @param label.pos Label position codes.
+#' @param panel Per-panel display function (defaults to LOESS smoother).
+#' @param ... Passed to underlying `plot` calls.
+#' @return Invisibly returns `x`.
+#' @export
+plot.krls_rr <- function(x,
+                         which = c(1L, 2L, 3L, 5L),
+                         caption = list("Residuals vs Fitted", "Normal Q-Q",
+                                        "Scale-Location",
+                                        "Cook's distance",
+                                        "Residuals vs Leverage",
+                                        expression("Cook's dist vs Leverage  " *
+                                                   h[ii] / (1 - h[ii]))),
+                         panel = if (add.smooth) graphics::panel.smooth
+                                 else graphics::points,
+                         sub.caption = NULL, main = "",
+                         ask = prod(graphics::par("mfcol")) <
+                                 length(which) &&
+                               grDevices::dev.interactive(),
+                         ...,
+                         id.n = 3L,
+                         labels.id = NULL,
+                         cex.id = 0.75,
+                         qqline = TRUE,
+                         cook.levels = c(0.5, 1.0),
+                         add.smooth = getOption("add.smooth", TRUE),
+                         label.pos = c(4, 2)) {
+  if (!inherits(x, "krls"))
+    stop("plot.krls_rr: 'x' must be a 'krls' object.")
+  which <- as.integer(which)
+  if (any(!which %in% 1:6))
+    stop("plot.krls_rr: `which` must be a subset of 1:6.")
+  show <- rep(FALSE, 6L); show[which] <- TRUE
+
+  yhat <- as.numeric(x$fitted)
+  yv   <- as.numeric(x$y)
+  rraw <- yv - yhat
+  n <- length(yhat)
+  if (n == 0L) stop("plot.krls_rr: fit has zero observations.")
+  w <- if (!is.null(x$weights)) as.numeric(x$weights) else rep(1, n)
+
+  # Hat matrix from K's eigen-decomp. We re-decompose K here (cheap
+  # for n < 2000; large-n users can pre-compute via the fit's stored
+  # K if they want to skip plot).
+  K <- x$K
+  if (is.null(K))
+    stop("plot.krls_rr: fit has no stored K matrix; cannot compute leverages.")
+  eo <- krls_eig_cpp(K)
+  dvals <- as.numeric(eo$values)
+  V     <- eo$vectors
+  lam   <- x$lambda
+  shrink <- dvals / (dvals + lam)
+  # Hat diag: h_i = sum_k V[i,k]^2 * shrink_k
+  h <- as.numeric((V * V) %*% shrink)
+  h <- pmin(pmax(h, 0), 1 - .Machine$double.eps)
+
+  effdf <- sum(shrink)
+  rdf <- max(n - effdf, 1)
+  sigma_hat <- if (!is.null(x$varmod) && !is.null(x$varmod$sigma_hat))
+    x$varmod$sigma_hat
+  else sqrt(sum(w * rraw^2) / rdf)
+
+  rstd <- rraw * sqrt(w) / (sigma_hat * sqrt(1 - h))
+  rstd[!is.finite(rstd)] <- NA_real_
+
+  cook <- (rstd^2 / max(effdf, 1)) * h / (1 - h)
+  cook[!is.finite(cook)] <- NA_real_
+
+  if (is.null(labels.id)) labels.id <- as.character(seq_len(n))
+  extrm <- function(v, k = id.n) {
+    if (k < 1L) return(integer(0))
+    finite <- which(is.finite(v))
+    if (!length(finite)) return(integer(0))
+    ord <- finite[order(-abs(v[finite]))]
+    ord[seq_len(min(k, length(ord)))]
+  }
+
+  one_fig <- all(graphics::par("mfcol") == c(1L, 1L))
+  if (one_fig && length(which) > 1L) {
+    op <- graphics::par(mfrow = c(2L, 2L), oma = c(0, 0, 2, 0),
+                        mar = c(4, 4, 2, 1))
+    on.exit(graphics::par(op), add = TRUE)
+  } else if (ask) {
+    op <- graphics::par(ask = TRUE)
+    on.exit(graphics::par(op), add = TRUE)
+  }
+
+  if (is.null(sub.caption)) {
+    cl <- if (!is.null(x$call))
+      paste(deparse(x$call, width.cutoff = 75L), collapse = " ")
+    else "krls fit"
+    sub.caption <- if (nchar(cl) > 90L)
+      paste0(substring(cl, 1L, 87L), "...") else cl
+  }
+
+  if (show[1L]) {
+    ylim <- range(rraw, na.rm = TRUE)
+    if (id.n > 0L) ylim <- grDevices::extendrange(r = ylim, f = 0.08)
+    graphics::plot(yhat, rraw, xlab = "Fitted values",
+                   ylab = "Residuals",
+                   main = main, ylim = ylim, type = "n", ...)
+    panel(yhat, rraw, ...)
+    graphics::abline(h = 0, lty = 3, col = "gray")
+    idx <- extrm(rraw)
+    if (length(idx))
+      graphics::text(yhat[idx], rraw[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[1L]], side = 3, line = 0.25, cex = 0.85)
+  }
+  if (show[2L]) {
+    qq <- stats::qqnorm(rstd, main = main,
+                        ylab = "Standardized residuals", ...)
+    if (qqline) stats::qqline(rstd, lty = 3, col = "gray")
+    idx <- extrm(rstd)
+    if (length(idx))
+      graphics::text(qq$x[idx], qq$y[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[2L]], side = 3, line = 0.25, cex = 0.85)
+  }
+  if (show[3L]) {
+    sqrtabs <- sqrt(abs(rstd))
+    graphics::plot(yhat, sqrtabs, xlab = "Fitted values",
+                   ylab = expression(sqrt(abs(`Standardized residuals`))),
+                   main = main, type = "n", ...)
+    panel(yhat, sqrtabs, ...)
+    idx <- extrm(sqrtabs)
+    if (length(idx))
+      graphics::text(yhat[idx], sqrtabs[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[3L]], side = 3, line = 0.25, cex = 0.85)
+  }
+  if (show[4L]) {
+    ylim <- c(0, max(cook, na.rm = TRUE) * 1.075)
+    graphics::plot(seq_len(n), cook, type = "h", main = main,
+                   xlab = "Obs. number", ylab = "Cook's distance",
+                   ylim = ylim, ...)
+    idx <- extrm(cook)
+    if (length(idx))
+      graphics::text(idx, cook[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[4L]], side = 3, line = 0.25, cex = 0.85)
+  }
+  if (show[5L]) {
+    xlim <- c(0, max(h, na.rm = TRUE) * 1.05)
+    ylim <- range(rstd, na.rm = TRUE, finite = TRUE)
+    if (!all(is.finite(ylim))) ylim <- c(-3, 3)
+    graphics::plot(h, rstd, xlim = xlim, ylim = ylim, xlab = "Leverage",
+                   ylab = "Standardized residuals", main = main,
+                   type = "n", ...)
+    panel(h, rstd, ...)
+    graphics::abline(h = 0, v = 0, lty = 3, col = "gray")
+    if (length(cook.levels)) {
+      hh <- seq.int(0.001, max(h, na.rm = TRUE), length.out = 101L)
+      hh <- hh[hh < 1 & hh > 0]
+      for (cl_lvl in cook.levels) {
+        rr <- sqrt(cl_lvl * max(effdf, 1) * (1 - hh) / hh)
+        graphics::lines(hh, rr, lty = 2, col = "red")
+        graphics::lines(hh, -rr, lty = 2, col = "red")
+      }
+    }
+    idx <- extrm(cook)
+    if (length(idx))
+      graphics::text(h[idx], rstd[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[5L]], side = 3, line = 0.25, cex = 0.85)
+  }
+  if (show[6L]) {
+    hsc <- h / (1 - h)
+    graphics::plot(hsc, cook,
+                   xlab = expression(h[ii] / (1 - h[ii])),
+                   ylab = "Cook's distance", main = main, type = "n", ...)
+    panel(hsc, cook, ...)
+    idx <- extrm(cook)
+    if (length(idx))
+      graphics::text(hsc[idx], cook[idx], labels = labels.id[idx],
+                     cex = cex.id, pos = label.pos[1L])
+    graphics::mtext(caption[[6L]], side = 3, line = 0.25, cex = 0.85)
+  }
+
+  if (!is.null(sub.caption) && length(which) > 1L && one_fig)
+    graphics::mtext(sub.caption, outer = TRUE, cex = 0.9, line = 0.5)
+
+  invisible(x)
+}
