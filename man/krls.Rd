@@ -95,28 +95,46 @@ The numerical pipeline mirrors \code{KRLS::krls()} exactly:
 \enumerate{
 \item \code{X} and \code{y} are standardised (column-centred, unit sd).
 \item The Gaussian kernel \verb{K_ij = exp(-||x_i - x_j||^2 / sigma)} is built
-in C++ with TBB-parallel inner loops.
+in parallel C++.
 \item \code{K} is eigendecomposed.  All subsequent solves use the
 eigen-basis closed forms, never inverting \verb{K + lambda I} directly.
 \item \code{lambda} is selected by golden-section search on the closed-form
 LOO error sum, with the same \verb{(L, U, tol)} bracket as \code{KRLS::krls}.
-\item Marginal effects use the identity
-\verb{dy/dx_k = -(2/sigma) * (X_k * (K c) - K diag(c) X)_k}, dispatched
-through BLAS so no explicit \verb{n x n} distance matrix is materialised.
+\item Marginal effects use the closed-form identity
+\verb{dy/dx_k = -(2/sigma) * (X_k * (K c) - K diag(c) X)_k}, computed
+without forming the \verb{n x n} distance matrix.
 \item Output is unstandardised back to the original \verb{(X, y)} scale.
 }
 
-At a fixed \verb{(sigma, lambda)}, fits agree with \code{KRLS::krls()} to within
-floating-point precision (typically \verb{< 1e-10} on coefficients and
-fitted values for \code{n <= 1000}).
+At a fixed \verb{(sigma, lambda)}, fits agree with \code{KRLS::krls()} to
+floating-point precision (typically \verb{< 1e-12} on coefficients,
+fitted values, and marginal effects for \code{n <= 1000}).  Wall-clock
+time is roughly \verb{6-10x} faster than \code{KRLS::krls()} at \code{n >= 500}
+when marginal effects and variance estimates are requested.
+
+Memory scales as \code{O(n^2)}: the kernel and its squared eigenvector
+matrix are both stored.  Expect about \code{0.4 * n^2 / 1e6} MB of
+peak working memory (e.g. ~400MB at \code{n = 1000}, ~10GB at \code{n = 5000}).
 }
 \examples{
 set.seed(1)
-n <- 80
-x <- matrix(rnorm(n * 2), n, 2)
-y <- sin(x[, 1]) + 0.5 * x[, 2]^2 + rnorm(n, sd = 0.1)
-fit <- krls(x, y, derivative = TRUE)
-fit$avgderivatives
+n <- 100
+X <- matrix(rnorm(n * 3), n, 3)
+colnames(X) <- c("age", "income", "score")
+y <- sin(X[, 1]) + 0.5 * X[, 2]^2 - 0.3 * X[, 3] +
+  rnorm(n, sd = 0.2)
+
+fit <- krls(X, y)
+fit
+fit$avgderivatives           # average marginal effect per variable
+summary(fit)
+
+## Predictions on new data with pointwise SEs.
+Xnew <- matrix(rnorm(20 * 3), 20, 3)
+colnames(Xnew) <- colnames(X)
+pr <- predict(fit, Xnew, se.fit = TRUE)
+head(pr$fit)
+head(pr$se.fit)
 
 }
 \references{

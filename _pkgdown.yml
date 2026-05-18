@@ -4,19 +4,21 @@ template:
   bootstrap: 5
 
 reference:
-- title: "Fitting"
-  desc: "Fit MARS models with optional CV pruning and hyperparameter autotune."
+- title: "MARS: ares()"
+  desc: "Fast MARS with GCV / CV pruning, autotune, bagging, weights, families, and prediction intervals."
   contents:
   - ares
-  - roadrunner-package
-- title: "Prediction"
-  contents:
   - predict.ares
-- title: "S3 methods"
-  contents:
   - print.ares
   - summary.ares
   - plot.ares
+- title: "KRLS: krls()"
+  desc: "Kernel Regularized Least Squares with closed-form LOO lambda selection and marginal effects."
+  contents:
+  - krls
+- title: "Package"
+  contents:
+  - roadrunner-package
 
 navbar:
   structure:

@@ -6,15 +6,35 @@
 \alias{roadrunner-package}
 \title{roadrunner: Fast, Low-Dependency Machine Learning Algorithms}
 \description{
-\code{roadrunner} is a collection of fast, low-dependency implementations of
-classical machine learning algorithms. The first algorithm exposed is
-\code{\link[=ares]{ares()}}, a Multivariate Adaptive Regression Splines (MARS) fitter built
-on \code{Rcpp} and \code{RcppParallel}. Additional algorithms will be added as
-separate exported functions under the same package roof.
+\code{roadrunner} is a collection of fast, low-dependency implementations
+of classical machine learning algorithms with thin, base-R-style
+interfaces. The two algorithms shipped today are:
+}
+\details{
+\itemize{
+\item \code{\link[=ares]{ares()}} -- Multivariate Adaptive Regression Splines (MARS) with
+GCV / cross-validated pruning, hyperparameter autotune, bagging,
+weights, binomial / poisson / gamma families, and prediction
+intervals. Built on Friedman's (1991) fast least-squares forward
+selection with a parallelised knot search.
+\item \code{\link[=krls]{krls()}} -- Kernel Regularized Least Squares (Hainmueller and
+Hazlett 2014) with closed-form leave-one-out lambda selection,
+per-observation marginal effects, and binary first-difference
+handling.
+}
+
+Both engines are C++ on top of \code{Rcpp}, \code{RcppArmadillo}, and
+\code{RcppParallel}. Fits are deterministic across thread counts at a
+fixed seed.
 }
 \references{
 Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
 \emph{Annals of Statistics}, 19(1):1-67.
+
+Hainmueller, J. and Hazlett, C. (2014). Kernel Regularized Least
+Squares: Reducing Misspecification Bias with a Flexible and
+Interpretable Machine Learning Approach. \emph{Political Analysis},
+22(2):143-168.
 }
 \seealso{
 Useful links:
