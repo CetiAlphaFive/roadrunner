@@ -222,12 +222,14 @@ krls.default <- function(X, y,
                          nfold = 0L, ncross = 1L, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE, autotune.grid = NULL,
+                         varmod = c("none", "const"),
                          na.action = c("impute", "omit"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
   na.action <- match.arg(na.action)
   lambda.method <- match.arg(lambda.method)
+  varmod <- match.arg(varmod)
 
   ## --- print.level / trace harmonisation ---------------------------
   # Phase 8: `trace` is the canonical name (matches ares).  `print.level`
@@ -882,6 +884,31 @@ krls.default <- function(X, y,
   Looe <- Le * as.numeric(y.init.sd)
   R2   <- 1 - (var(as.numeric(y.init - yfitted)) / (as.numeric(y.init.sd)^2))
 
+  # --- residual variance model (Phase 6) ---------------------------
+  # Effective degrees of freedom for the smoother: trace of the hat
+  # matrix H = K (K + lambda I)^{-1} = V diag(d/(d+lambda)) V'.
+  # tr(H) = sum_i d_i / (d_i + lambda).
+  varmod_info <- NULL
+  if (varmod != "none") {
+    effdf <- sum(dvals / (dvals + lambda))
+    resid_raw <- as.numeric(y.init) - yfitted
+    if (!is.null(w_norm)) {
+      rss_w <- sum(w_norm * resid_raw^2)
+      df_eff <- max(sum(w_norm) - effdf, 1)
+      sigma_hat <- sqrt(rss_w / df_eff)
+    } else {
+      rss <- sum(resid_raw^2)
+      df_eff <- max(n - effdf, 1)
+      sigma_hat <- sqrt(rss / df_eff)
+    }
+    varmod_info <- list(
+      type      = varmod,
+      sigma_hat = sigma_hat,
+      effdf     = effdf,
+      df        = df_eff
+    )
+  }
+
   binaryindicator <- matrix(FALSE, 1L, d,
                             dimnames = list(NULL, colnames(X)))
 
@@ -902,6 +929,7 @@ krls.default <- function(X, y,
   out$weights <- if (!is.null(w_norm)) w_norm else NULL
   if (!is.null(cv_diag)) out$cv <- cv_diag
   if (!is.null(autotune_info)) out$autotune <- autotune_info
+  if (!is.null(varmod_info)) out$varmod <- varmod_info
 
   class(out) <- c("krls_rr", "krls")
 
@@ -929,15 +957,41 @@ krls.default <- function(X, y,
 #'   of the predictions.  Requires the fit was created with
 #'   `vcov = TRUE`.
 #' @export
-predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE, ...) {
+predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
+                              interval = c("none", "pint"),
+                              level = 0.95, ...) {
+  interval <- match.arg(interval)
   if (!inherits(object, "krls")) {
     stop("object is not of class 'krls'")
   }
   if (isTRUE(se.fit) && is.null(object$vcov.c)) {
     stop("refit with krls(..., vcov = TRUE) to compute standard errors")
   }
+  if (interval == "pint") {
+    if (is.null(object$varmod) || is.null(object$varmod$sigma_hat))
+      stop("krls: interval='pint' requires the fit was built with",
+           " varmod = 'const'. Refit krls() with varmod = 'const' and",
+           " try again.", call. = FALSE)
+    if (is.null(object$vcov.c))
+      stop("krls: interval='pint' requires vcov = TRUE at fit time.",
+           call. = FALSE)
+  }
 
   if (is.null(newdata)) {
+    # For the NULL newdata fast-path, build the PI from $fitted +
+    # the stored vcov.fitted (on training points).
+    if (interval == "pint") {
+      vh <- object$vcov.fitted
+      se_t <- if (is.null(vh)) NA_real_ else sqrt(diag(vh))
+      sh <- object$varmod$sigma_hat
+      df <- object$varmod$df
+      tq <- qt(1 - (1 - level) / 2, df = max(df, 1))
+      half <- tq * sqrt(se_t^2 + sh^2)
+      pi_mat <- cbind(fit = as.numeric(object$fitted),
+                      lwr = as.numeric(object$fitted) - half,
+                      upr = as.numeric(object$fitted) + half)
+      return(pi_mat)
+    }
     return(list(fit = matrix(object$fitted, ncol = 1L),
                 se.fit = NULL, vcov.fit = NULL,
                 newdata = NULL, newdataK = NULL))
@@ -1007,7 +1061,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE, ...) {
   yhat   <- Knew %*% object$coeffs
 
   vcov.fit <- se.fit.out <- NULL
-  if (isTRUE(se.fit)) {
+  need_se <- isTRUE(se.fit) || interval == "pint"
+  if (need_se) {
     vcov.c.raw  <- object$vcov.c * as.vector(1 / var(as.vector(object$y)))
     vcov.fitted <- tcrossprod(Knew %*% vcov.c.raw, Knew)
     sd_y2       <- as.numeric(apply(object$y, 2L, sd))^2
@@ -1015,6 +1070,17 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE, ...) {
     se.fit.out  <- matrix(sqrt(diag(vcov.fit)), ncol = 1L)
   }
   yhat <- (yhat * as.numeric(apply(object$y, 2L, sd))) + mean(object$y)
+  if (interval == "pint") {
+    sh <- object$varmod$sigma_hat
+    df <- object$varmod$df
+    tq <- qt(1 - (1 - level) / 2, df = max(df, 1))
+    se_t <- as.numeric(se.fit.out)
+    half <- tq * sqrt(se_t^2 + sh^2)
+    pi_mat <- cbind(fit = as.numeric(yhat),
+                    lwr = as.numeric(yhat) - half,
+                    upr = as.numeric(yhat) + half)
+    return(pi_mat)
+  }
   list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
        newdata = Xn, newdataK = Knew)
 }

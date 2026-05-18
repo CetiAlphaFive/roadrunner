@@ -33,6 +33,7 @@ krls(X, ...)
   cv.1se = FALSE,
   autotune = FALSE,
   autotune.grid = NULL,
+  varmod = c("none", "const"),
   na.action = c("impute", "omit"),
   trace = NULL,
   nthreads = 0L,
@@ -40,7 +41,14 @@ krls(X, ...)
   ...
 )
 
-\method{predict}{krls_rr}(object, newdata = NULL, se.fit = FALSE, ...)
+\method{predict}{krls_rr}(
+  object,
+  newdata = NULL,
+  se.fit = FALSE,
+  interval = c("none", "pint"),
+  level = 0.95,
+  ...
+)
 }
 \arguments{
 \item{X}{A numeric matrix or data frame of predictors (\verb{n x p}).
