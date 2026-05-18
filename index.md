@@ -1,4 +1,4 @@
-# roadrunner
+# roadrunner [![roadrunner hex sticker](reference/figures/roadrunner_hex.png)](https://github.com/CetiAlphaFive/roadrunner/blob/main/man/figures/roadrunner_hex.png)
 
 Fast, low-dependency machine learning algorithms in R.
 
