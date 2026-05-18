@@ -16,6 +16,7 @@ reference:
   desc: "Kernel Regularized Least Squares with closed-form LOO lambda selection and marginal effects."
   contents:
   - krls
+  - plot.krls_rr
 - title: "Package"
   contents:
   - roadrunner-package
