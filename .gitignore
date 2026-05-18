@@ -17,3 +17,5 @@ ARCHITECTURE.md
 brain-contributions*.md
 CLAUDE.md
 cran-comments.md
+.claude/
+coarse-output/

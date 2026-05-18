@@ -20,3 +20,4 @@
 ^doc$
 ^Meta$
 ^audit-.*$
+^KRLS-CLASSIFICATION-PLAN\.md$
