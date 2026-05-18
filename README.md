@@ -1,4 +1,4 @@
-# roadrunner
+# roadrunner <a href='https://github.com/CetiAlphaFive/roadrunner/blob/main/man/figures/roadrunner_hex.png'><img src='man/figures/roadrunner_hex.png' align="right" height="139" alt="roadrunner hex sticker" /></a>
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/CetiAlphaFive/roadrunner/actions/workflows/R-CMD-check.yaml)
