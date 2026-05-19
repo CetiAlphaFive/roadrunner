@@ -141,6 +141,11 @@
 #'   grid `sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)`
 #'   where `sigma_anchor` is the geomean_p anchor
 #'   (`sqrt(median(d2) * p)` on the standardised predictors).
+#' @param autotune.nthreads Integer. Number of worker threads used to
+#'   evaluate the autotune `sigma` grid in parallel. `NULL` (default)
+#'   reads from `getOption("roadrunner.krls.autotune.nthreads")`, and
+#'   falls back to `1L` if unset. Capped at `length(autotune.grid)`.
+#'   Only used when `autotune = TRUE`.
 #' @param varmod Residual variance model used to construct prediction
 #'   intervals via `predict(..., interval = "pint")`. `"none"`
 #'   (default) disables PIs; `"const"` uses a homoscedastic

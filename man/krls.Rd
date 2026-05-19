@@ -33,6 +33,7 @@ krls(X, ...)
   cv.1se = FALSE,
   autotune = FALSE,
   autotune.grid = NULL,
+  autotune.nthreads = NULL,
   varmod = c("none", "const"),
   n.boot = 0L,
   na.action = c("impute", "omit"),
@@ -143,6 +144,12 @@ for autotune. \code{NULL} (default) uses the 9-point anchor-centred
 grid \code{sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)}
 where \code{sigma_anchor} is the geomean_p anchor
 (\code{sqrt(median(d2) * p)} on the standardised predictors).}
+
+\item{autotune.nthreads}{Integer. Number of worker threads used to
+evaluate the autotune \code{sigma} grid in parallel. \code{NULL} (default)
+reads from \code{getOption("roadrunner.krls.autotune.nthreads")}, and
+falls back to \code{1L} if unset. Capped at \code{length(autotune.grid)}.
+Only used when \code{autotune = TRUE}.}
 
 \item{varmod}{Residual variance model used to construct prediction
 intervals via \code{predict(..., interval = "pint")}. \code{"none"}
