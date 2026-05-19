@@ -31,7 +31,7 @@ krls(
   lambda.method = c("loo", "cv"),
   lambda.grid = NULL,
   nfold = 0L,
-  ncross = 1L,
+  ncross = NULL,
   stratify = TRUE,
   seed.cv = NULL,
   cv.1se = FALSE,
@@ -87,8 +87,10 @@ predict(
 
 - sigma:
 
-  Gaussian-kernel bandwidth. Default `ncol(X)`. Must be a positive
-  scalar.
+  Gaussian-kernel bandwidth. Default `NULL`, which sets sigma via the
+  geomean_p formula: `sqrt(median(d2) * p)` where `d2` are pairwise
+  squared Euclidean distances on the standardised predictors and
+  `p = ncol(X)`. Must be a positive scalar if supplied.
 
 - lambda:
 
@@ -127,7 +129,9 @@ predict(
 
 - tol:
 
-  Tolerance for the lambda golden section. Default `1e-3 * n`.
+  Tolerance for the lambda golden section. Default `1e-6` (fixed,
+  independent of `n`; was `1e-3 * n` in earlier versions). A fixed small
+  tolerance gives 6-digit lambda precision regardless of sample size.
 
 - eigtrunc:
 
@@ -155,7 +159,9 @@ predict(
 - ncross:
 
   Number of CV repetitions (each builds a fresh fold partition). Default
-  `1`.
+  `NULL`, which resolves to `2` for the autotune sigma search
+  (repeated-CV stabilisation) and `1` for `lambda.method = 'cv'`.
+  Explicit integer values are honoured in both paths.
 
 - stratify:
 
@@ -173,14 +179,19 @@ predict(
 
 - autotune:
 
-  If `TRUE`, runs an inner CV grid search over `sigma` (default grid:
-  `ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`) and refits the winner on the
-  full data. Default `FALSE`.
+  If `TRUE`, runs an inner repeated-CV grid search over `sigma`
+  (default: 9-point multiplicative grid centred on the median-heuristic
+  sigma anchor, from `anchor * 0.125` to `anchor * 32`) and refits the
+  winner on the full data using the one-standard-error rule (selects the
+  largest sigma within 1 SE of the minimum CV-MSE). Default `FALSE`.
 
 - autotune.grid:
 
   Optional numeric vector of `sigma` candidates for autotune. `NULL`
-  (default) uses the default multiplicative grid.
+  (default) uses the 9-point anchor-centred grid
+  `sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)` where
+  `sigma_anchor` is the geomean_p anchor (`sqrt(median(d2) * p)` on the
+  standardised predictors).
 
 - varmod:
 
@@ -312,6 +323,60 @@ Memory scales as `O(n^2)`: the kernel and its squared eigenvector matrix
 are both stored. Expect about `0.4 * n^2 / 1e6` MB of peak working
 memory (e.g. ~400MB at `n = 1000`, ~10GB at `n = 5000`).
 
+**Scale-aware sigma default (geomean_p anchor, v0.0.0.9041)**
+
+When `sigma = NULL`, roadrunner sets the Gaussian-kernel bandwidth using
+the *geomean_p* formula: let `d2_ij = ||Xs_i - Xs_j||^2` be the pairwise
+squared Euclidean distances on the standardised predictor matrix `Xs`;
+then `sigma = sqrt(median({d2_ij : i < j}) * ncol(Xs))`. This is the
+geometric mean of the raw median heuristic and `p = ncol(X)`, and
+empirically lands in the sweet spot between the two extremes. At
+`n=500, p=10` on standardised N(0,1) data it yields `sigma ~ 13.5`,
+versus `~ 18-19` for the raw median and `10` for
+[`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html)'s fixed
+default.
+
+**Why geomean_p**: a 15-DGP head-to-head vs
+[`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html)
+(REQ-20260518-003, iter-2) with the geomean_p anchor shows roadrunner
+**wins 12/15 DGPs, loses 0/15, ties 3/15**. The raw median anchor
+(v0.0.0.9040) won only 4/15 DGPs because it over-smoothed locally
+nonlinear signals (exp-decay, interaction, tanh-interaction, poly2) by
+selecting sigma ~2x too wide. The geomean_p anchor preserves
+scale-awareness (adapts to the actual data distribution, unlike the
+hard-coded `sigma = p`) while avoiding over-smoothing.
+
+For `n > 500` the pairwise distance matrix is `O(n^2)`; to keep the
+default cheap, a 500-row subsample is drawn with a fixed seed
+(`set.seed(2718)`) so the result is deterministic within a session.
+
+**Autotune-equals-default equivalence at well-fit settings**
+
+When autotune is enabled at settings where the default sigma is already
+near- optimal (e.g. additive and interaction DGPs at `n=500, p=10`), the
+autotune grid is centred on `sigma_anchor` and the CV argmin coincides
+with the grid centre. The 1-SE rule then selects `sigma_anchor`,
+producing a fit identical to the non-autotuned default. This is the
+expected behaviour — it confirms that the default sigma is well-chosen
+for these DGPs — not a failure of autotune. Autotune yields improvements
+when the optimal sigma departs from the anchor (e.g. sparse / linear
+DGPs where a much wider kernel is better).
+
+## Note
+
+At a fixed `(sigma, lambda)` fits remain byte-identical to all earlier
+versions of roadrunner KRLS. The four defaults changed in v0.0.0.9040
+(`sigma`, `tol`, autotune nfold/ncross, autotune grid) only affect
+results when those arguments are left at `NULL` / at their default.
+Restore any old default explicitly: `sigma = ncol(X)`,
+`tol = 1e-3 * nrow(X)`, `nfold = 5`, `ncross = 1`,
+`autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`.
+
+The sigma anchor formula was refined in v0.0.0.9041 from the raw median
+(`median(d2)`) to the geomean_p formula (`sqrt(median(d2) * p)`). To
+restore the v0.0.0.9040 median anchor, pass
+`sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)`.
+
 ## References
 
 Hainmueller, J. and C. Hazlett (2014). "Kernel Regularized Least
@@ -333,31 +398,31 @@ fit <- krls(X, y)
 fit
 #> Kernel Regularized Least Squares (KRLS)
 #>   n = 100   p = 3 
-#>   sigma = 3   lambda = 0.07407   R^2 = 0.9735 
+#>   sigma = 3.813   lambda = 0.222   R^2 = 0.9563 
 #> 
 #> Average Marginal Effects:
-#>         age      income       score 
-#>  0.61762062 -0.09742387 -0.27850374 
+#>        age     income      score 
+#>  0.6021180 -0.1008827 -0.2742915 
 fit$avgderivatives           # average marginal effect per variable
-#>            age      income      score
-#> [1,] 0.6176206 -0.09742387 -0.2785037
+#>           age     income      score
+#> [1,] 0.602118 -0.1008827 -0.2742915
 summary(fit)
 #> Kernel Regularized Least Squares (KRLS)
-#>   n = 100  p = 3  sigma = 3  lambda = 0.07407  R^2 = 0.9735
+#>   n = 100  p = 3  sigma = 3.813  lambda = 0.222  R^2 = 0.9563
 #> 
 #> Average Marginal Effects:
-#>         Estimate  Std. Err t value  Pr(>|t|)    
-#> age     0.617621  0.022220  27.795 < 2.2e-16 ***
-#> income -0.097424  0.019662  -4.955 2.988e-06 ***
-#> score  -0.278504  0.019242 -14.474 < 2.2e-16 ***
+#>         Estimate  Std. Err  t value  Pr(>|t|)    
+#> age     0.602118  0.022834  26.3690 < 2.2e-16 ***
+#> income -0.100883  0.021381  -4.7182 7.822e-06 ***
+#> score  -0.274292  0.020456 -13.4086 < 2.2e-16 ***
 #> ---
 #> Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
 #> 
 #> Quartiles of Pointwise Marginal Effects:
 #>           age     income      score
-#> 25% 0.4562498 -0.5912371 -0.3714893
-#> 50% 0.7490423 -0.1920135 -0.2998952
-#> 75% 0.8713291  0.4931363 -0.2067177
+#> 25% 0.3618781 -0.6924617 -0.3714887
+#> 50% 0.7342455 -0.2581948 -0.3193604
+#> 75% 0.8978449  0.5280357 -0.2050795
 
 ## Formula interface with mixed numeric + factor predictors.
 df <- data.frame(age = X[, 1], income = X[, 2],
@@ -371,18 +436,18 @@ colnames(Xnew) <- colnames(X)
 pr <- predict(fit, Xnew, se.fit = TRUE)
 head(pr$fit)
 #>             [,1]
-#> [1,]  1.61265745
-#> [2,]  0.11624507
-#> [3,] -0.31083262
-#> [4,] -0.98481768
-#> [5,]  0.05253484
-#> [6,]  1.14515989
+#> [1,]  1.62457968
+#> [2,]  0.01886781
+#> [3,] -0.36472318
+#> [4,] -0.94094352
+#> [5,]  0.09923114
+#> [6,]  1.15424173
 head(pr$se.fit)
 #>            [,1]
-#> [1,] 0.08151507
-#> [2,] 0.13336955
-#> [3,] 0.08682870
-#> [4,] 0.09446783
-#> [5,] 0.10664122
-#> [6,] 0.12060081
+#> [1,] 0.08130310
+#> [2,] 0.11459798
+#> [3,] 0.07798571
+#> [4,] 0.09297983
+#> [5,] 0.11479828
+#> [6,] 0.09957523
 ```

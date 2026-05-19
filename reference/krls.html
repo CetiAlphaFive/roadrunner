@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9039</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9041</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -73,7 +73,7 @@ the original <code>(X, y)</code> scale.</p>
 <span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"cv"</span><span class="op">)</span>,</span>
 <span>  lambda.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nfold <span class="op">=</span> <span class="fl">0L</span>,</span>
-<span>  ncross <span class="op">=</span> <span class="fl">1L</span>,</span>
+<span>  ncross <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  stratify <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  seed.cv <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  cv.1se <span class="op">=</span> <span class="cn">FALSE</span>,</span>
@@ -131,8 +131,10 @@ or logical vector restricting rows of <code>data</code> used for the fit.</p></d
 
 
 <dt id="arg-sigma">sigma<a class="anchor" aria-label="anchor" href="#arg-sigma"></a></dt>
-<dd><p>Gaussian-kernel bandwidth.  Default <code>ncol(X)</code>.  Must be
-a positive scalar.</p></dd>
+<dd><p>Gaussian-kernel bandwidth.  Default <code>NULL</code>, which sets
+sigma via the geomean_p formula: <code>sqrt(median(d2) * p)</code> where <code>d2</code>
+are pairwise squared Euclidean distances on the standardised
+predictors and <code>p = ncol(X)</code>.  Must be a positive scalar if supplied.</p></dd>
 
 
 <dt id="arg-lambda">lambda<a class="anchor" aria-label="anchor" href="#arg-lambda"></a></dt>
@@ -170,8 +172,10 @@ weighted KRLS via a <code>D K D</code> transform where <code>D = diag(sqrt(w))</
 
 
 <dt id="arg-tol">tol<a class="anchor" aria-label="anchor" href="#arg-tol"></a></dt>
-<dd><p>Tolerance for the lambda golden section.  Default
-<code>1e-3 * n</code>.</p></dd>
+<dd><p>Tolerance for the lambda golden section.  Default <code>1e-6</code>
+(fixed, independent of <code>n</code>; was <code>1e-3 * n</code> in earlier versions).
+A fixed small tolerance gives 6-digit lambda precision regardless
+of sample size.</p></dd>
 
 
 <dt id="arg-eigtrunc">eigtrunc<a class="anchor" aria-label="anchor" href="#arg-eigtrunc"></a></dt>
@@ -199,7 +203,10 @@ log-spaced grid in <code>[L, U]</code>.</p></dd>
 
 <dt id="arg-ncross">ncross<a class="anchor" aria-label="anchor" href="#arg-ncross"></a></dt>
 <dd><p>Number of CV repetitions (each builds a fresh fold
-partition). Default <code>1</code>.</p></dd>
+partition). Default <code>NULL</code>, which resolves to <code>2</code> for the autotune
+sigma search (repeated-CV stabilisation) and <code>1</code> for
+<code>lambda.method = 'cv'</code>. Explicit integer values are honoured
+in both paths.</p></dd>
 
 
 <dt id="arg-stratify">stratify<a class="anchor" aria-label="anchor" href="#arg-stratify"></a></dt>
@@ -218,15 +225,20 @@ minimum mean CV-MSE). Default <code>FALSE</code>.</p></dd>
 
 
 <dt id="arg-autotune">autotune<a class="anchor" aria-label="anchor" href="#arg-autotune"></a></dt>
-<dd><p>If <code>TRUE</code>, runs an inner CV grid search over
-<code>sigma</code> (default grid: <code>ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)</code>)
-and refits the winner on the full data. Default <code>FALSE</code>.</p></dd>
+<dd><p>If <code>TRUE</code>, runs an inner repeated-CV grid search
+over <code>sigma</code> (default: 9-point multiplicative grid centred on the
+median-heuristic sigma anchor, from <code>anchor * 0.125</code> to
+<code>anchor * 32</code>) and refits the winner on the full data using the
+one-standard-error rule (selects the largest sigma within 1 SE of
+the minimum CV-MSE). Default <code>FALSE</code>.</p></dd>
 
 
 <dt id="arg-autotune-grid">autotune.grid<a class="anchor" aria-label="anchor" href="#arg-autotune-grid"></a></dt>
 <dd><p>Optional numeric vector of <code>sigma</code> candidates
-for autotune. <code>NULL</code> (default) uses the default multiplicative
-grid.</p></dd>
+for autotune. <code>NULL</code> (default) uses the 9-point anchor-centred
+grid <code>sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)</code>
+where <code>sigma_anchor</code> is the geomean_p anchor
+(<code>sqrt(median(d2) * p)</code> on the standardised predictors).</p></dd>
 
 
 <dt id="arg-varmod">varmod<a class="anchor" aria-label="anchor" href="#arg-varmod"></a></dt>
@@ -338,6 +350,47 @@ when marginal effects and variance estimates are requested.</p>
 <p>Memory scales as <code>O(n^2)</code>: the kernel and its squared eigenvector
 matrix are both stored.  Expect about <code>0.4 * n^2 / 1e6</code> MB of
 peak working memory (e.g. ~400MB at <code>n = 1000</code>, ~10GB at <code>n = 5000</code>).</p>
+<p><strong>Scale-aware sigma default (geomean_p anchor, v0.0.0.9041)</strong></p>
+<p>When <code>sigma = NULL</code>, roadrunner sets the Gaussian-kernel bandwidth using the
+<em>geomean_p</em> formula: let <code>d2_ij = ||Xs_i - Xs_j||^2</code> be the pairwise squared
+Euclidean distances on the standardised predictor matrix <code>Xs</code>; then
+<code>sigma = sqrt(median({d2_ij : i &lt; j}) * ncol(Xs))</code>.  This is the geometric
+mean of the raw median heuristic and <code>p = ncol(X)</code>, and empirically lands in
+the sweet spot between the two extremes.  At <code>n=500, p=10</code> on standardised
+N(0,1) data it yields <code>sigma ~ 13.5</code>, versus <code>~ 18-19</code> for the raw median
+and <code>10</code> for <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code>'s fixed default.</p>
+<p><strong>Why geomean_p</strong>: a 15-DGP head-to-head vs <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> (REQ-20260518-003,
+iter-2) with the geomean_p anchor shows roadrunner <strong>wins 12/15 DGPs, loses
+0/15, ties 3/15</strong>.  The raw median anchor (v0.0.0.9040) won only 4/15 DGPs
+because it over-smoothed locally nonlinear signals (exp-decay, interaction,
+tanh-interaction, poly2) by selecting sigma ~2x too wide.  The geomean_p
+anchor preserves scale-awareness (adapts to the actual data distribution,
+unlike the hard-coded <code>sigma = p</code>) while avoiding over-smoothing.</p>
+<p>For <code>n &gt; 500</code> the pairwise distance matrix is <code>O(n^2)</code>; to keep the default
+cheap, a 500-row subsample is drawn with a fixed seed (<code>set.seed(2718)</code>) so
+the result is deterministic within a session.</p>
+<p><strong>Autotune-equals-default equivalence at well-fit settings</strong></p>
+<p>When autotune is enabled at settings where the default sigma is already near-
+optimal (e.g. additive and interaction DGPs at <code>n=500, p=10</code>), the autotune
+grid is centred on <code>sigma_anchor</code> and the CV argmin coincides with the grid
+centre.  The 1-SE rule then selects <code>sigma_anchor</code>, producing a fit identical
+to the non-autotuned default.  This is the expected behaviour — it confirms
+that the default sigma is well-chosen for these DGPs — not a failure of
+autotune.  Autotune yields improvements when the optimal sigma departs from
+the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).</p>
+    </div>
+    <div class="section level2">
+    <h2 id="note">Note<a class="anchor" aria-label="anchor" href="#note"></a></h2>
+    <p>At a fixed <code>(sigma, lambda)</code> fits remain byte-identical to all earlier
+versions of roadrunner KRLS.  The four defaults changed in v0.0.0.9040
+(<code>sigma</code>, <code>tol</code>, autotune nfold/ncross, autotune grid) only affect results
+when those arguments are left at <code>NULL</code> / at their default.  Restore any
+old default explicitly: <code>sigma = ncol(X)</code>, <code>tol = 1e-3 * nrow(X)</code>,
+<code>nfold = 5</code>, <code>ncross = 1</code>, <code>autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)</code>.</p>
+<p>The sigma anchor formula was refined in v0.0.0.9041 from the raw median
+(<code>median(d2)</code>) to the geomean_p formula (<code>sqrt(median(d2) * p)</code>).  To
+restore the v0.0.0.9040 median anchor, pass
+<code>sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)</code>.</p>
     </div>
     <div class="section level2">
     <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a></h2>
@@ -360,31 +413,31 @@ Analysis</em> 22(2):143–168.</p>
 <span class="r-in"><span><span class="va">fit</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Kernel Regularized Least Squares (KRLS)</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   n = 100   p = 3 </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   sigma = 3   lambda = 0.07407   R^2 = 0.9735 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   sigma = 3.813   lambda = 0.222   R^2 = 0.9563 </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Average Marginal Effects:</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>         age      income       score </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>  0.61762062 -0.09742387 -0.27850374 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>        age     income      score </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>  0.6021180 -0.1008827 -0.2742915 </span>
 <span class="r-in"><span><span class="va">fit</span><span class="op">$</span><span class="va">avgderivatives</span>           <span class="co"># average marginal effect per variable</span></span></span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>            age      income      score</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.6176206 -0.09742387 -0.2785037</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>           age     income      score</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.602118 -0.1008827 -0.2742915</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Kernel Regularized Least Squares (KRLS)</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   n = 100  p = 3  sigma = 3  lambda = 0.07407  R^2 = 0.9735</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   n = 100  p = 3  sigma = 3.813  lambda = 0.222  R^2 = 0.9563</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Average Marginal Effects:</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>         Estimate  Std. Err t value  Pr(&gt;|t|)    </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> age     0.617621  0.022220  27.795 &lt; 2.2e-16 ***</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> income -0.097424  0.019662  -4.955 2.988e-06 ***</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> score  -0.278504  0.019242 -14.474 &lt; 2.2e-16 ***</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>         Estimate  Std. Err  t value  Pr(&gt;|t|)    </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> age     0.602118  0.022834  26.3690 &lt; 2.2e-16 ***</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> income -0.100883  0.021381  -4.7182 7.822e-06 ***</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> score  -0.274292  0.020456 -13.4086 &lt; 2.2e-16 ***</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> ---</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Quartiles of Pointwise Marginal Effects:</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>           age     income      score</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 25% 0.4562498 -0.5912371 -0.3714893</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 50% 0.7490423 -0.1920135 -0.2998952</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> 75% 0.8713291  0.4931363 -0.2067177</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 25% 0.3618781 -0.6924617 -0.3714887</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 50% 0.7342455 -0.2581948 -0.3193604</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> 75% 0.8978449  0.5280357 -0.2050795</span>
 <span class="r-in"><span></span></span>
 <span class="r-in"><span><span class="co">## Formula interface with mixed numeric + factor predictors.</span></span></span>
 <span class="r-in"><span><span class="va">df</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span>age <span class="op">=</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span>, income <span class="op">=</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span>,</span></span>
@@ -398,20 +451,20 @@ Analysis</em> 22(2):143–168.</p>
 <span class="r-in"><span><span class="va">pr</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="va">Xnew</span>, se.fit <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>             [,1]</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1,]  1.61265745</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2,]  0.11624507</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] -0.31083262</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] -0.98481768</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [5,]  0.05253484</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [6,]  1.14515989</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1,]  1.62457968</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [2,]  0.01886781</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] -0.36472318</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] -0.94094352</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [5,]  0.09923114</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [6,]  1.15424173</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">se.fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>            [,1]</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.08151507</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [2,] 0.13336955</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] 0.08682870</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] 0.09446783</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [5,] 0.10664122</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> [6,] 0.12060081</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [1,] 0.08130310</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [2,] 0.11459798</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [3,] 0.07798571</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [4,] 0.09297983</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [5,] 0.11479828</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [6,] 0.09957523</span>
 <span class="r-in"><span></span></span>
 </code></pre></div>
     </div>

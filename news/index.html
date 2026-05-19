@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9039</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9041</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,121 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9041" id="roadrunner-0009041">roadrunner 0.0.0.9041<a class="anchor" aria-label="anchor" href="#roadrunner-0009041"></a></h2>
+<div class="section level3">
+<h3 id="krls--scale-aware-sigma-anchor-refined-to-geomean_p-req-0-0-0-9041">
+<code>krls()</code> — scale-aware sigma anchor refined to geomean_p (REQ-20260518-003)<a class="anchor" aria-label="anchor" href="#krls--scale-aware-sigma-anchor-refined-to-geomean_p-req-0-0-0-9041"></a></h3>
+<p>The default sigma anchor formula in <code>.krls_sigma_anchor()</code> is updated from the raw median heuristic (<code>median(d2)</code>, introduced in v0.0.0.9040) to the <em>geomean_p</em> formula: <code>sqrt(median(d2) * p)</code> where <code>d2</code> are pairwise squared Euclidean distances on the standardised training matrix and <code>p = ncol(X)</code>.</p>
+<p><strong>Why</strong>: a 15-DGP head-to-head vs <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> at <code>n=500, p=10</code> (iter-0, REQ-20260518-003) showed the v0.0.0.9040 median anchor over-smoothed locally nonlinear signals, producing 8 losses and 0 ties in favour of KRLS. An anchor sweep over 6 candidate formulae (iter-1) identified geomean_p as the clear winner (14/15 DGPs). Verification with the patched anchor (iter-2) confirmed: <strong>roadrunner wins 12/15 DGPs, KRLS wins 0/15, 3 ties</strong>.</p>
+<p><strong>Delta table — iter-0 (median) vs iter-2 (geomean_p) mean MSE ratio (rr / KRLS)</strong>:</p>
+<table class="table"><thead><tr><th>DGP</th>
+<th>iter-0 ratio</th>
+<th>iter-2 ratio</th>
+<th>delta</th>
+</tr></thead><tbody><tr><td>additive</td>
+<td>1.327</td>
+<td>0.896</td>
+<td>-0.431</td>
+</tr><tr><td>exp-decay</td>
+<td>1.681</td>
+<td>0.887</td>
+<td>-0.795</td>
+</tr><tr><td>friedman1</td>
+<td>1.126</td>
+<td>0.959</td>
+<td>-0.167</td>
+</tr><tr><td>friedman3</td>
+<td>1.084</td>
+<td>0.957</td>
+<td>-0.127</td>
+</tr><tr><td>interaction</td>
+<td>1.471</td>
+<td>0.895</td>
+<td>-0.576</td>
+</tr><tr><td>mixture</td>
+<td>1.140</td>
+<td>0.992 (tie)</td>
+<td>-0.148</td>
+</tr><tr><td>poly2</td>
+<td>1.286</td>
+<td>0.871</td>
+<td>-0.415</td>
+</tr><tr><td>tanh-interaction</td>
+<td>1.485</td>
+<td>0.952</td>
+<td>-0.533</td>
+</tr><tr><td>friedman2</td>
+<td>0.984 (tie)</td>
+<td>0.936</td>
+<td>-0.049</td>
+</tr><tr><td>sin-sum</td>
+<td>1.011 (tie)</td>
+<td>0.982 (tie)</td>
+<td>-0.029</td>
+</tr><tr><td>linear</td>
+<td>0.872</td>
+<td>0.919</td>
+<td>+0.047</td>
+</tr><tr><td>sparse</td>
+<td>0.865</td>
+<td>0.917</td>
+<td>+0.052</td>
+</tr><tr><td>heterosked</td>
+<td>0.859</td>
+<td>0.920</td>
+<td>+0.062</td>
+</tr><tr><td>monotone</td>
+<td>0.960</td>
+<td>0.925</td>
+<td>-0.035</td>
+</tr><tr><td>noise</td>
+<td>1.000 (tie)</td>
+<td>1.000 (tie)</td>
+<td>0.000</td>
+</tr></tbody></table><p>At <code>n=500, p=10</code> on standardised N(0,1) data the geomean_p anchor gives <code>sigma ~ 13.5</code>, splitting the difference between the raw median (~18–19) and KRLS’s fixed <code>sigma = p = 10</code>. The formula is still data-adaptive: on non-standardised or non-unit-variance inputs it will differ sensibly from both extremes.</p>
+<p>This is a <strong>one-line R change</strong> (<code>R/krls.R</code>, <code>.krls_sigma_anchor()</code>); the C++ engine and all other logic are unchanged. At a fixed <code>(sigma, lambda)</code> fits remain byte-identical to all prior versions. To restore the v0.0.0.9040 median anchor, pass <code>sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)</code>.</p>
+</div>
+</div>
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9040" id="roadrunner-0009040">roadrunner 0.0.0.9040<a class="anchor" aria-label="anchor" href="#roadrunner-0009040"></a></h2>
+<div class="section level3">
+<h3 id="krls--four-overfitting-fixes-req-0-0-0-9040">
+<code>krls()</code> — four overfitting fixes (REQ-20260518-002)<a class="anchor" aria-label="anchor" href="#krls--four-overfitting-fixes-req-0-0-0-9040"></a></h3>
+<p>Addresses overfitting confirmed by diagnostic sweeps in REQ-20260518-001. All four changes are R-level only; the C++ engine is unchanged, so at a fixed <code>(sigma, lambda)</code> fits remain byte-identical to earlier versions.</p>
+<p>Empirical improvement on signal DGPs (<code>n=500, p=10</code>, <code>tune=none</code>, <code>R=10</code> replications; overfit ratio = <code>test_MSE / train_MSE</code>):</p>
+<table class="table"><thead><tr><th>DGP</th>
+<th>Before (pre-fix)</th>
+<th>After (post-fix)</th>
+<th>Improvement</th>
+</tr></thead><tbody><tr><td>additive</td>
+<td>3.35</td>
+<td>1.58</td>
+<td>53%</td>
+</tr><tr><td>interaction</td>
+<td>4.38</td>
+<td>2.10</td>
+<td>52%</td>
+</tr><tr><td>sparse</td>
+<td>2.61</td>
+<td>1.26</td>
+<td>52%</td>
+</tr><tr><td>linear</td>
+<td>2.70</td>
+<td>1.37</td>
+<td>49%</td>
+</tr><tr><td>noise</td>
+<td>1.06</td>
+<td>1.04</td>
+<td>—</td>
+</tr></tbody></table><p>All improvement is attributable to Fix 1 (sigma default) and Fix 2 (lambda tolerance); Fixes 3 and 4 further stabilise autotune sigma selection.</p>
+<p><strong>Breaking defaults</strong> (old values restorable by explicit arguments):</p>
+<ul><li><p><strong>Default <code>sigma</code> changed</strong> from <code>ncol(X)</code> to the median pairwise squared Euclidean distance on the standardised predictors (the ‘median heuristic’). At <code>n=500, p=10</code> the oracle sigma is ~20 and the median heuristic anchors near that neighbourhood; <code>sigma = ncol(X)</code> was 10 (2x under-smoothed). Restore old behaviour with <code>sigma = ncol(X)</code>.</p></li>
+<li><p><strong>Default lambda tolerance changed</strong> from <code>1e-3 * n</code> (n-dependent, coarse at moderate n) to <code>1e-6</code> (fixed, 6-digit precision). The LOO golden-section was empirically selecting lambda ~4x the argmin at <code>sigma=20, n=500</code> under the old tolerance. The L-bracket climb now uses multiplicative steps (x10 per step) instead of additive steps (0.05 per step) for scale-robustness. Restore old behaviour with <code>tol = 1e-3 * nrow(X)</code>.</p></li>
+<li><p><strong>Autotune sigma grid changed</strong> from <code>ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)</code> (6 points fixed at <code>d</code>) to <code>sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)</code> (9 points centred on the median heuristic anchor). Restore old behaviour with <code>autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)</code>.</p></li>
+<li><p><strong>Autotune CV stabilised</strong>: default folds raised from 5 to 10; default cross-partition repeats raised from 1 to 2 (via the <code>ncross</code> argument, whose default changes from <code>1L</code> to <code>NULL</code>); sigma selection now applies the 1-SE rule (largest sigma within 1 SE of minimum CV-MSE, biasing toward wider kernels when evidence is weak). The <code>autotune</code> component of the fit gains new fields: <code>ncross</code>, <code>mse_per_fold</code>, <code>se_mse</code>, <code>cv.1se</code>, <code>sigma_1se</code>. Restore old fold count with <code>nfold = 5</code>; restore old repeat count with <code>ncross = 1</code>.</p></li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9033" id="roadrunner-0009033">roadrunner 0.0.0.9033<a class="anchor" aria-label="anchor" href="#roadrunner-0009033"></a></h2>
 <div class="section level3">
