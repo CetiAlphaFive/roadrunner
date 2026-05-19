@@ -660,3 +660,169 @@ Rcpp::NumericVector krls_nystrom_predict_cpp(const arma::mat& X_new,
   std::copy(yhat.begin(), yhat.end(), out.begin());
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 (v0.0.0.9043): Nystrom autotune inner — parallel sweep over sigma.
+//
+// For a single CV fold, evaluate the full sigma grid in parallel. Each task
+// builds C/W/K_te on the fold's (X_tr, Z, X_te), runs the Nystrom-LOO
+// golden-section lambda search, computes alpha, and scores the held-out MSE.
+// Reuses nystrom_loo_loss() from the single-fit path so the LOO objective is
+// byte-identical to krls_nystrom_fit_cpp.
+//
+// Bracket scheme: LINEAR `L_lam += 0.05` step — matches Task 3 so the
+// per-fold lambda choice (and downstream alpha + MSE) lines up with what the
+// non-autotune path would emit at the same fold partition.
+//
+// Threading: parallelFor receives numThreads directly (per Phase 1 lesson —
+// do NOT wrap in tbb::task_arena here; that's the autotune-level inner's
+// concern). Worker count clamped to [1, nsigma].
+// ---------------------------------------------------------------------------
+
+struct KrlsNystromSigmaWorker : public RcppParallel::Worker {
+  const arma::mat& D_tr_Z;
+  const arma::mat& D_Z_Z;
+  const arma::mat& D_te_Z;
+  const arma::vec& y_tr;
+  const arma::vec& y_te;
+  const arma::vec& sigma_grid;
+  double L0, tol, eps;
+  arma::vec& mse;
+  arma::vec& lam;
+
+  KrlsNystromSigmaWorker(const arma::mat& D_tr_Z_, const arma::mat& D_Z_Z_,
+                         const arma::mat& D_te_Z_,
+                         const arma::vec& y_tr_, const arma::vec& y_te_,
+                         const arma::vec& sigma_grid_,
+                         double L0_, double tol_, double eps_,
+                         arma::vec& mse_, arma::vec& lam_)
+    : D_tr_Z(D_tr_Z_), D_Z_Z(D_Z_Z_), D_te_Z(D_te_Z_),
+      y_tr(y_tr_), y_te(y_te_), sigma_grid(sigma_grid_),
+      L0(L0_), tol(tol_), eps(eps_),
+      mse(mse_), lam(lam_) {}
+
+  void operator()(std::size_t begin, std::size_t end) {
+    for (std::size_t i = begin; i < end; ++i) {
+      double s = sigma_grid(i);
+      arma::mat C    = arma::exp(-D_tr_Z / s);
+      arma::mat W    = arma::exp(-D_Z_Z  / s);
+      arma::mat K_te = arma::exp(-D_te_Z / s);
+
+      arma::vec D; arma::mat U;
+      bool eig_ok = arma::eig_sym(D, U, W);
+      if (!eig_ok) {
+        mse(i) = std::numeric_limits<double>::max(); lam(i) = 0.0; continue;
+      }
+      D = arma::clamp(D, 0.0, arma::datum::inf);
+      double Dmax = D.max();
+      if (Dmax <= 0.0) {
+        mse(i) = std::numeric_limits<double>::max(); lam(i) = 0.0; continue;
+      }
+      arma::vec D_reg = arma::clamp(D, eps * Dmax, arma::datum::inf);
+      arma::vec Dinv2 = 1.0 / arma::sqrt(D_reg);
+
+      arma::mat Phi = C * U;
+      Phi.each_row() %= Dinv2.t();
+
+      arma::mat U_phi, V_phi; arma::vec sigma_phi;
+      bool ok = arma::svd_econ(U_phi, sigma_phi, V_phi, Phi);
+      if (!ok) {
+        mse(i) = std::numeric_limits<double>::max(); lam(i) = 0.0; continue;
+      }
+      arma::vec Sigma2 = arma::square(sigma_phi);
+      double Smax = Sigma2.max();
+      if (Smax <= 0.0) {
+        mse(i) = std::numeric_limits<double>::max(); lam(i) = 0.0; continue;
+      }
+
+      // Lambda bracket — mirror krls_nystrom_fit_cpp (linear L += 0.05).
+      double U_lam = Smax;
+      int it = 0;
+      while (arma::sum(Sigma2 / (Sigma2 + U_lam)) >= 1.0 && it < 200) {
+        U_lam *= 2.0; ++it;
+      }
+      double tgt = Smax / 1000.0;
+      arma::uword q_idx = 0;
+      double mind = std::abs(Sigma2(0) - tgt);
+      for (arma::uword j = 1; j < Sigma2.n_elem; ++j) {
+        double dd = std::abs(Sigma2(j) - tgt);
+        if (dd < mind) { mind = dd; q_idx = j; }
+      }
+      double q_R = (double)(q_idx + 1);
+      double L_lam = L0;
+      while (arma::sum(Sigma2 / (Sigma2 + L_lam)) > q_R && L_lam < Smax) {
+        L_lam += 0.05;
+      }
+      if (!(L_lam < U_lam)) {
+        mse(i) = std::numeric_limits<double>::max(); lam(i) = 0.0; continue;
+      }
+
+      // Golden-section search — same gr and X1/X2 layout as single-fit path.
+      const double gr = (3.0 - std::sqrt(5.0)) / 2.0;
+      double X1 = L_lam + gr * (U_lam - L_lam);
+      double X2 = U_lam - gr * (U_lam - L_lam);
+      double S1 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X1);
+      double S2 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X2);
+      int it2 = 0;
+      while (std::abs(S1 - S2) > tol && it2 < 1000) {
+        if (S1 < S2) {
+          U_lam = X2; X2 = X1; X1 = L_lam + gr * (U_lam - L_lam);
+          S2 = S1; S1 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X1);
+        } else {
+          L_lam = X1; X1 = X2; X2 = U_lam - gr * (U_lam - L_lam);
+          S1 = S2; S2 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X2);
+        }
+        ++it2;
+      }
+      double lambda = (S1 < S2) ? X1 : X2;
+
+      // alpha + held-out MSE
+      arma::vec Uty       = U_phi.t() * y_tr;
+      arma::vec beta_coef = V_phi * ((sigma_phi % Uty) / (Sigma2 + lambda));
+      arma::vec alpha     = U * (Dinv2 % beta_coef);
+      arma::vec yhat_te   = K_te * alpha;
+
+      mse(i) = arma::mean(arma::square(y_te - yhat_te));
+      lam(i) = lambda;
+    }
+  }
+};
+
+// [[Rcpp::export]]
+Rcpp::List krls_nystrom_autotune_inner_cpp(
+    const arma::mat& X_tr, const arma::mat& Z, const arma::mat& X_te,
+    const arma::vec& y_tr, const arma::vec& y_te,
+    const arma::vec& sigma_grid, Rcpp::List lambda_args, double eps,
+    int nthreads) {
+  const arma::uword nsigma = sigma_grid.n_elem;
+  arma::vec mse(nsigma, arma::fill::zeros);
+  arma::vec lam(nsigma, arma::fill::zeros);
+
+  arma::mat D_tr_Z = krls_pairwise_sqdist_cpp(X_tr, Z);
+  arma::mat D_Z_Z  = krls_pairwise_sqdist_cpp(Z,    Z);
+  arma::mat D_te_Z = krls_pairwise_sqdist_cpp(X_te, Z);
+
+  double L0  = Rcpp::as<double>(lambda_args["L0"]);
+  double tol = Rcpp::as<double>(lambda_args["tol"]);
+
+  int n_workers = nthreads;
+  if (n_workers < 1) n_workers = 1;
+  if ((arma::uword) n_workers > nsigma) n_workers = (int) nsigma;
+
+  KrlsNystromSigmaWorker worker(D_tr_Z, D_Z_Z, D_te_Z, y_tr, y_te, sigma_grid,
+                                L0, tol, eps, mse, lam);
+  RcppParallel::parallelFor(0, nsigma, worker, /*grainSize=*/1,
+                            /*numThreads=*/n_workers);
+
+  Rcpp::NumericVector mse_out(nsigma), lam_out(nsigma);
+  for (arma::uword i = 0; i < nsigma; ++i) {
+    mse_out[i] = mse(i);
+    lam_out[i] = lam(i);
+  }
+
+  return Rcpp::List::create(
+    Rcpp::Named("mse_per_sigma")    = mse_out,
+    Rcpp::Named("lambda_per_sigma") = lam_out,
+    Rcpp::Named("nthreads_used")    = n_workers
+  );
+}

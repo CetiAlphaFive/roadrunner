@@ -651,6 +651,206 @@ krls.default <- function(X, y,
   # Fix 3b: ncross_at outer repetitions (default 2 when ncross=NULL).
   # Fix 3c: 1-SE rule selects the largest sigma within 1 SE of min MSE.
   autotune_info <- NULL
+  if (isTRUE(autotune) && identical(approx, "nystrom")) {
+    ## Phase 2 T5: Nystrom autotune path. Parallel sigma sweep per fold via
+    ## krls_nystrom_autotune_inner_cpp; final refit on full Xs at the chosen
+    ## sigma. Weights are not yet supported in the Nystrom path.
+    if (!is.null(w_norm)) {
+      stop("krls: weights are not supported with approx = 'nystrom'; ",
+           "use approx = 'exact'", call. = FALSE)
+    }
+    if (!is.null(L) || !is.null(U) || !is.null(tol)) {
+      stop("krls: user-supplied L/U/tol not supported with approx = 'nystrom'",
+           call. = FALSE)
+    }
+    nfold_at <- as.integer(nfold)
+    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 10L
+    if (nfold_at > nrow(X))
+      stop("krls: autotune nfold (", nfold_at,
+           ") exceeds nrow(X) (", nrow(X), ").")
+    ncross_at <- if (is.null(ncross)) 2L else as.integer(ncross)
+    if (is.na(ncross_at) || ncross_at < 1L) ncross_at <- 1L
+
+    if (!is.null(seed.cv)) {
+      if (exists(".Random.seed", envir = globalenv(),
+                 inherits = FALSE)) {
+        old_seed_at <- get(".Random.seed", envir = globalenv(),
+                            inherits = FALSE)
+        on.exit(assign(".Random.seed", old_seed_at,
+                       envir = globalenv()), add = TRUE)
+      } else {
+        on.exit(rm(list = ".Random.seed", envir = globalenv()),
+                add = TRUE)
+      }
+      set.seed(as.integer(seed.cv) + 7919L)
+    }
+    n_at <- nrow(X)
+    build_folds_at <- function(n_pts, k, strat) {
+      if (isTRUE(strat) && n_pts >= 20L) {
+        nb <- min(10L, max(2L, floor(n_pts / 5)))
+        bins <- cut(as.numeric(y), breaks = nb,
+                    include.lowest = TRUE, labels = FALSE)
+        fid <- integer(n_pts)
+        for (b in seq_len(nb)) {
+          idx_b <- which(bins == b)
+          if (length(idx_b) == 0L) next
+          idx_b <- sample(idx_b)
+          fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
+        }
+        if (any(fid == 0L)) {
+          miss <- which(fid == 0L)
+          fid[miss] <- rep_len(seq_len(k), length(miss))
+        }
+        fid
+      } else {
+        rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+      }
+    }
+
+    sigma_grid_sorted <- autotune.grid
+    n_sig <- length(sigma_grid_sorted)
+    mse_mat_at <- matrix(NA_real_, nrow = n_sig,
+                         ncol = nfold_at * ncross_at)
+    lam_mat_at <- matrix(NA_real_, nrow = n_sig,
+                         ncol = nfold_at * ncross_at)
+    lambda_args_nys <- list(
+      tol            = 1e-6,
+      L0             = .Machine$double.eps,
+      L_step         = 10.0,
+      U_start_from_n = TRUE
+    )
+    X_means_loc <- colMeans(X.init)
+    X_sds_loc   <- X.init.sd
+    nthreads_used_final <- 1L
+
+    col_at <- 1L
+    for (cc_at in seq_len(ncross_at)) {
+      fid_at <- build_folds_at(n_at, nfold_at, stratify)
+      for (k in seq_len(nfold_at)) {
+        test_i  <- which(fid_at == k)
+        train_i <- which(fid_at != k)
+        if (length(test_i) == 0L || length(train_i) < 3L) {
+          col_at <- col_at + 1L
+          next
+        }
+        Xs_tr <- Xs[train_i, , drop = FALSE]
+        ys_tr <- as.numeric(ys[train_i])
+        Xs_te <- Xs[test_i,  , drop = FALSE]
+        ys_te <- as.numeric(ys[test_i])
+        n_tr  <- nrow(Xs_tr)
+
+        nystrom_m_eff <- if (is.null(nystrom_m)) {
+          ceiling(sqrt(n_tr) * 2)
+        } else {
+          nystrom_m
+        }
+        fold_landmark_seed <- if (is.null(landmark_seed)) {
+          NULL
+        } else {
+          as.integer(landmark_seed + cc_at * 1000L + k)
+        }
+        lm_fold <- .resolve_landmarks(landmarks, landmark_method,
+                                      nystrom_m_eff, Xs_tr,
+                                      X_centers = X_means_loc,
+                                      X_scales  = X_sds_loc,
+                                      landmark_seed = fold_landmark_seed)
+        Z_std <- lm_fold$matrix
+
+        inner <- krls_nystrom_autotune_inner_cpp(
+          Xs_tr, Z_std, Xs_te, ys_tr, ys_te,
+          sigma_grid_sorted, lambda_args_nys, nystrom_eps,
+          nthreads = autotune.nthreads
+        )
+        mse_mat_at[, col_at] <- as.numeric(inner$mse_per_sigma)
+        lam_mat_at[, col_at] <- as.numeric(inner$lambda_per_sigma)
+        nthreads_used_final  <- as.integer(inner$nthreads_used)
+        col_at <- col_at + 1L
+      }
+    }
+
+    mean_mse_at <- rowMeans(mse_mat_at, na.rm = TRUE)
+    if (all(is.na(mean_mse_at)))
+      stop("krls: autotune produced no usable folds.")
+    best_si <- which.min(mean_mse_at)
+    sd_at  <- apply(mse_mat_at, 1L, function(z) sd(z, na.rm = TRUE))
+    nfok   <- rowSums(!is.na(mse_mat_at))
+    se_at  <- sd_at / sqrt(pmax(nfok, 1L))
+    thresh_at <- mean_mse_at[best_si] + se_at[best_si]
+    cand_at   <- which(mean_mse_at <= thresh_at)
+    sigma_chosen <- max(sigma_grid_sorted[cand_at])
+
+    ## Refit at chosen sigma on full Xs.
+    nystrom_m_full <- if (is.null(nystrom_m)) {
+      ceiling(sqrt(nrow(Xs)) * 2)
+    } else {
+      nystrom_m
+    }
+    lm_full <- .resolve_landmarks(landmarks, landmark_method,
+                                  nystrom_m_full, Xs,
+                                  X_centers = X_means_loc,
+                                  X_scales  = X_sds_loc,
+                                  landmark_seed = landmark_seed)
+    nys <- krls_nystrom_fit_cpp(
+      Xs, lm_full$matrix, ys, sigma_chosen, lambda_args_nys,
+      nystrom_eps, compute_vcov = isTRUE(vcov)
+    )
+    yfitted_nys <- as.numeric(nys$fitted_std) * as.numeric(y.init.sd) +
+                    y.init.mean
+
+    fit <- list(
+      coeffs    = nys$coeffs,
+      fitted    = yfitted_nys,
+      X         = X.init,
+      y         = y.init,
+      sigma     = sigma_chosen,
+      lambda    = nys$lambda,
+      X_means   = X_means_loc,
+      X_sds     = X_sds_loc,
+      y_mean    = y.init.mean,
+      y_sd      = as.numeric(y.init.sd),
+      approx    = "nystrom",
+      landmarks = lm_full$matrix,
+      landmark_indices = lm_full$indices,
+      landmark_method  = lm_full$method_used,
+      nystrom_m        = nys$nystrom_m,
+      nystrom_eps      = nystrom_eps,
+      W_eigen          = nys$W_eigen,
+      Dinvsqrt         = nys$Dinvsqrt,
+      Sigma2           = nys$Sigma2,
+      vcov_alpha       = if (isTRUE(vcov)) nys$vcov_alpha else NULL,
+      autotune         = list(
+        grid              = sigma_grid_sorted,
+        mse               = mean_mse_at,
+        mse_per_sigma     = mean_mse_at,
+        winner            = sigma_chosen,
+        nfold             = nfold_at,
+        ncross            = ncross_at,
+        stratify          = isTRUE(stratify),
+        seed.cv           = seed.cv,
+        mse_per_fold      = mse_mat_at,
+        lam_per_fold      = lam_mat_at,
+        se_mse            = se_at,
+        cv.1se            = TRUE,
+        sigma_1se         = sigma_chosen,
+        sigma_grid_sorted = sigma_grid_sorted,
+        nthreads_used     = nthreads_used_final
+      ),
+      nystrom_diagnostics = list(
+        floored_count = nys$floored_count,
+        D_min_raw     = nys$D_min_raw,
+        D_max_raw     = nys$D_max_raw
+      )
+    )
+    fit$R2 <- 1 - sum((as.numeric(y.init) - yfitted_nys)^2) /
+                  sum((as.numeric(y.init) - mean(as.numeric(y.init)))^2)
+    fit$call         <- cl
+    fit$na.action    <- na.action
+    fit$na.medians   <- na_medians
+    fit$factor_info  <- factor_info
+    class(fit) <- c("krls_rr", "krls")
+    return(fit)
+  }
+
   if (isTRUE(autotune)) {
     nfold_at <- as.integer(nfold)
     if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 10L   # Fix 3a

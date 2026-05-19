@@ -236,3 +236,49 @@ test_that("NYS-PRED-1: predict on a Nystrom fit returns length-n_new numeric", {
   expect_length(yhat, 15L)
   expect_true(all(is.finite(yhat)))
 })
+
+test_that("NYS-AT-1: krls(approx='nystrom', autotune=TRUE) produces finite fit", {
+  set.seed(30L)
+  n <- 200L; p <- 5L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.3 * rnorm(n))
+  fit <- roadrunner::krls(X, y, approx = "nystrom", autotune = TRUE,
+                          landmark_seed = 42L, seed.cv = 42L,
+                          derivative = FALSE, vcov = FALSE,
+                          autotune.nthreads = 1L)
+  expect_true(is.finite(fit$sigma))
+  expect_true(is.finite(fit$lambda))
+  expect_identical(fit$approx, "nystrom")
+  expect_true(fit$nystrom_m >= 1L)
+})
+
+test_that("NYS-AT-EQUIV: autotune Nystrom nthreads=1 vs 4 byte-identical", {
+  set.seed(31L)
+  n <- 180L; p <- 4L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.3 * rnorm(n))
+  f1 <- roadrunner::krls(X, y, approx = "nystrom", autotune = TRUE,
+                         landmark_seed = 42L, seed.cv = 42L,
+                         derivative = FALSE, vcov = FALSE,
+                         autotune.nthreads = 1L)
+  f4 <- roadrunner::krls(X, y, approx = "nystrom", autotune = TRUE,
+                         landmark_seed = 42L, seed.cv = 42L,
+                         derivative = FALSE, vcov = FALSE,
+                         autotune.nthreads = 4L)
+  expect_identical(f1$sigma,  f4$sigma)
+  expect_identical(f1$lambda, f4$lambda)
+  expect_identical(f1$coeffs, f4$coeffs)
+})
+
+test_that("NYS-AT-FALL: autotune Nystrom with weights errors clearly", {
+  set.seed(32L)
+  n <- 100L; p <- 3L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- rnorm(n)
+  w <- runif(n, 0.5, 2)
+  expect_error(
+    roadrunner::krls(X, y, weights = w, approx = "nystrom",
+                     autotune = TRUE, landmark_seed = 42L),
+    "weights.*not supported.*nystrom"
+  )
+})

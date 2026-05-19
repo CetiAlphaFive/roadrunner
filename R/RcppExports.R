@@ -61,3 +61,7 @@ krls_nystrom_predict_cpp <- function(X_new, Z, alpha, sigma) {
     .Call(`_roadrunner_krls_nystrom_predict_cpp`, X_new, Z, alpha, sigma)
 }
 
+krls_nystrom_autotune_inner_cpp <- function(X_tr, Z, X_te, y_tr, y_te, sigma_grid, lambda_args, eps, nthreads) {
+    .Call(`_roadrunner_krls_nystrom_autotune_inner_cpp`, X_tr, Z, X_te, y_tr, y_te, sigma_grid, lambda_args, eps, nthreads)
+}
+
