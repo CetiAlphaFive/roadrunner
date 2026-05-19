@@ -214,6 +214,20 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_nystrom_predict_cpp
+Rcpp::NumericVector krls_nystrom_predict_cpp(const arma::mat& X_new, const arma::mat& Z, const arma::vec& alpha, double sigma);
+RcppExport SEXP _roadrunner_krls_nystrom_predict_cpp(SEXP X_newSEXP, SEXP ZSEXP, SEXP alphaSEXP, SEXP sigmaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X_new(X_newSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Z(ZSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_nystrom_predict_cpp(X_new, Z, alpha, sigma));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -229,6 +243,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},
     {"_roadrunner_krls_pairwise_sqdist_cpp", (DL_FUNC) &_roadrunner_krls_pairwise_sqdist_cpp, 2},
     {"_roadrunner_krls_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_autotune_inner_cpp, 7},
+    {"_roadrunner_krls_nystrom_predict_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_predict_cpp, 4},
     {NULL, NULL, 0}
 };
 

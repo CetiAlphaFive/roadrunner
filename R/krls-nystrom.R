@@ -128,3 +128,29 @@
   stop("`landmarks` must be NULL, an integer vector of row indices, ",
        "or an m x d numeric matrix (in original X-scale)")
 }
+
+#' Extract landmark coordinates from a Nystrom krls fit
+#'
+#' Returns the m x d matrix of landmark coordinates used by a fit built
+#' with `approx = "nystrom"`. Internally landmarks live in standardized
+#' X-space; the default `scale = "original"` undoes the standardization
+#' using the training X's centers and SDs.
+#'
+#' @param fit A `krls_rr` fit built with `approx = "nystrom"`.
+#' @param scale Either `"original"` (default) or `"standardized"`.
+#' @return Numeric matrix of dimension `nystrom_m` x `ncol(X_train)`.
+#' @export
+get_landmarks <- function(fit, scale = c("original", "standardized")) {
+  if (!inherits(fit, "krls_rr")) {
+    stop("fit is not of class 'krls_rr'")
+  }
+  if (is.null(fit$approx) || !identical(fit$approx, "nystrom") ||
+      is.null(fit$landmarks)) {
+    stop("fit was not built with approx = 'nystrom'; no landmarks to return")
+  }
+  scale <- match.arg(scale)
+  if (scale == "standardized") return(fit$landmarks)
+  out <- sweep(sweep(fit$landmarks, 2, fit$X_sds, `*`),
+               2, fit$X_means, `+`)
+  out
+}

@@ -445,3 +445,33 @@ Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
     Rcpp::Named("nthreads_used")    = n_workers
   );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 (v0.0.0.9043): Nystrom predict.
+//
+//   yhat = exp(-||X_new - Z||^2 / sigma) @ alpha
+//
+// Uses the dgemm identity in krls_pairwise_sqdist_cpp for the n_new x m
+// cross-distance matrix, then elementwise exp + matrix-vector product.
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+Rcpp::NumericVector krls_nystrom_predict_cpp(const arma::mat& X_new,
+                                             const arma::mat& Z,
+                                             const arma::vec& alpha,
+                                             double sigma) {
+  if (X_new.n_cols != Z.n_cols) {
+    Rcpp::stop("krls_nystrom_predict_cpp: X_new and Z must have same n_cols");
+  }
+  if (alpha.n_elem != Z.n_rows) {
+    Rcpp::stop("krls_nystrom_predict_cpp: length(alpha) must equal nrow(Z)");
+  }
+  arma::mat D = krls_pairwise_sqdist_cpp(X_new, Z);   // n_new x m
+  arma::mat K = arma::exp(-D / sigma);
+  arma::vec yhat = K * alpha;
+  // Return as a plain numeric vector (no dim attribute) so callers see a
+  // length-n_new vector consistent with predict.krls_rr's existing shape.
+  Rcpp::NumericVector out(yhat.n_elem);
+  std::copy(yhat.begin(), yhat.end(), out.begin());
+  return out;
+}

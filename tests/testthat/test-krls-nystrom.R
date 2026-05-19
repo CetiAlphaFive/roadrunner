@@ -86,3 +86,50 @@ test_that("LAND-VALIDATE-1: nystrom_m and nystrom_eps validators reject bad inpu
   expect_error(roadrunner:::.validate_nystrom_eps(-1), "positive scalar")
   expect_identical(roadrunner:::.validate_nystrom_eps(1e-9), 1e-9)
 })
+
+test_that("NYS-XK-1: krls_nystrom_predict_cpp matches naive reference", {
+  set.seed(10L)
+  n_new <- 20L; m <- 8L; d <- 3L
+  Xn <- matrix(rnorm(n_new * d), n_new, d)
+  Z  <- matrix(rnorm(m * d), m, d)
+  alpha <- rnorm(m)
+  sigma <- 5.0
+
+  yhat_cpp <- roadrunner:::krls_nystrom_predict_cpp(Xn, Z, alpha, sigma)
+
+  # Naive reference
+  K_new <- matrix(NA_real_, n_new, m)
+  for (i in seq_len(n_new)) for (j in seq_len(m)) {
+    K_new[i, j] <- exp(-sum((Xn[i, ] - Z[j, ])^2) / sigma)
+  }
+  yhat_ref <- as.numeric(K_new %*% alpha)
+  expect_equal(yhat_cpp, yhat_ref, tolerance = 1e-10)
+})
+
+test_that("NYS-GETLM-1: get_landmarks returns landmarks in requested scale", {
+  # Construct a minimal fake Nystrom fit
+  set.seed(11L)
+  n <- 50L; d <- 3L
+  X <- matrix(rnorm(n * d), n, d)
+  X_centers <- colMeans(X)
+  X_scales  <- apply(X, 2, sd)
+  Z_std <- X[c(1, 5, 10), , drop = FALSE]
+  Z_std <- scale(Z_std, center = X_centers, scale = X_scales)
+  attr(Z_std, "scaled:center") <- NULL
+  attr(Z_std, "scaled:scale")  <- NULL
+
+  fit <- list(approx = "nystrom", landmarks = Z_std,
+              X_means = X_centers, X_sds = X_scales)
+  class(fit) <- "krls_rr"
+
+  z_std <- get_landmarks(fit, scale = "standardized")
+  z_orig <- get_landmarks(fit, scale = "original")
+  expect_equal(z_std, Z_std)
+  expect_equal(z_orig,
+               sweep(sweep(Z_std, 2, X_scales, `*`), 2, X_centers, `+`),
+               tolerance = 1e-12)
+
+  # Errors on exact fit
+  fit2 <- list(approx = "exact"); class(fit2) <- "krls_rr"
+  expect_error(get_landmarks(fit2), "not built with approx")
+})
