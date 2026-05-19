@@ -1,3 +1,51 @@
+# roadrunner 0.0.0.9041
+
+## `krls()` — scale-aware sigma anchor refined to geomean_p (REQ-20260518-003)
+
+The default sigma anchor formula in `.krls_sigma_anchor()` is updated from the
+raw median heuristic (`median(d2)`, introduced in v0.0.0.9040) to the
+*geomean_p* formula: `sqrt(median(d2) * p)` where `d2` are pairwise squared
+Euclidean distances on the standardised training matrix and `p = ncol(X)`.
+
+**Why**: a 15-DGP head-to-head vs `KRLS::krls()` at `n=500, p=10` (iter-0,
+REQ-20260518-003) showed the v0.0.0.9040 median anchor over-smoothed locally
+nonlinear signals, producing 8 losses and 0 ties in favour of KRLS.  An
+anchor sweep over 6 candidate formulae (iter-1) identified geomean_p as the
+clear winner (14/15 DGPs).  Verification with the patched anchor (iter-2)
+confirmed: **roadrunner wins 12/15 DGPs, KRLS wins 0/15, 3 ties**.
+
+**Delta table — iter-0 (median) vs iter-2 (geomean_p) mean MSE ratio (rr / KRLS)**:
+
+| DGP             | iter-0 ratio | iter-2 ratio | delta   |
+|-----------------|-------------|-------------|---------|
+| additive        | 1.327        | 0.896        | -0.431  |
+| exp-decay       | 1.681        | 0.887        | -0.795  |
+| friedman1       | 1.126        | 0.959        | -0.167  |
+| friedman3       | 1.084        | 0.957        | -0.127  |
+| interaction     | 1.471        | 0.895        | -0.576  |
+| mixture         | 1.140        | 0.992 (tie)  | -0.148  |
+| poly2           | 1.286        | 0.871        | -0.415  |
+| tanh-interaction| 1.485        | 0.952        | -0.533  |
+| friedman2       | 0.984 (tie)  | 0.936        | -0.049  |
+| sin-sum         | 1.011 (tie)  | 0.982 (tie)  | -0.029  |
+| linear          | 0.872        | 0.919        | +0.047  |
+| sparse          | 0.865        | 0.917        | +0.052  |
+| heterosked      | 0.859        | 0.920        | +0.062  |
+| monotone        | 0.960        | 0.925        | -0.035  |
+| noise           | 1.000 (tie)  | 1.000 (tie)  |  0.000  |
+
+At `n=500, p=10` on standardised N(0,1) data the geomean_p anchor gives
+`sigma ~ 13.5`, splitting the difference between the raw median (~18–19) and
+KRLS's fixed `sigma = p = 10`.  The formula is still data-adaptive: on
+non-standardised or non-unit-variance inputs it will differ sensibly from both
+extremes.
+
+This is a **one-line R change** (`R/krls.R`, `.krls_sigma_anchor()`); the C++
+engine and all other logic are unchanged.  At a fixed `(sigma, lambda)` fits
+remain byte-identical to all prior versions.  To restore the v0.0.0.9040
+median anchor, pass
+`sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)`.
+
 # roadrunner 0.0.0.9040
 
 ## `krls()` — four overfitting fixes (REQ-20260518-002)

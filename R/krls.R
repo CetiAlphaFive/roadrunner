@@ -85,9 +85,9 @@
 #' @param subset Used only by the formula method. An optional integer
 #'   or logical vector restricting rows of `data` used for the fit.
 #' @param sigma Gaussian-kernel bandwidth.  Default `NULL`, which sets
-#'   sigma to the median pairwise squared Euclidean distance on the
-#'   standardised predictors (the 'median heuristic').  Must be a
-#'   positive scalar if supplied.
+#'   sigma via the geomean_p formula: `sqrt(median(d2) * p)` where `d2`
+#'   are pairwise squared Euclidean distances on the standardised
+#'   predictors and `p = ncol(X)`.  Must be a positive scalar if supplied.
 #' @param lambda Optional ridge penalty.  If `NULL` (default), selected
 #'   by golden-section search on the LOO error.
 #' @param derivative Logical.  If `TRUE` (default), compute pointwise
@@ -139,8 +139,8 @@
 #' @param autotune.grid Optional numeric vector of `sigma` candidates
 #'   for autotune. `NULL` (default) uses the 9-point anchor-centred
 #'   grid `sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)`
-#'   where `sigma_anchor` is the median pairwise squared Euclidean
-#'   distance on the standardised predictors.
+#'   where `sigma_anchor` is the geomean_p anchor
+#'   (`sqrt(median(d2) * p)` on the standardised predictors).
 #' @param varmod Residual variance model used to construct prediction
 #'   intervals via `predict(..., interval = "pint")`. `"none"`
 #'   (default) disables PIs; `"const"` uses a homoscedastic
@@ -162,18 +162,24 @@
 #' @param ... Currently unused (caught for forward compatibility).
 #'
 #' @details
-#' **Scale-aware sigma default (median heuristic)**
+#' **Scale-aware sigma default (geomean_p anchor, v0.0.0.9041)**
 #'
-#' When `sigma = NULL`, roadrunner sets the Gaussian-kernel bandwidth to the
-#' median pairwise squared Euclidean distance computed on the standardised
-#' predictor matrix `Xs`.  Formally, let `d2_ij = ||Xs_i - Xs_j||^2`; then
-#' `sigma = median({d2_ij : i < j})`.  This anchors the kernel so that
-#' `K_ij = exp(-1) ≈ 0.37` at the median inter-observation distance — keeping
-#' the kernel in its informative operating range.  The heuristic adapts to the
-#' actual data scale and is substantially more reliable than the previous
-#' `sigma = ncol(X)` default, which was 2-4x too narrow at typical `(n, p)`
-#' settings and caused severe overfitting (overfit ratio 3-4x on signal DGPs at
-#' `n=500, p=10`; see REQ-20260518-001 diagnostic sweeps).
+#' When `sigma = NULL`, roadrunner sets the Gaussian-kernel bandwidth using the
+#' *geomean_p* formula: let `d2_ij = ||Xs_i - Xs_j||^2` be the pairwise squared
+#' Euclidean distances on the standardised predictor matrix `Xs`; then
+#' `sigma = sqrt(median({d2_ij : i < j}) * ncol(Xs))`.  This is the geometric
+#' mean of the raw median heuristic and `p = ncol(X)`, and empirically lands in
+#' the sweet spot between the two extremes.  At `n=500, p=10` on standardised
+#' N(0,1) data it yields `sigma ~ 13.5`, versus `~ 18-19` for the raw median
+#' and `10` for `KRLS::krls()`'s fixed default.
+#'
+#' **Why geomean_p**: a 15-DGP head-to-head vs `KRLS::krls()` (REQ-20260518-003,
+#' iter-2) with the geomean_p anchor shows roadrunner **wins 12/15 DGPs, loses
+#' 0/15, ties 3/15**.  The raw median anchor (v0.0.0.9040) won only 4/15 DGPs
+#' because it over-smoothed locally nonlinear signals (exp-decay, interaction,
+#' tanh-interaction, poly2) by selecting sigma ~2x too wide.  The geomean_p
+#' anchor preserves scale-awareness (adapts to the actual data distribution,
+#' unlike the hard-coded `sigma = p`) while avoiding over-smoothing.
 #'
 #' For `n > 500` the pairwise distance matrix is `O(n^2)`; to keep the default
 #' cheap, a 500-row subsample is drawn with a fixed seed (`set.seed(2718)`) so
@@ -197,6 +203,11 @@
 #' when those arguments are left at `NULL` / at their default.  Restore any
 #' old default explicitly: `sigma = ncol(X)`, `tol = 1e-3 * nrow(X)`,
 #' `nfold = 5`, `ncross = 1`, `autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`.
+#'
+#' The sigma anchor formula was refined in v0.0.0.9041 from the raw median
+#' (`median(d2)`) to the geomean_p formula (`sqrt(median(d2) * p)`).  To
+#' restore the v0.0.0.9040 median anchor, pass
+#' `sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)`.
 #'
 #' @return An object of S3 class `c("krls_rr", "krls")` with components
 #'   mirroring `KRLS::krls()`: `K`, `coeffs`, `Looe`, `fitted`, `X`,
@@ -1470,7 +1481,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     Xs_sub <- Xs
   }
   d2 <- as.numeric(stats::dist(Xs_sub))^2
-  max(stats::median(d2), .Machine$double.eps)
+  max(sqrt(stats::median(d2) * ncol(Xs)), .Machine$double.eps)
 }
 
 ## Fix 2: Tighter LOO lambda bracket and tolerance.

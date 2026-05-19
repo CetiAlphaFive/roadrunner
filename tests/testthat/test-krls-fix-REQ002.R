@@ -12,14 +12,14 @@ library(roadrunner)
 # FIX 1: Scale-aware default sigma (median pairwise squared distance)
 # ===========================================================================
 
-# F1-1: Default sigma equals the median pairwise squared distance on scaled X
-test_that("F1-1: default sigma equals median pairwise sq dist on standardised X", {
+# F1-1: Default sigma equals sqrt(median pairwise sq dist * p) on scaled X
+test_that("F1-1: default sigma equals sqrt(median pairwise sq dist * p) on standardised X", {
   set.seed(101L)
   n <- 80L; p <- 5L
   Xs <- scale(matrix(rnorm(n * p), n, p))   # pre-standardised X
 
-  # Expected: median of pairwise squared Euclidean distances on Xs
-  sigma_expected <- median(as.numeric(dist(Xs))^2)
+  # Expected: sqrt(median of pairwise squared Euclidean distances on Xs * p)
+  sigma_expected <- sqrt(median(as.numeric(dist(Xs))^2) * p)
 
   fit <- krls(Xs, y = Xs[, 1] + rnorm(n, sd = 0.1),
               derivative = FALSE, vcov = FALSE)
@@ -271,9 +271,9 @@ test_that("F4-3: default grid is sigma_anchor * {0.125, 0.25, 0.5, 1, 2, 4, 8, 1
   X <- matrix(rnorm(n * p), n, p)
   y <- sin(X[, 1]) + rnorm(n, sd = 0.2)
 
-  # Compute expected sigma_anchor: median pairwise sq dist on scale(X)
+  # Compute expected sigma_anchor: sqrt(median pairwise sq dist on scale(X) * p)
   Xs_ref <- scale(X)
-  sigma_anchor_ref <- median(as.numeric(dist(Xs_ref))^2)
+  sigma_anchor_ref <- sqrt(median(as.numeric(dist(Xs_ref))^2) * p)
 
   fit <- krls(X, y, autotune = TRUE, seed.cv = 1L,
               derivative = FALSE, vcov = FALSE)
