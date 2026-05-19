@@ -128,7 +128,21 @@
 #'   uses K-fold CV over a grid (`nfold > 0` required). `"gcv"` uses
 #'   the closed-form generalised cross-validation criterion (Craven &
 #'   Wahba 1979) using the same eigendecomposition; recommended when
-#'   `n` is large or LOO behaves unstably.
+#'   `n` is large or LOO behaves unstably. `"mll"` (since v0.0.0.9049)
+#'   selects lambda by minimising the negative Type-II marginal log-
+#'   likelihood in the same eigenbasis. Incompatible with
+#'   `approx = "nystrom"`.
+#' @param whichkernel Kernel choice. `"gaussian"` (default) preserves
+#'   the full back-compatible Gaussian RBF kernel. `"linear"` uses the
+#'   inner-product kernel `K_ij = x_i' x_j`. `"poly1"`, `"poly2"`,
+#'   `"poly3"`, `"poly4"` use `K_ij = (x_i' x_j + poly_c)^d` with
+#'   `d = 1..4`. Non-Gaussian kernels are incompatible with
+#'   `approx = "nystrom"`, with `ard != "none"`, and with vector
+#'   `sigma`; all error at fit time. `var.avgderivatives` is not
+#'   defined for non-Gaussian kernels in this version (returns `NA`
+#'   with a one-shot warning).
+#' @param poly_c Polynomial kernel offset constant. Default `1.0`.
+#'   Used only when `whichkernel` starts with `"poly"`.
 #' @param lambda.grid Optional numeric vector of lambda candidates for
 #'   `lambda.method = "cv"`. `NULL` (default) auto-generates a
 #'   log-spaced grid in `[L, U]`.
@@ -424,7 +438,7 @@ krls.default <- function(X, y,
                          derivative = TRUE, binary = TRUE, vcov = TRUE,
                          weights = NULL, subset = NULL,
                          L = NULL, U = NULL, tol = NULL, eigtrunc = NULL,
-                         lambda.method = c("loo", "gcv", "cv"),
+                         lambda.method = c("loo", "gcv", "cv", "mll"),
                          lambda.grid = NULL,
                          nfold = 0L, ncross = NULL, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
@@ -445,6 +459,9 @@ krls.default <- function(X, y,
                          ard.alpha = 1.0,
                          ard.cap   = 100,
                          ard.imp   = c("avgderiv", "vsq"),
+                         whichkernel = c("gaussian", "linear",
+                                          "poly1", "poly2", "poly3", "poly4"),
+                         poly_c = 1.0,
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
@@ -457,9 +474,47 @@ krls.default <- function(X, y,
   ard <- match.arg(ard)
   ard.imp <- match.arg(ard.imp)
   autotune_speed <- match.arg(autotune.speed)
+  whichkernel <- match.arg(whichkernel)
+
+  ## Phase Q2 (v0.0.0.9049): map kernel name -> integer code for C++.
+  ##   0 = Gaussian (default; back-compat byte-identical)
+  ##   1 = Linear
+  ##   2 = poly1, 3 = poly2, 4 = poly3, 5 = poly4
+  kernel_type <- switch(whichkernel,
+                        "gaussian" = 0L, "linear" = 1L,
+                        "poly1" = 2L, "poly2" = 3L,
+                        "poly3" = 4L, "poly4" = 5L)
+  if (!is.numeric(poly_c) || length(poly_c) != 1L ||
+      !is.finite(poly_c)) {
+    stop("krls: poly_c must be a single finite numeric (got ",
+         deparse(poly_c), ").", call. = FALSE)
+  }
+  poly_c <- as.numeric(poly_c)
 
   if (lambda.method == "gcv" && approx == "nystrom") {
     stop("krls: lambda.method = 'gcv' is not supported with approx = 'nystrom'.")
+  }
+
+  ## --- Phase Q2 validation gates -----------------------------------
+  ## Non-Gaussian kernels are incompatible with ARD, vector sigma,
+  ## Nystrom, MLL+Nystrom, and (linear specifically) autotune sweeps.
+  if (whichkernel != "gaussian") {
+    if (identical(approx, "nystrom"))
+      stop("krls: approx = 'nystrom' is incompatible with whichkernel = '",
+           whichkernel, "'. Use approx = 'exact'.", call. = FALSE)
+    if (!identical(ard, "none"))
+      stop("krls: ard = '", ard, "' is incompatible with whichkernel = '",
+           whichkernel, "' (ARD is Gaussian-specific). Use ard = 'none'.",
+           call. = FALSE)
+    if (!is.null(sigma) && length(sigma) > 1L)
+      stop("krls: vector sigma (per-feature lengthscales) is incompatible ",
+           "with whichkernel = '", whichkernel,
+           "' (Gaussian-only). Pass a scalar sigma or whichkernel = 'gaussian'.",
+           call. = FALSE)
+  }
+  if (lambda.method == "mll" && identical(approx, "nystrom")) {
+    stop("krls: lambda.method = 'mll' is not supported with approx = 'nystrom'.",
+         call. = FALSE)
   }
 
   ## --- Phase 2b/2.5: ARD composition guards (must run before pass 1) -
@@ -748,8 +803,19 @@ krls.default <- function(X, y,
            "do not also pass a vector sigma.", call. = FALSE)
   }
   if (!autotune_grid_null) {
-    stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
-              all(autotune.grid > 0))
+    stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L)
+    ## Phase Q2: when whichkernel = "gaussian" the grid is sigma > 0;
+    ## for poly* the grid is poly_c which is allowed to be >= 0 (the
+    ## inhomogeneous poly with c = 0 reduces to (x'y)^d).
+    if (whichkernel == "gaussian") {
+      if (!all(autotune.grid > 0))
+        stop("krls: autotune.grid (sigma sweep) must be strictly positive.",
+             call. = FALSE)
+    } else {
+      if (!all(is.finite(autotune.grid)) || any(autotune.grid < 0))
+        stop("krls: autotune.grid (poly_c sweep) must be finite and >= 0.",
+             call. = FALSE)
+    }
     autotune.grid <- sort(unique(as.numeric(autotune.grid)))
   }
 
@@ -798,14 +864,21 @@ krls.default <- function(X, y,
   ## Compute sigma_anchor (median pairwise sq. dist on Xs) whenever
   ## (a) user did not supply sigma, or (b) autotune is on and user did
   ## not supply autotune.grid. Skip if neither condition holds.
+  ## Phase Q2: skip the anchor entirely for non-Gaussian kernels; the
+  ## bandwidth is meaningless for linear/poly. Assign a sentinel scalar
+  ## so the rest of the plumbing (sigma_vec broadcast, fit list) stays
+  ## happy without exercising the kernel-distance code path.
   sigma_anchor <- NULL
-  if (sigma_user_null || (isTRUE(autotune) && autotune_grid_null)) {
-    sigma_anchor <- .krls_sigma_anchor(Xs)
-  }
-
-  ## --- sigma default assignment (Fix 1) ----------------------------
-  if (sigma_user_null) {
-    sigma <- sigma_anchor
+  if (whichkernel == "gaussian") {
+    if (sigma_user_null || (isTRUE(autotune) && autotune_grid_null)) {
+      sigma_anchor <- .krls_sigma_anchor(Xs)
+    }
+    if (sigma_user_null) sigma <- sigma_anchor
+  } else {
+    ## Non-Gaussian: sigma is unused by the kernel build. Use a benign
+    ## scalar 1.0 sentinel so the sigma_vec broadcast path below works.
+    sigma <- 1.0
+    sigma_user_null <- FALSE
   }
   ## (non-NULL sigma already validated above)
 
@@ -858,11 +931,30 @@ krls.default <- function(X, y,
   names(sigma_vec) <- colnames(X)
 
   ## --- autotune grid default assignment (Fix 4) --------------------
+  ## Phase Q2: for non-Gaussian whichkernel, the autotune grid is
+  ##   - linear: NO hyperparameter to sweep -> error if user-supplied grid;
+  ##             otherwise autotune collapses to lambda-only (single fit
+  ##             at sigma=1.0 and lambda via inner CV / LOO).
+  ##   - poly*: poly_c grid (default c(0, 0.25, 0.5, 1, 2, 4, 8)).
+  ## For Gaussian (default): existing 9-point anchor-centred sigma grid.
   if (isTRUE(autotune)) {
-    if (autotune_grid_null) {
-      ## Centre the 9-point grid on sigma_anchor; 2x multiplicative spacing.
-      anchor_g <- if (!is.null(sigma_anchor)) sigma_anchor else sigma
-      autotune.grid <- anchor_g * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)
+    if (whichkernel == "gaussian") {
+      if (autotune_grid_null) {
+        ## Centre the 9-point grid on sigma_anchor; 2x multiplicative spacing.
+        anchor_g <- if (!is.null(sigma_anchor)) sigma_anchor else sigma
+        autotune.grid <- anchor_g * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)
+      }
+    } else if (whichkernel == "linear") {
+      if (!autotune_grid_null)
+        stop("krls: whichkernel = 'linear' has no kernel hyperparameter ",
+             "to sweep; do not supply autotune.grid.", call. = FALSE)
+      ## Single-cell grid: no sweep over kernel params, only lambda is tuned.
+      autotune.grid <- 1.0
+    } else {
+      ## poly1..poly4: sweep poly_c.
+      if (autotune_grid_null) {
+        autotune.grid <- c(0, 0.25, 0.5, 1, 2, 4, 8)
+      }
     }
     ## User-supplied autotune.grid already validated + sorted above.
   }
@@ -1049,6 +1141,9 @@ krls.default <- function(X, y,
       X_sds     = X_sds_loc,
       y_mean    = y.init.mean,
       y_sd      = as.numeric(y.init.sd),
+      whichkernel = whichkernel,
+      kernel_type = kernel_type,
+      poly_c      = poly_c,
       approx    = "nystrom",
       landmarks = lm_full$matrix,
       landmark_indices = lm_full$indices,
@@ -1124,8 +1219,12 @@ krls.default <- function(X, y,
     n_at <- nrow(X)
 
     ## --- warmstart probe (optional) ------------------------------
+    ## Phase Q2: skip warmstart entirely for non-Gaussian kernels (the
+    ## probe is ARD-specific). Force dispatch decision to NON-ARD scalar
+    ## path so the autotune just sweeps poly_c (or no-op for linear).
     warmstart_lift <- NULL
-    if (isTRUE(autotune.warmstart) && n_at >= 200L &&
+    if (kernel_type == 0L &&
+        isTRUE(autotune.warmstart) && n_at >= 200L &&
         autotune_speed != "fast" && identical(ard, "none")) {
       warmstart_lift <- .krls_autotune_warmstart_probe(
         Xs = Xs, ys = ys,
@@ -1138,10 +1237,15 @@ krls.default <- function(X, y,
     }
 
     ## --- dispatch decision ---------------------------------------
-    dispatch <- .krls_decide_ard_dispatch(
-      n = n_at, p = d, autotune_speed = autotune_speed,
-      ard_user_pin = ard, warmstart_lift = warmstart_lift
-    )
+    if (kernel_type != 0L) {
+      ## Force scalar (= poly_c sweep) path; ARD is meaningless here.
+      dispatch <- list(dispatch = FALSE, reason = "non-gaussian")
+    } else {
+      dispatch <- .krls_decide_ard_dispatch(
+        n = n_at, p = d, autotune_speed = autotune_speed,
+        ard_user_pin = ard, warmstart_lift = warmstart_lift
+      )
+    }
 
     if (!dispatch$dispatch) {
       ## ---- SCALAR PATH (== v0.0.0.9046) ----------------------
@@ -1153,9 +1257,18 @@ krls.default <- function(X, y,
         autotune.nthreads = autotune.nthreads,
         w_norm = w_norm, sqw = sqw,
         L = L, U = U, tol = tol,
-        n_at = n_at, d = d, trace = trace
+        n_at = n_at, d = d, trace = trace,
+        kernel_type = kernel_type, poly_c = poly_c
       )
-      sigma         <- sc$sigma
+      if (kernel_type == 0L) {
+        sigma         <- sc$sigma
+      } else {
+        ## Non-Gaussian: sc$sigma is the winning poly_c (or sentinel 1.0
+        ## for linear). Replace `poly_c` with it; sigma stays at the
+        ## benign sentinel 1.0.
+        poly_c        <- as.numeric(sc$sigma)
+        sigma         <- 1.0
+      }
       sigma_vec     <- rep(as.numeric(sigma), d)
       names(sigma_vec) <- colnames(X)
       sigma_kind    <- "scalar"
@@ -1168,6 +1281,10 @@ krls.default <- function(X, y,
       autotune_info$winner_sigma      <- sigma
       autotune_info$winner_alpha      <- NA_real_
       autotune_info$winner_imp        <- NA_character_
+      autotune_info$autotune_kind     <- if (kernel_type == 0L) "sigma"
+        else if (kernel_type == 1L) "none" else "poly_c"
+      autotune_info$winner_poly_c     <- if (kernel_type != 0L) poly_c
+        else NA_real_
     } else {
       ## ---- ARD DISPATCH PATH ---------------------------------
       ## Build (alpha, imp, ssf) grid. Quality sweeps the full grid;
@@ -1305,6 +1422,9 @@ krls.default <- function(X, y,
       X_sds     = X_sds_loc,
       y_mean    = y.init.mean,
       y_sd      = as.numeric(y.init.sd),
+      whichkernel = whichkernel,
+      kernel_type = kernel_type,
+      poly_c      = poly_c,
       approx    = "nystrom",
       landmarks = Z_std,
       landmark_indices = lm$indices,
@@ -1342,7 +1462,11 @@ krls.default <- function(X, y,
   }
 
   ## --- kernel + eigendecomposition ---------------------------------
-  K <- krls_kernel_cpp(Xs, sigma_vec)
+  ## Phase Q2: polymorphic dispatch via (kernel_type, poly_c). When
+  ## kernel_type == 0 the C++ worker takes the byte-identical Gaussian
+  ## fast path (constant-sigma or ARD per-feature divide); other types
+  ## skip sigma_vec entirely and use the inner-product code path.
+  K <- krls_kernel_cpp(Xs, sigma_vec, kernel_type, poly_c)
   if (!is.null(sqw)) {
     # Twist the kernel: K_w = D K D
     K_w <- K * tcrossprod(sqw)
@@ -1383,7 +1507,7 @@ krls.default <- function(X, y,
   # optionally seeded for reproducibility.
   cv_diag <- NULL
   if (is.null(lambda)) {
-    if (lambda.method %in% c("loo", "gcv")) {
+    if (lambda.method %in% c("loo", "gcv", "mll")) {
       lambda <- .krls_lambdasearch(dvals = dvals, V = V, Vsq = Vsq,
                                    Vty = Vty, n_y = nrow(y),
                                    yty = yty,
@@ -1391,7 +1515,8 @@ krls.default <- function(X, y,
                                    method = lambda.method,
                                    noisy = isTRUE(trace > 2))
       if (trace > 1) {
-        label <- if (lambda.method == "loo") "Loo-Loss" else "GCV"
+        label <- switch(lambda.method,
+                        loo = "Loo-Loss", gcv = "GCV", mll = "MLL")
         cat("Lambda that minimizes ", label, " is:",
             round(lambda, 5), "\n", sep = "")
       }
@@ -1492,8 +1617,9 @@ krls.default <- function(X, y,
           ys_te <- ys[test_i]
           # Fold-local kernel + eigendecomp (the shared piece across
           # all lambda candidates per fold).
-          K_tr <- krls_kernel_cpp(Xs_tr, sigma_vec)
-          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma_vec)
+          K_tr <- krls_kernel_cpp(Xs_tr, sigma_vec, kernel_type, poly_c)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma_vec,
+                                       kernel_type, poly_c)
           if (!is.null(w_norm)) {
             sqw_tr <- sqrt(w_norm[train_i])
             K_tr_use <- K_tr * tcrossprod(sqw_tr)
@@ -1602,7 +1728,8 @@ krls.default <- function(X, y,
   ## --- derivatives --------------------------------------------------
   derivmat <- avgderiv <- varavgderivmat <- NULL
   if (isTRUE(derivative)) {
-    derivmat_s <- krls_deriv_cpp(Xs, K, coeffs, sigma_vec)
+    derivmat_s <- krls_deriv_cpp(Xs, K, coeffs, sigma_vec,
+                                  kernel_type, poly_c)
     if (!is.null(sqw)) {
       avgderiv_s <- matrix(
         colSums(derivmat_s * w_norm) / sum(w_norm),
@@ -1610,7 +1737,16 @@ krls.default <- function(X, y,
     } else {
       avgderiv_s <- matrix(colMeans(derivmat_s), nrow = 1L)
     }
-    varavg_s   <- krls_avg_deriv_var_cpp(Xs, K, V, dvals, sigma_vec, lambda, sigma2)
+    varavg_s   <- krls_avg_deriv_var_cpp(Xs, K, V, dvals, sigma_vec, lambda,
+                                          sigma2, kernel_type, poly_c)
+    ## Phase Q2: var.avgderivatives for non-Gaussian kernels returns NA
+    ## (full derivation deferred to Q6). Emit a one-shot warning.
+    if (kernel_type != 0L && all(is.na(as.numeric(varavg_s)))) {
+      warning("krls: var.avgderivatives is not implemented for ",
+              "whichkernel = '", whichkernel,
+              "' (returned NA). Full derivation is deferred to Phase Q6.",
+              call. = FALSE)
+    }
     colnames(derivmat_s)  <- colnames(X)
     colnames(avgderiv_s)  <- colnames(X)
     scale_vec <- as.numeric(y.init.sd) / X.init.sd
@@ -1682,12 +1818,21 @@ krls.default <- function(X, y,
               Neffective = Neffective,
               sigma_vec  = sigma_vec,
               sigma_kind = sigma_kind,
+              whichkernel = whichkernel,
+              kernel_type = kernel_type,
+              poly_c      = poly_c,
               derivatives = derivmat,
               avgderivatives = avgderiv,
               var.avgderivatives = varavgderivmat,
               vcov.c = vcov.c, vcov.fitted = vcov.fitted,
               binaryindicator = binaryindicator,
               binary_y = binary_y)
+  ## Phase Q2: store dvals + V + Vty for predict-side posterior variance
+  ## reuse (avoids re-decomposing K at predict time). These are O(n^2)
+  ## like K; slim_krls(keep_predict=TRUE) strips them.
+  out$dvals <- dvals
+  out$V     <- V
+  out$Vty   <- Vty
 
   # Bookkeeping for formula method / predict() / update()
   out$call <- cl
@@ -1757,9 +1902,13 @@ krls.default <- function(X, y,
       } else NULL
       # Fit on the bootstrap sample with the inherited (sigma, lambda).
       # Derivatives / vcov are dropped to keep memory bounded.
+      ## Phase Q2: propagate whichkernel + poly_c so non-Gaussian fits
+      ## bag correctly. For non-Gaussian we pass sigma = NULL (it's
+      ## ignored by the kernel) and the same poly_c as the central fit.
       f_b <- krls.default(
         X = X_b, y = y_b,
-        sigma = sig_b, lambda = lam_b,
+        sigma = if (kernel_type == 0L) sig_b else NULL,
+        lambda = lam_b,
         derivative = FALSE, binary = FALSE, vcov = FALSE,
         weights = w_b,
         lambda.method = "loo",
@@ -1767,6 +1916,8 @@ krls.default <- function(X, y,
         varmod = "none",
         n.boot = 0L,
         na.action = na.action,
+        whichkernel = whichkernel,
+        poly_c = poly_c,
         trace = 0L, nthreads = nthreads
       )
       # Strip heavy fields; keep what predict needs:
@@ -1820,11 +1971,20 @@ krls.default <- function(X, y,
 #'   `plogis(yhat)`. This is a calibration shortcut: the underlying
 #'   fit is still least-squares loss, not logistic loss; values are
 #'   clamped to `[0, 1]` but are not true posterior probabilities.
+#'   `"variance"` (since v0.0.0.9049) returns the GP posterior
+#'   variance `K** - K* (K + lambda I)^{-1} K*'` per row of `newdata`.
+#'   Not supported for `approx = "nystrom"`.
+#' @param unscale Logical. Only used when `type = "variance"`. If
+#'   `TRUE`, multiplies the returned variance by `var(y_train)` so it
+#'   sits on the original y scale; if `FALSE` (default), returns the
+#'   standardised-scale variance.
 #' @export
 predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                               interval = c("none", "pint"),
                               level = 0.95,
-                              type = c("response", "link", "prob"),
+                              type = c("response", "link", "prob",
+                                       "variance"),
+                              unscale = FALSE,
                               ...) {
   interval <- match.arg(interval)
   type     <- match.arg(type)
@@ -1838,6 +1998,24 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   }
   if (isTRUE(se.fit) && is.null(object$vcov.c)) {
     stop("refit with krls(..., vcov = TRUE) to compute standard errors")
+  }
+  if (!is.logical(unscale) || length(unscale) != 1L || is.na(unscale)) {
+    stop("krls: `unscale` must be a single TRUE/FALSE.", call. = FALSE)
+  }
+  ## Phase Q2: type = "variance" guard. Posterior variance is not
+  ## defined for Nystrom (would require the m-length spectrum, deferred);
+  ## errors with a clear message at predict time. Also incompatible with
+  ## se.fit + pint (use either GP variance or se.fit/pint, not both).
+  if (identical(type, "variance")) {
+    if (identical(object$approx, "nystrom")) {
+      stop("krls: type = 'variance' is not supported for Nystrom fits.",
+           " Refit with approx = 'exact' to get GP posterior variance.",
+           call. = FALSE)
+    }
+    if (identical(interval, "pint")) {
+      stop("krls: type = 'variance' is not compatible with interval = 'pint'.",
+           call. = FALSE)
+    }
   }
   ## Phase Q1 / A8: validate type = "prob" requires binary fit.
   if (identical(type, "prob")) {
@@ -2002,7 +2180,12 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   } else {
     rep(as.numeric(object$sigma), ncol(object$X))
   }
-  Knew   <- krls_kernel_pred_cpp(Xn, Xs, pred_sigma_vec)
+  ## Phase Q2: legacy fits (pre-v9049) carry no whichkernel/kernel_type;
+  ## default to Gaussian for back-compat.
+  obj_kernel_type <- if (!is.null(object$kernel_type)) as.integer(object$kernel_type) else 0L
+  obj_poly_c      <- if (!is.null(object$poly_c)) as.numeric(object$poly_c) else 1.0
+  Knew   <- krls_kernel_pred_cpp(Xn, Xs, pred_sigma_vec,
+                                  obj_kernel_type, obj_poly_c)
   yhat   <- Knew %*% object$coeffs
 
   vcov.fit <- se.fit.out <- NULL
@@ -2043,7 +2226,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
         } else {
           rep(as.numeric(Rb$sigma), ncol(Rb$X))
         }
-        Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, sig_b_vec)
+        Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, sig_b_vec,
+                                      obj_kernel_type, obj_poly_c)
         yhat_b <- as.numeric(Kn_b %*% Rb$coeffs)
         sd_yb  <- as.numeric(apply(Rb$y, 2L, sd))
         yhat_b <- yhat_b * sd_yb + mean(Rb$y)
@@ -2067,6 +2251,15 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                     upr = as.numeric(yhat) + half)
     return(pi_mat)
   }
+  ## Phase Q2: GP posterior variance branch.
+  if (identical(type, "variance")) {
+    var_obj <- .krls_predict_variance(object, Xs, Xn,
+                                       kernel_type = obj_kernel_type,
+                                       poly_c      = obj_poly_c,
+                                       pred_sigma_vec = pred_sigma_vec,
+                                       unscale = unscale)
+    return(var_obj)
+  }
   ## Phase Q1 / A8: probability transform for binary fits.
   if (identical(type, "prob")) {
     yhat <- matrix(stats::plogis(as.numeric(yhat)), ncol = 1L)
@@ -2074,6 +2267,90 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
        newdata = Xn, newdataK = Knew,
        bag_sd = bag_sd)
+}
+
+## Phase Q2 (v0.0.0.9049): posterior-variance helper.
+##
+## Computes the GP posterior variance for new points in standardised
+## space (or unscaled to raw y units when `unscale = TRUE`). When the
+## fit was built with vcov = TRUE we have V + dvals stashed; otherwise
+## we re-decompose the stored K. Bagged fits average the per-replicate
+## posterior variances (each contribution rescaled by its own
+## training y_sd^2 when `unscale = TRUE`). Returns a length-m numeric
+## vector (one variance per row of Xn).
+.krls_predict_variance <- function(object, Xs, Xn,
+                                    kernel_type, poly_c,
+                                    pred_sigma_vec, unscale) {
+  V_obj <- object$V
+  d_obj <- object$dvals
+  if (is.null(V_obj) || is.null(d_obj)) {
+    K_obj <- object$K
+    if (is.null(K_obj)) {
+      stop("krls: type = 'variance' requires either ($V, $dvals) ",
+           "or $K on the fit. Refit krls() with the current version.",
+           call. = FALSE)
+    }
+    eo <- krls_eig_cpp(K_obj)
+    d_obj <- as.numeric(eo$values)
+    V_obj <- eo$vectors
+  }
+  Xs_mat <- as.matrix(Xs)
+  Xn_mat <- as.matrix(Xn)
+
+  one_var <- function(Xs_b, Xn_b, V_b, d_b, lam_b,
+                       sig_vec_b) {
+    v <- as.numeric(krls_posterior_var_cpp(
+      Xn_b, Xs_b, V_b, as.numeric(d_b),
+      as.numeric(lam_b),
+      as.integer(kernel_type), as.numeric(sig_vec_b),
+      as.numeric(poly_c)))
+    v[v < 0] <- 0
+    v
+  }
+
+  sd_y_central <- as.numeric(apply(object$y, 2L, sd))
+  central_var <- one_var(Xs_mat, Xn_mat, V_obj, d_obj,
+                          object$lambda, pred_sigma_vec)
+  if (isTRUE(unscale)) central_var <- central_var * (sd_y_central^2)
+
+  if (!is.null(object$boot) && !is.null(object$boot$replicates)) {
+    reps <- object$boot$replicates
+    if (length(reps) > 0L) {
+      acc <- central_var
+      n_used <- 1L
+      ## Need the original-scale newdata to re-standardise per replicate;
+      ## we have Xs (training std space), Xn (newdata std space), and
+      ## the central object$X_means / X_sds (via colMeans / apply on the
+      ## stored object$X). Reconstruct raw newdata = Xn * Xsd + Xmeans.
+      Xmeans_c <- colMeans(object$X)
+      Xsd_c    <- apply(object$X, 2L, sd)
+      X_new_raw <- sweep(sweep(Xn_mat, 2L, Xsd_c, `*`), 2L, Xmeans_c, `+`)
+      for (b in seq_along(reps)) {
+        Rb <- reps[[b]]
+        Xmeans_b <- colMeans(Rb$X)
+        Xsd_b    <- apply(Rb$X, 2L, sd)
+        if (any(!is.finite(Xsd_b)) || any(Xsd_b == 0)) next
+        Xs_b <- matrix(scale(Rb$X, center = Xmeans_b, scale = Xsd_b),
+                       nrow(Rb$X), ncol(Rb$X))
+        Xn_b <- matrix(scale(X_new_raw, center = Xmeans_b, scale = Xsd_b),
+                       nrow(Xn_mat), ncol(Xn_mat))
+        sig_b_vec <- if (!is.null(Rb$sigma_vec)) Rb$sigma_vec
+                     else rep(as.numeric(Rb$sigma), ncol(Rb$X))
+        K_b <- krls_kernel_cpp(Xs_b, sig_b_vec, kernel_type, poly_c)
+        eo_b <- krls_eig_cpp(K_b)
+        v_b <- one_var(Xs_b, Xn_b, eo_b$vectors, eo_b$values,
+                        Rb$lambda, sig_b_vec)
+        if (isTRUE(unscale)) {
+          sd_yb <- as.numeric(apply(Rb$y, 2L, sd))
+          v_b <- v_b * (sd_yb^2)
+        }
+        acc <- acc + v_b
+        n_used <- n_used + 1L
+      }
+      return(acc / n_used)
+    }
+  }
+  central_var
 }
 
 ## -----------------------------------------------------------------
@@ -2222,6 +2499,22 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   max(sqrt(stats::median(d2) * ncol(Xs)), .Machine$double.eps)
 }
 
+## Phase Q2 (v0.0.0.9049): Type-II marginal log-likelihood loss.
+## In the eigen-basis of K, K + lambda I = V diag(d + lambda) V', so
+##   y' (K + lambda I)^{-1} y = sum_i Vty_i^2 / (d_i + lambda)
+##   log det(K + lambda I)    = sum_i log(d_i + lambda)
+## NLL(lambda) up to additive constants:
+##   NLL(lambda) = (1/2) * ( sum Vty^2 / (d + lambda)
+##                          + sum log(d + lambda)
+##                          + n log(2 * pi) )
+## We omit the constant and the 1/2 factor: argmin is preserved.
+.krls_mll_loss <- function(dvals, Vty, lambda, n_y) {
+  dl <- dvals + lambda
+  quad <- sum((Vty ^ 2) / dl)
+  ldet <- sum(log(dl))
+  quad + ldet
+}
+
 ## Fix 2: Tighter LOO lambda bracket and tolerance.
 ## tol: changed from 1e-3 * n (n-dependent) to 1e-6 (fixed, 6-digit precision).
 ## L bracket: changed from linear 0.05-step climb to log-scale x10 climb for
@@ -2230,14 +2523,15 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                                L = NULL, U = NULL, tol = NULL,
                                method = "loo", yty = NULL,
                                noisy = FALSE) {
-  stopifnot(method %in% c("loo", "gcv"))
+  stopifnot(method %in% c("loo", "gcv", "mll"))
   if (method == "gcv") {
     stopifnot(is.numeric(yty), length(yty) == 1L, yty >= 0)
   }
   n <- n_y
   loss_fn <- switch(method,
     loo = function(lam) krls_loo_loss_cpp(dvals, V, Vsq, Vty, lam),
-    gcv = function(lam) krls_gcv_loss_cpp(dvals, Vty, yty, n, lam))
+    gcv = function(lam) krls_gcv_loss_cpp(dvals, Vty, yty, n, lam),
+    mll = function(lam) .krls_mll_loss(dvals, Vty, lam, n))
   if (is.null(tol)) {
     tol <- 1e-6              ## Fix 2a: was 1e-3 * n
   } else {
@@ -2546,7 +2840,14 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                                   autotune.nthreads,
                                   w_norm, sqw,
                                   L, U, tol,
-                                  n_at, d, trace) {
+                                  n_at, d, trace,
+                                  kernel_type = 0L, poly_c = 1.0) {
+  ## Phase Q2: when kernel_type != 0 (non-Gaussian), the autotune.grid is
+  ## a poly_c sweep (or single-cell for linear), NOT a sigma sweep. The
+  ## C++ `krls_autotune_inner_cpp` is Gaussian-specialised; force the R
+  ## fallback for non-Gaussian. Performance: ~5-10x slower than Gaussian
+  ## C++ inner; acceptable for Q2 scope. Q6 may add a poly-aware inner.
+  is_gaussian <- (kernel_type == 0L)
   if (!is.null(seed.cv)) {
     if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
       old_seed_at <- get(".Random.seed", envir = globalenv(),
@@ -2585,8 +2886,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                        ncol = nfold_at * ncross_at)
   lam_mat_at <- matrix(NA_real_, nrow = n_sig,
                        ncol = nfold_at * ncross_at)
-  use_inner_cpp <- is.null(sqw) && is.null(L) && is.null(U) &&
-                     is.null(tol)
+  use_inner_cpp <- is_gaussian && is.null(sqw) && is.null(L) &&
+                     is.null(U) && is.null(tol)
   lambda_args <- list(
     tol            = 1e-6,
     L0             = .Machine$double.eps,
@@ -2621,10 +2922,19 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
         nthreads_used_final  <- as.integer(inner$nthreads_used)
       } else {
         for (si in seq_along(autotune.grid)) {
-          sig_s     <- autotune.grid[si]
-          sig_s_vec <- rep(as.numeric(sig_s), ncol(Xs_tr))
-          K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec)
-          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec)
+          cell      <- autotune.grid[si]
+          ## Gaussian: cell is sigma. Non-Gaussian: cell is poly_c (or
+          ## sentinel 1.0 for linear). sig_s_vec is dummy for non-Gaussian.
+          if (is_gaussian) {
+            sig_s_vec <- rep(as.numeric(cell), ncol(Xs_tr))
+            poly_c_cell <- poly_c
+          } else {
+            sig_s_vec   <- rep(1.0, ncol(Xs_tr))
+            poly_c_cell <- as.numeric(cell)
+          }
+          K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec, kernel_type, poly_c_cell)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec,
+                                        kernel_type, poly_c_cell)
           if (!is.null(sqw)) {
             sqw_tr <- sqrt(w_norm[train_i])
             K_tr_use  <- K_tr * tcrossprod(sqw_tr)
@@ -3263,8 +3573,14 @@ slim_krls <- function(fit, keep_predict = TRUE) {
             !is.na(keep_predict))
 
   ## Fields that are always safe to strip (heavy O(n^2) or O(n*m)
-  ## intermediates that predict does not need).
-  always_strip <- c("K", "V", "Vsq", "Vty", "vcov.c", "vcov.fitted")
+  ## intermediates that predict does not need for point predictions).
+  ## NB: Phase Q2 adds `dvals` + `V` + `Vty` for posterior-variance
+  ## predict. These are stripped here because predict.krls_rr's variance
+  ## helper falls back to re-decomposing $K when ($V, $dvals) are
+  ## missing — but $K is also stripped, so variance predict will fail
+  ## on a slimmed fit (refit required). Document this in the man page.
+  always_strip <- c("K", "V", "Vsq", "Vty", "vcov.c", "vcov.fitted",
+                    "dvals")
   for (nm in always_strip) fit[[nm]] <- NULL
 
   ## When keep_predict = FALSE, also strip predict-only state.
@@ -3276,6 +3592,7 @@ slim_krls <- function(fit, keep_predict = TRUE) {
                       "lambda", "Neffective",
                       "binary_y", "binaryindicator",
                       "ard_kind", "ard_alpha", "ard_cap", "ard_imp",
+                      "whichkernel", "kernel_type", "poly_c",
                       "call", "approx")
     cls <- class(fit)
     new_fit <- fit[intersect(names(fit), summary_keep)]

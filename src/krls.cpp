@@ -42,6 +42,38 @@ using namespace Rcpp;
 using namespace RcppParallel;
 
 // -------------------------------------------------------------------
+// Kernel-type code (Phase Q2, v0.0.0.9049):
+//   0 = Gaussian (default; back-compat path).
+//   1 = Linear: K_ij = x_i' x_j.
+//   2..5 = Polynomial degree 1..4: K_ij = (x_i' x_j + c)^d.
+//
+// The Gaussian path is preserved byte-for-byte (the existing
+// constant-sigma fast loop and the ARD per-feature-divide loop both
+// execute when kernel_type == 0).
+// -------------------------------------------------------------------
+
+// Compute (x_i . x_j) for the linear/poly kernels.
+static inline double krls_dot_ij(const RMatrix<double>& X,
+                                 std::size_t i, std::size_t j,
+                                 std::size_t p) {
+  double s = 0.0;
+  for (std::size_t k = 0; k < p; ++k) {
+    s += X(i, k) * X(j, k);
+  }
+  return s;
+}
+static inline double krls_dot_ij_xy(const RMatrix<double>& Xa,
+                                    const RMatrix<double>& Xb,
+                                    std::size_t i, std::size_t j,
+                                    std::size_t p) {
+  double s = 0.0;
+  for (std::size_t k = 0; k < p; ++k) {
+    s += Xa(i, k) * Xb(j, k);
+  }
+  return s;
+}
+
+// -------------------------------------------------------------------
 // Gaussian-kernel build (train-train, n x n symmetric).
 //
 // Phase 2a (v0.0.0.9045): accepts a length-p `sigma_vec` of per-feature
@@ -52,6 +84,10 @@ using namespace RcppParallel;
 // EXACT v0.0.0.9044 inner loop (accumulate sum of squared d, then
 // exp(-s * inv_sigma)) so the scalar-sigma path is byte-identical to
 // pre-9045 fits. Non-constant sigma_vec uses per-element divides.
+//
+// Phase Q2 (v0.0.0.9049): polymorphic dispatch on kernel_type. When
+// kernel_type == 0 (Gaussian) the existing fast loops are unchanged.
+// kernel_type 1 = Linear; 2..5 = Poly1..4 with constant `kernel_c`.
 // -------------------------------------------------------------------
 struct KrlsKernelWorker : public Worker {
   const RMatrix<double> X;
@@ -59,44 +95,81 @@ struct KrlsKernelWorker : public Worker {
   const std::vector<double> inv_sig;   // 1 / sigma_vec[k]
   const bool sigma_constant;
   const double inv_sigma_scalar;       // valid only when sigma_constant
+  const int kernel_type;
+  const double kernel_c;
 
   KrlsKernelWorker(const NumericMatrix& X_, NumericMatrix& K_,
                    const std::vector<double>& inv_sig_,
-                   bool sigma_constant_, double inv_sigma_scalar_)
+                   bool sigma_constant_, double inv_sigma_scalar_,
+                   int kernel_type_, double kernel_c_)
     : X(X_), K(K_), inv_sig(inv_sig_),
       sigma_constant(sigma_constant_),
-      inv_sigma_scalar(inv_sigma_scalar_) {}
+      inv_sigma_scalar(inv_sigma_scalar_),
+      kernel_type(kernel_type_), kernel_c(kernel_c_) {}
 
   void operator()(std::size_t begin, std::size_t end) {
     const std::size_t n = X.nrow();
     const std::size_t p = X.ncol();
-    if (sigma_constant) {
-      // EXACT v0.0.0.9044 hot loop -- preserves FP byte-identity.
-      const double inv_sigma = inv_sigma_scalar;
-      for (std::size_t i = begin; i < end; ++i) {
-        K(i, i) = 1.0;
-        for (std::size_t j = i + 1; j < n; ++j) {
-          double s = 0.0;
-          for (std::size_t k = 0; k < p; ++k) {
-            const double d = X(i, k) - X(j, k);
-            s += d * d;
+    if (kernel_type == 0) {
+      if (sigma_constant) {
+        // EXACT v0.0.0.9044 hot loop -- preserves FP byte-identity.
+        const double inv_sigma = inv_sigma_scalar;
+        for (std::size_t i = begin; i < end; ++i) {
+          K(i, i) = 1.0;
+          for (std::size_t j = i + 1; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < p; ++k) {
+              const double d = X(i, k) - X(j, k);
+              s += d * d;
+            }
+            const double v = std::exp(-s * inv_sigma);
+            K(i, j) = v;
+            K(j, i) = v;
           }
-          const double v = std::exp(-s * inv_sigma);
+        }
+      } else {
+        // ARD path -- per-feature divide.
+        for (std::size_t i = begin; i < end; ++i) {
+          K(i, i) = 1.0;
+          for (std::size_t j = i + 1; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < p; ++k) {
+              const double d = X(i, k) - X(j, k);
+              s += d * d * inv_sig[k];
+            }
+            const double v = std::exp(-s);
+            K(i, j) = v;
+            K(j, i) = v;
+          }
+        }
+      }
+    } else if (kernel_type == 1) {
+      // Linear: K_ij = x_i . x_j (symmetric).
+      for (std::size_t i = begin; i < end; ++i) {
+        // diag: K_ii = x_i . x_i
+        double si = 0.0;
+        for (std::size_t k = 0; k < p; ++k) si += X(i, k) * X(i, k);
+        K(i, i) = si;
+        for (std::size_t j = i + 1; j < n; ++j) {
+          const double v = krls_dot_ij(X, i, j, p);
           K(i, j) = v;
           K(j, i) = v;
         }
       }
     } else {
-      // ARD path -- per-feature divide.
+      // Polynomial 1..4: K_ij = (x_i . x_j + c)^d  with d = kernel_type - 1.
+      const int deg = kernel_type - 1;
       for (std::size_t i = begin; i < end; ++i) {
-        K(i, i) = 1.0;
+        double si = 0.0;
+        for (std::size_t k = 0; k < p; ++k) si += X(i, k) * X(i, k);
+        double base_ii = si + kernel_c;
+        double v_ii = 1.0;
+        for (int e = 0; e < deg; ++e) v_ii *= base_ii;
+        K(i, i) = v_ii;
         for (std::size_t j = i + 1; j < n; ++j) {
-          double s = 0.0;
-          for (std::size_t k = 0; k < p; ++k) {
-            const double d = X(i, k) - X(j, k);
-            s += d * d * inv_sig[k];
-          }
-          const double v = std::exp(-s);
+          const double base = krls_dot_ij(X, i, j, p) + kernel_c;
+          double v = 1.0;
+          for (int e = 0; e < deg; ++e) v *= base;
           K(i, j) = v;
           K(j, i) = v;
         }
@@ -107,25 +180,34 @@ struct KrlsKernelWorker : public Worker {
 
 // [[Rcpp::export]]
 NumericMatrix krls_kernel_cpp(const NumericMatrix& X,
-                              const NumericVector& sigma_vec) {
+                              const NumericVector& sigma_vec,
+                              int kernel_type = 0,
+                              double kernel_c = 1.0) {
   const int n = X.nrow();
   const int p = X.ncol();
-  if (sigma_vec.size() != p) {
+  if (kernel_type == 0 && sigma_vec.size() != p) {
     Rcpp::stop("krls_kernel_cpp: length(sigma_vec) (%d) must equal ncol(X) (%d)",
                sigma_vec.size(), p);
   }
+  if (kernel_type < 0 || kernel_type > 5) {
+    Rcpp::stop("krls_kernel_cpp: kernel_type must be in 0..5 (got %d)",
+               kernel_type);
+  }
   // Detect bit-exact constant sigma_vec (broadcast from scalar).
+  // Only meaningful for Gaussian; harmless to compute for others.
   bool sigma_constant = true;
-  const double s0 = sigma_vec[0];
-  for (int k = 1; k < p; ++k) {
+  double s0 = (sigma_vec.size() > 0) ? sigma_vec[0] : 1.0;
+  for (int k = 1; k < sigma_vec.size(); ++k) {
     if (sigma_vec[k] != s0) { sigma_constant = false; break; }
   }
-  std::vector<double> inv_sig(p);
-  for (int k = 0; k < p; ++k) inv_sig[k] = 1.0 / sigma_vec[k];
-  const double inv_sigma_scalar = 1.0 / s0;
+  std::vector<double> inv_sig(sigma_vec.size());
+  for (int k = 0; k < sigma_vec.size(); ++k)
+    inv_sig[k] = 1.0 / sigma_vec[k];
+  const double inv_sigma_scalar = (sigma_vec.size() > 0) ? (1.0 / s0) : 0.0;
 
   NumericMatrix K(n, n);
-  KrlsKernelWorker w(X, K, inv_sig, sigma_constant, inv_sigma_scalar);
+  KrlsKernelWorker w(X, K, inv_sig, sigma_constant, inv_sigma_scalar,
+                     kernel_type, kernel_c);
   parallelFor(0, n, w);
   return K;
 }
@@ -143,39 +225,61 @@ struct KrlsKernelPredWorker : public Worker {
   const std::vector<double> inv_sig;
   const bool sigma_constant;
   const double inv_sigma_scalar;
+  const int kernel_type;
+  const double kernel_c;
 
   KrlsKernelPredWorker(const NumericMatrix& Xnew_, const NumericMatrix& Xtr_,
                        NumericMatrix& K_,
                        const std::vector<double>& inv_sig_,
-                       bool sigma_constant_, double inv_sigma_scalar_)
+                       bool sigma_constant_, double inv_sigma_scalar_,
+                       int kernel_type_, double kernel_c_)
     : Xnew(Xnew_), Xtr(Xtr_), K(K_), inv_sig(inv_sig_),
       sigma_constant(sigma_constant_),
-      inv_sigma_scalar(inv_sigma_scalar_) {}
+      inv_sigma_scalar(inv_sigma_scalar_),
+      kernel_type(kernel_type_), kernel_c(kernel_c_) {}
 
   void operator()(std::size_t begin, std::size_t end) {
     const std::size_t n = Xtr.nrow();
     const std::size_t p = Xtr.ncol();
-    if (sigma_constant) {
-      const double inv_sigma = inv_sigma_scalar;
+    if (kernel_type == 0) {
+      if (sigma_constant) {
+        const double inv_sigma = inv_sigma_scalar;
+        for (std::size_t i = begin; i < end; ++i) {
+          for (std::size_t j = 0; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < p; ++k) {
+              const double d = Xnew(i, k) - Xtr(j, k);
+              s += d * d;
+            }
+            K(i, j) = std::exp(-s * inv_sigma);
+          }
+        }
+      } else {
+        for (std::size_t i = begin; i < end; ++i) {
+          for (std::size_t j = 0; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < p; ++k) {
+              const double d = Xnew(i, k) - Xtr(j, k);
+              s += d * d * inv_sig[k];
+            }
+            K(i, j) = std::exp(-s);
+          }
+        }
+      }
+    } else if (kernel_type == 1) {
       for (std::size_t i = begin; i < end; ++i) {
         for (std::size_t j = 0; j < n; ++j) {
-          double s = 0.0;
-          for (std::size_t k = 0; k < p; ++k) {
-            const double d = Xnew(i, k) - Xtr(j, k);
-            s += d * d;
-          }
-          K(i, j) = std::exp(-s * inv_sigma);
+          K(i, j) = krls_dot_ij_xy(Xnew, Xtr, i, j, p);
         }
       }
     } else {
+      const int deg = kernel_type - 1;
       for (std::size_t i = begin; i < end; ++i) {
         for (std::size_t j = 0; j < n; ++j) {
-          double s = 0.0;
-          for (std::size_t k = 0; k < p; ++k) {
-            const double d = Xnew(i, k) - Xtr(j, k);
-            s += d * d * inv_sig[k];
-          }
-          K(i, j) = std::exp(-s);
+          const double base = krls_dot_ij_xy(Xnew, Xtr, i, j, p) + kernel_c;
+          double v = 1.0;
+          for (int e = 0; e < deg; ++e) v *= base;
+          K(i, j) = v;
         }
       }
     }
@@ -185,25 +289,33 @@ struct KrlsKernelPredWorker : public Worker {
 // [[Rcpp::export]]
 NumericMatrix krls_kernel_pred_cpp(const NumericMatrix& Xnew,
                                    const NumericMatrix& Xtrain,
-                                   const NumericVector& sigma_vec) {
+                                   const NumericVector& sigma_vec,
+                                   int kernel_type = 0,
+                                   double kernel_c = 1.0) {
   const int m = Xnew.nrow();
   const int n = Xtrain.nrow();
   const int p = Xtrain.ncol();
-  if (sigma_vec.size() != p) {
+  if (kernel_type == 0 && sigma_vec.size() != p) {
     Rcpp::stop("krls_kernel_pred_cpp: length(sigma_vec) (%d) must equal ncol(Xtrain) (%d)",
                sigma_vec.size(), p);
   }
+  if (kernel_type < 0 || kernel_type > 5) {
+    Rcpp::stop("krls_kernel_pred_cpp: kernel_type must be in 0..5 (got %d)",
+               kernel_type);
+  }
   bool sigma_constant = true;
-  const double s0 = sigma_vec[0];
-  for (int k = 1; k < p; ++k) {
+  double s0 = (sigma_vec.size() > 0) ? sigma_vec[0] : 1.0;
+  for (int k = 1; k < sigma_vec.size(); ++k) {
     if (sigma_vec[k] != s0) { sigma_constant = false; break; }
   }
-  std::vector<double> inv_sig(p);
-  for (int k = 0; k < p; ++k) inv_sig[k] = 1.0 / sigma_vec[k];
-  const double inv_sigma_scalar = 1.0 / s0;
+  std::vector<double> inv_sig(sigma_vec.size());
+  for (int k = 0; k < sigma_vec.size(); ++k)
+    inv_sig[k] = 1.0 / sigma_vec[k];
+  const double inv_sigma_scalar = (sigma_vec.size() > 0) ? (1.0 / s0) : 0.0;
 
   NumericMatrix K(m, n);
-  KrlsKernelPredWorker w(Xnew, Xtrain, K, inv_sig, sigma_constant, inv_sigma_scalar);
+  KrlsKernelPredWorker w(Xnew, Xtrain, K, inv_sig, sigma_constant,
+                         inv_sigma_scalar, kernel_type, kernel_c);
   parallelFor(0, m, w);
   return K;
 }
@@ -309,30 +421,69 @@ double krls_gcv_loss_cpp(const arma::vec& d, const arma::vec& Vty,
 // -------------------------------------------------------------------
 // [[Rcpp::export]]
 arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K,
-                         const arma::vec& c, const arma::vec& sigma_vec) {
+                         const arma::vec& c, const arma::vec& sigma_vec,
+                         int kernel_type = 0, double kernel_c = 1.0) {
+  const arma::uword n = X.n_rows;
   const arma::uword p = X.n_cols;
-  if (sigma_vec.n_elem != p) {
-    Rcpp::stop("krls_deriv_cpp: length(sigma_vec) must equal ncol(X)");
+  if (kernel_type == 0) {
+    if (sigma_vec.n_elem != p) {
+      Rcpp::stop("krls_deriv_cpp: length(sigma_vec) must equal ncol(X)");
+    }
+    const arma::vec s1 = K * c;                  // n x 1, equals yhat_std.
+    arma::mat Xc       = X;                      // n x p, will be scaled.
+    Xc.each_col() %= c;                          // row j scaled by c_j.
+    const arma::mat s2 = K * Xc;                 // n x p.
+    arma::mat Xs1      = X;
+    Xs1.each_col() %= s1;                        // row i scaled by s1_i.
+    arma::mat D = Xs1 - s2;
+    // Constant-vector fast path: preserves FP byte-identity vs v9044.
+    bool sigma_constant = true;
+    const double s0 = sigma_vec(0);
+    for (arma::uword k = 1; k < p; ++k) {
+      if (sigma_vec(k) != s0) { sigma_constant = false; break; }
+    }
+    if (sigma_constant) {
+      return (-2.0 / s0) * D;
+    }
+    arma::rowvec scl = (-2.0 / sigma_vec).t();
+    D.each_row() %= scl;
+    return D;
   }
-  const arma::vec s1 = K * c;                  // n x 1, equals yhat_std.
-  arma::mat Xc       = X;                      // n x p, will be scaled.
-  Xc.each_col() %= c;                          // row j scaled by c_j.
-  const arma::mat s2 = K * Xc;                 // n x p.
-  arma::mat Xs1      = X;
-  Xs1.each_col() %= s1;                        // row i scaled by s1_i.
-  arma::mat D = Xs1 - s2;
-  // Constant-vector fast path: preserves FP byte-identity vs v9044.
-  bool sigma_constant = true;
-  const double s0 = sigma_vec(0);
-  for (arma::uword k = 1; k < p; ++k) {
-    if (sigma_vec(k) != s0) { sigma_constant = false; break; }
+  if (kernel_type == 1) {
+    // Linear: D[i, k] = sum_j x_{j,k} c_j = (X' c)_k. Constant per col.
+    arma::rowvec colvec = (X.t() * c).t();        // 1 x p
+    arma::mat D(n, p);
+    for (arma::uword k = 0; k < p; ++k) D.col(k).fill(colvec(k));
+    return D;
   }
-  if (sigma_constant) {
-    return (-2.0 / s0) * D;
+  // Polynomial degree d = kernel_type - 1.
+  // K_ij = (g_ij + c)^d  =>  H_ij = (g_ij + c)^(d-1)  with g_ij = x_i . x_j
+  // dK_ij/dx_ik = d * H_ij * x_{j,k}
+  // D[i, k] = sum_j d * H_ij * x_{j,k} * c_j = d * (H @ diag(c) @ X)[i, k].
+  const int deg = kernel_type - 1;
+  if (deg <= 0) {
+    Rcpp::stop("krls_deriv_cpp: polynomial degree must be >= 1");
   }
-  arma::rowvec scl = (-2.0 / sigma_vec).t();
-  D.each_row() %= scl;
-  return D;
+  // Build H = (G + c)^(d-1) where G = X X'.
+  arma::mat H;
+  if (deg == 1) {
+    // (d-1) = 0  =>  H is all ones; D[i, k] = sum_j x_{j,k} c_j (== linear case).
+    arma::rowvec colvec = (X.t() * c).t();
+    arma::mat D(n, p);
+    for (arma::uword k = 0; k < p; ++k) D.col(k).fill(colvec(k));
+    return D;
+  }
+  arma::mat G = X * X.t();
+  arma::mat base = G + kernel_c;
+  H = base;
+  for (int e = 1; e < deg - 1; ++e) {
+    H = H % base;   // elementwise power
+  }
+  // Two dgemm-style products: Xc (row j scaled by c_j), then H @ Xc.
+  arma::mat Xc = X;
+  Xc.each_col() %= c;
+  arma::mat D = H * Xc;
+  return static_cast<double>(deg) * D;
 }
 
 // -------------------------------------------------------------------
@@ -355,9 +506,19 @@ arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K,
 arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K,
                                  const arma::mat& V, const arma::vec& d,
                                  const arma::vec& sigma_vec, double lambda,
-                                 double sigma2) {
+                                 double sigma2,
+                                 int kernel_type = 0,
+                                 double kernel_c = 1.0) {
   const arma::uword n = X.n_rows;
   const arma::uword p = X.n_cols;
+  if (kernel_type != 0) {
+    // Phase Q2: derivation of avg-deriv variance under non-Gaussian
+    // kernels is deferred to Q6. Return all-NA so the R-side caller can
+    // emit a one-shot warning + leave var.avgderivatives = NA.
+    arma::vec out(p);
+    out.fill(NA_REAL);
+    return out;
+  }
   if (sigma_vec.n_elem != p) {
     Rcpp::stop("krls_avg_deriv_var_cpp: length(sigma_vec) must equal ncol(X)");
   }
@@ -395,6 +556,119 @@ arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K,
 // [[Rcpp::export]]
 arma::mat krls_vsq_cpp(const arma::mat& V) {
   return V % V;
+}
+
+// -------------------------------------------------------------------
+// Phase Q2 (v0.0.0.9049): GP posterior variance for KRLS predictions.
+//
+// For a fit (V, d, lambda) on training kernel K, the posterior variance
+// at a new point x* is
+//   var(f(x*)) = K(x*, x*) - K*' (K + lambda I)^{-1} K*
+// where K* = K(X_tr, x*).  In the eigen-basis of K:
+//   (K + lambda I)^{-1} = V diag(1/(d + lambda)) V'.
+// Returns a length-n_new vector of variances on the *standardised* y
+// scale.  Floors at 0 to absorb FP cancellation.
+//
+// kernel_type / kernel_c determine the kernel.  For Gaussian (0) the
+// diagonal K(x*, x*) = 1; for linear, K(x*, x*) = ||x*||^2; for poly,
+// K(x*, x*) = (||x*||^2 + c)^d.
+// -------------------------------------------------------------------
+// [[Rcpp::export]]
+arma::vec krls_posterior_var_cpp(const arma::mat& Xnew,
+                                 const arma::mat& Xtr,
+                                 const arma::mat& V,
+                                 const arma::vec& d,
+                                 double lambda,
+                                 int kernel_type,
+                                 const arma::vec& sigma_vec,
+                                 double kernel_c) {
+  if (kernel_type < 0 || kernel_type > 5) {
+    Rcpp::stop("krls_posterior_var_cpp: kernel_type must be 0..5");
+  }
+  const arma::uword m = Xnew.n_rows;
+  const arma::uword n = Xtr.n_rows;
+  if (V.n_rows != n) {
+    Rcpp::stop("krls_posterior_var_cpp: V must have nrow(Xtr) rows");
+  }
+  // Build K* = K(Xnew, Xtr) (m x n).
+  arma::mat Kstar(m, n);
+  if (kernel_type == 0) {
+    // Gaussian: K_ij = exp(- sum_k (xnew_ik - xtr_jk)^2 / sigma_k).
+    bool sigma_constant = true;
+    const double s0 = sigma_vec(0);
+    for (arma::uword k = 1; k < sigma_vec.n_elem; ++k) {
+      if (sigma_vec(k) != s0) { sigma_constant = false; break; }
+    }
+    if (sigma_constant) {
+      const double inv_sigma = 1.0 / s0;
+      for (arma::uword i = 0; i < m; ++i) {
+        for (arma::uword j = 0; j < n; ++j) {
+          double s = 0.0;
+          for (arma::uword k = 0; k < Xnew.n_cols; ++k) {
+            const double dxn = Xnew(i, k) - Xtr(j, k);
+            s += dxn * dxn;
+          }
+          Kstar(i, j) = std::exp(-s * inv_sigma);
+        }
+      }
+    } else {
+      for (arma::uword i = 0; i < m; ++i) {
+        for (arma::uword j = 0; j < n; ++j) {
+          double s = 0.0;
+          for (arma::uword k = 0; k < Xnew.n_cols; ++k) {
+            const double dxn = Xnew(i, k) - Xtr(j, k);
+            s += dxn * dxn / sigma_vec(k);
+          }
+          Kstar(i, j) = std::exp(-s);
+        }
+      }
+    }
+  } else if (kernel_type == 1) {
+    Kstar = Xnew * Xtr.t();
+  } else {
+    const int deg = kernel_type - 1;
+    arma::mat base = Xnew * Xtr.t() + kernel_c;
+    Kstar = base;
+    for (int e = 1; e < deg; ++e) Kstar = Kstar % base;
+  }
+
+  // Compute diag(K* V diag(1/(d+lam)) V' K*'):
+  //   M = K* V              (m x n)
+  //   row_i sum_j M_ij^2 * 1/(d_j + lambda)
+  arma::mat M = Kstar * V;                          // m x n
+  arma::vec inv = 1.0 / (d + lambda);
+  arma::mat M2 = M % M;
+  arma::vec quad = M2 * inv;                        // m x 1
+
+  // Build diagonal of K(x*, x*).
+  arma::vec kss(m);
+  if (kernel_type == 0) {
+    kss.fill(1.0);
+  } else if (kernel_type == 1) {
+    for (arma::uword i = 0; i < m; ++i) {
+      double s = 0.0;
+      for (arma::uword k = 0; k < Xnew.n_cols; ++k) {
+        s += Xnew(i, k) * Xnew(i, k);
+      }
+      kss(i) = s;
+    }
+  } else {
+    const int deg = kernel_type - 1;
+    for (arma::uword i = 0; i < m; ++i) {
+      double s = 0.0;
+      for (arma::uword k = 0; k < Xnew.n_cols; ++k) {
+        s += Xnew(i, k) * Xnew(i, k);
+      }
+      double v = 1.0;
+      double base = s + kernel_c;
+      for (int e = 0; e < deg; ++e) v *= base;
+      kss(i) = v;
+    }
+  }
+  arma::vec var = kss - quad;
+  // FP-cancellation floor at 0.
+  var.elem(arma::find(var < 0.0)).zeros();
+  return var;
 }
 
 // ---------------------------------------------------------------------------

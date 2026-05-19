@@ -25,7 +25,7 @@ krls(X, ...)
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  lambda.method = c("loo", "gcv", "cv"),
+  lambda.method = c("loo", "gcv", "cv", "mll"),
   lambda.grid = NULL,
   nfold = 0L,
   ncross = NULL,
@@ -50,6 +50,8 @@ krls(X, ...)
   ard.alpha = 1,
   ard.cap = 100,
   ard.imp = c("avgderiv", "vsq"),
+  whichkernel = c("gaussian", "linear", "poly1", "poly2", "poly3", "poly4"),
+  poly_c = 1,
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -62,7 +64,8 @@ krls(X, ...)
   se.fit = FALSE,
   interval = c("none", "pint"),
   level = 0.95,
-  type = c("response", "link", "prob"),
+  type = c("response", "link", "prob", "variance"),
+  unscale = FALSE,
   ...
 )
 }
@@ -137,7 +140,10 @@ the closed-form leave-one-out golden-section search; \code{"cv"}
 uses K-fold CV over a grid (\code{nfold > 0} required). \code{"gcv"} uses
 the closed-form generalised cross-validation criterion (Craven &
 Wahba 1979) using the same eigendecomposition; recommended when
-\code{n} is large or LOO behaves unstably.}
+\code{n} is large or LOO behaves unstably. \code{"mll"} (since v0.0.0.9049)
+selects lambda by minimising the negative Type-II marginal log-
+likelihood in the same eigenbasis. Incompatible with
+\code{approx = "nystrom"}.}
 
 \item{lambda.grid}{Optional numeric vector of lambda candidates for
 \code{lambda.method = "cv"}. \code{NULL} (default) auto-generates a
@@ -272,6 +278,19 @@ importance features. Default \code{100}.}
 (default) uses \verb{|avgderivatives[k]|}; \code{"vsq"} uses
 \code{mean(derivatives[, k]^2)}, a slightly more robust signal.}
 
+\item{whichkernel}{Kernel choice. \code{"gaussian"} (default) preserves
+the full back-compatible Gaussian RBF kernel. \code{"linear"} uses the
+inner-product kernel \verb{K_ij = x_i' x_j}. \code{"poly1"}, \code{"poly2"},
+\code{"poly3"}, \code{"poly4"} use \verb{K_ij = (x_i' x_j + poly_c)^d} with
+\verb{d = 1..4}. Non-Gaussian kernels are incompatible with
+\code{approx = "nystrom"}, with \code{ard != "none"}, and with vector
+\code{sigma}; all error at fit time. \code{var.avgderivatives} is not
+defined for non-Gaussian kernels in this version (returns \code{NA}
+with a one-shot warning).}
+
+\item{poly_c}{Polynomial kernel offset constant. Default \code{1.0}.
+Used only when \code{whichkernel} starts with \code{"poly"}.}
+
 \item{trace}{Integer. \code{0} is silent, \verb{> 0} enables progress
 diagnostics (currently: prints chosen lambda when \verb{> 1},
 golden-section progress when \verb{> 2}). Replaces \code{print.level}.}
@@ -308,7 +327,15 @@ future logistic-loss extension). \code{"prob"} is valid only for
 binary fits (\code{y} has exactly two unique values) and returns
 \code{plogis(yhat)}. This is a calibration shortcut: the underlying
 fit is still least-squares loss, not logistic loss; values are
-clamped to \verb{[0, 1]} but are not true posterior probabilities.}
+clamped to \verb{[0, 1]} but are not true posterior probabilities.
+\code{"variance"} (since v0.0.0.9049) returns the GP posterior
+variance \verb{K** - K* (K + lambda I)^\{-1\} K*'} per row of \code{newdata}.
+Not supported for \code{approx = "nystrom"}.}
+
+\item{unscale}{Logical. Only used when \code{type = "variance"}. If
+\code{TRUE}, multiplies the returned variance by \code{var(y_train)} so it
+sits on the original y scale; if \code{FALSE} (default), returns the
+standardised-scale variance.}
 }
 \value{
 An object of S3 class \code{c("krls_rr", "krls")} with components

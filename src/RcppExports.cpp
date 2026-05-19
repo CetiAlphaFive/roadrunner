@@ -78,27 +78,31 @@ BEGIN_RCPP
 END_RCPP
 }
 // krls_kernel_cpp
-NumericMatrix krls_kernel_cpp(const NumericMatrix& X, const NumericVector& sigma_vec);
-RcppExport SEXP _roadrunner_krls_kernel_cpp(SEXP XSEXP, SEXP sigma_vecSEXP) {
+NumericMatrix krls_kernel_cpp(const NumericMatrix& X, const NumericVector& sigma_vec, int kernel_type, double kernel_c);
+RcppExport SEXP _roadrunner_krls_kernel_cpp(SEXP XSEXP, SEXP sigma_vecSEXP, SEXP kernel_typeSEXP, SEXP kernel_cSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const NumericMatrix& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const NumericVector& >::type sigma_vec(sigma_vecSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_kernel_cpp(X, sigma_vec));
+    Rcpp::traits::input_parameter< int >::type kernel_type(kernel_typeSEXP);
+    Rcpp::traits::input_parameter< double >::type kernel_c(kernel_cSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_kernel_cpp(X, sigma_vec, kernel_type, kernel_c));
     return rcpp_result_gen;
 END_RCPP
 }
 // krls_kernel_pred_cpp
-NumericMatrix krls_kernel_pred_cpp(const NumericMatrix& Xnew, const NumericMatrix& Xtrain, const NumericVector& sigma_vec);
-RcppExport SEXP _roadrunner_krls_kernel_pred_cpp(SEXP XnewSEXP, SEXP XtrainSEXP, SEXP sigma_vecSEXP) {
+NumericMatrix krls_kernel_pred_cpp(const NumericMatrix& Xnew, const NumericMatrix& Xtrain, const NumericVector& sigma_vec, int kernel_type, double kernel_c);
+RcppExport SEXP _roadrunner_krls_kernel_pred_cpp(SEXP XnewSEXP, SEXP XtrainSEXP, SEXP sigma_vecSEXP, SEXP kernel_typeSEXP, SEXP kernel_cSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const NumericMatrix& >::type Xnew(XnewSEXP);
     Rcpp::traits::input_parameter< const NumericMatrix& >::type Xtrain(XtrainSEXP);
     Rcpp::traits::input_parameter< const NumericVector& >::type sigma_vec(sigma_vecSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_kernel_pred_cpp(Xnew, Xtrain, sigma_vec));
+    Rcpp::traits::input_parameter< int >::type kernel_type(kernel_typeSEXP);
+    Rcpp::traits::input_parameter< double >::type kernel_c(kernel_cSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_kernel_pred_cpp(Xnew, Xtrain, sigma_vec, kernel_type, kernel_c));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -159,8 +163,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // krls_deriv_cpp
-arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K, const arma::vec& c, const arma::vec& sigma_vec);
-RcppExport SEXP _roadrunner_krls_deriv_cpp(SEXP XSEXP, SEXP KSEXP, SEXP cSEXP, SEXP sigma_vecSEXP) {
+arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K, const arma::vec& c, const arma::vec& sigma_vec, int kernel_type, double kernel_c);
+RcppExport SEXP _roadrunner_krls_deriv_cpp(SEXP XSEXP, SEXP KSEXP, SEXP cSEXP, SEXP sigma_vecSEXP, SEXP kernel_typeSEXP, SEXP kernel_cSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -168,13 +172,15 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type K(KSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type c(cSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type sigma_vec(sigma_vecSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_deriv_cpp(X, K, c, sigma_vec));
+    Rcpp::traits::input_parameter< int >::type kernel_type(kernel_typeSEXP);
+    Rcpp::traits::input_parameter< double >::type kernel_c(kernel_cSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_deriv_cpp(X, K, c, sigma_vec, kernel_type, kernel_c));
     return rcpp_result_gen;
 END_RCPP
 }
 // krls_avg_deriv_var_cpp
-arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K, const arma::mat& V, const arma::vec& d, const arma::vec& sigma_vec, double lambda, double sigma2);
-RcppExport SEXP _roadrunner_krls_avg_deriv_var_cpp(SEXP XSEXP, SEXP KSEXP, SEXP VSEXP, SEXP dSEXP, SEXP sigma_vecSEXP, SEXP lambdaSEXP, SEXP sigma2SEXP) {
+arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K, const arma::mat& V, const arma::vec& d, const arma::vec& sigma_vec, double lambda, double sigma2, int kernel_type, double kernel_c);
+RcppExport SEXP _roadrunner_krls_avg_deriv_var_cpp(SEXP XSEXP, SEXP KSEXP, SEXP VSEXP, SEXP dSEXP, SEXP sigma_vecSEXP, SEXP lambdaSEXP, SEXP sigma2SEXP, SEXP kernel_typeSEXP, SEXP kernel_cSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -185,7 +191,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type sigma_vec(sigma_vecSEXP);
     Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
     Rcpp::traits::input_parameter< double >::type sigma2(sigma2SEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_avg_deriv_var_cpp(X, K, V, d, sigma_vec, lambda, sigma2));
+    Rcpp::traits::input_parameter< int >::type kernel_type(kernel_typeSEXP);
+    Rcpp::traits::input_parameter< double >::type kernel_c(kernel_cSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_avg_deriv_var_cpp(X, K, V, d, sigma_vec, lambda, sigma2, kernel_type, kernel_c));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -197,6 +205,24 @@ BEGIN_RCPP
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type V(VSEXP);
     rcpp_result_gen = Rcpp::wrap(krls_vsq_cpp(V));
+    return rcpp_result_gen;
+END_RCPP
+}
+// krls_posterior_var_cpp
+arma::vec krls_posterior_var_cpp(const arma::mat& Xnew, const arma::mat& Xtr, const arma::mat& V, const arma::vec& d, double lambda, int kernel_type, const arma::vec& sigma_vec, double kernel_c);
+RcppExport SEXP _roadrunner_krls_posterior_var_cpp(SEXP XnewSEXP, SEXP XtrSEXP, SEXP VSEXP, SEXP dSEXP, SEXP lambdaSEXP, SEXP kernel_typeSEXP, SEXP sigma_vecSEXP, SEXP kernel_cSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xnew(XnewSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Xtr(XtrSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type V(VSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type d(dSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< int >::type kernel_type(kernel_typeSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type sigma_vec(sigma_vecSEXP);
+    Rcpp::traits::input_parameter< double >::type kernel_c(kernel_cSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_posterior_var_cpp(Xnew, Xtr, V, d, lambda, kernel_type, sigma_vec, kernel_c));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -284,15 +310,16 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
     {"_roadrunner_mars_basis_cpp", (DL_FUNC) &_roadrunner_mars_basis_cpp, 4},
     {"_roadrunner_mars_backward_only_cpp", (DL_FUNC) &_roadrunner_mars_backward_only_cpp, 12},
-    {"_roadrunner_krls_kernel_cpp", (DL_FUNC) &_roadrunner_krls_kernel_cpp, 2},
-    {"_roadrunner_krls_kernel_pred_cpp", (DL_FUNC) &_roadrunner_krls_kernel_pred_cpp, 3},
+    {"_roadrunner_krls_kernel_cpp", (DL_FUNC) &_roadrunner_krls_kernel_cpp, 4},
+    {"_roadrunner_krls_kernel_pred_cpp", (DL_FUNC) &_roadrunner_krls_kernel_pred_cpp, 5},
     {"_roadrunner_krls_eig_cpp", (DL_FUNC) &_roadrunner_krls_eig_cpp, 1},
     {"_roadrunner_krls_solve_cpp", (DL_FUNC) &_roadrunner_krls_solve_cpp, 5},
     {"_roadrunner_krls_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_loo_loss_cpp, 5},
     {"_roadrunner_krls_gcv_loss_cpp", (DL_FUNC) &_roadrunner_krls_gcv_loss_cpp, 5},
-    {"_roadrunner_krls_deriv_cpp", (DL_FUNC) &_roadrunner_krls_deriv_cpp, 4},
-    {"_roadrunner_krls_avg_deriv_var_cpp", (DL_FUNC) &_roadrunner_krls_avg_deriv_var_cpp, 7},
+    {"_roadrunner_krls_deriv_cpp", (DL_FUNC) &_roadrunner_krls_deriv_cpp, 6},
+    {"_roadrunner_krls_avg_deriv_var_cpp", (DL_FUNC) &_roadrunner_krls_avg_deriv_var_cpp, 9},
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},
+    {"_roadrunner_krls_posterior_var_cpp", (DL_FUNC) &_roadrunner_krls_posterior_var_cpp, 8},
     {"_roadrunner_krls_pairwise_sqdist_cpp", (DL_FUNC) &_roadrunner_krls_pairwise_sqdist_cpp, 2},
     {"_roadrunner_krls_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_autotune_inner_cpp, 7},
     {"_roadrunner_krls_nystrom_fit_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_fit_cpp, 7},

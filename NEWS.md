@@ -1,4 +1,89 @@
-# roadrunner 0.0.0.9048
+# roadrunner 0.0.0.9049
+
+## krls() — Phase Q2: polynomial kernels + GP variance + MLL
+
+Three bundled feature items implemented behind a single polymorphic
+C++ kernel dispatch. Gaussian default fits are byte-identical to
+v0.0.0.9048; non-Gaussian kernels open up `K_ij = x_i' x_j` (linear)
+and `K_ij = (x_i' x_j + poly_c)^d` for `d` in 1..4 (polynomial).
+
+* **A1 — `whichkernel = c("gaussian", "linear", "poly1..4")` + `poly_c`.**
+  Default `"gaussian"` is unchanged. `"linear"` is the inner-product
+  kernel; `"poly1..4"` are inhomogeneous polynomial kernels with
+  offset `poly_c` (default `1.0`). Non-Gaussian kernels are
+  incompatible with `approx = "nystrom"`, `ard != "none"`, and
+  vector `sigma` — all error at fit time with clear messages.
+  Marginal effects are computed via a closed-form dgemm route
+  (`D = d * H * X` with `H = (X X' + c)^(d-1)` for poly, constant
+  per column for linear). `var.avgderivatives` is currently `NA` for
+  non-Gaussian kernels (full derivation deferred to Phase Q6); a
+  one-shot warning surfaces this at fit time. Autotune dispatches:
+  Gaussian sweeps `sigma` (9-pt anchor, existing); poly sweeps
+  `poly_c` (default `c(0, 0.25, 0.5, 1, 2, 4, 8)`); linear collapses
+  to lambda-only (errors if user supplies `autotune.grid`). Non-
+  Gaussian autotune runs through the R fallback at the scalar autotune
+  helper rather than the Gaussian-specialised `krls_autotune_inner_cpp`
+  — expect a 5-10x wall-clock regression vs Gaussian autotune at
+  matching grid sizes; this is acceptable for Q2 scope. The fit list
+  gains `$whichkernel`, `$kernel_type`, `$poly_c`.
+
+* **A6 — `predict(..., type = "variance")`.** New `type` value returns
+  the GP posterior variance `K** - K* (K + lambda I)^{-1} K*'` per
+  row of `newdata` via the new `krls_posterior_var_cpp` helper.
+  Closed-form computation in the eigen-basis of the fit's kernel:
+  reuses cached `dvals` + `V` (now stashed on the fit at v9049). New
+  `unscale` arg (default `FALSE`): when `TRUE`, multiplies the
+  returned variance by `var(y_train)` so it sits on the raw y scale.
+  Incompatible with `approx = "nystrom"` (would require the
+  m-length Phi spectrum — deferred). Bagged fits average per-
+  replicate posterior variances. Matches a brute-force
+  `Kss - diag(K* (K + lI)^{-1} K*')` reference to `tol = 1e-8` on
+  n=50. FP-floored at 0.
+
+* **A11 — `lambda.method = "mll"`.** Closed-form Type-II marginal
+  log-likelihood as the lambda-selection objective. Pure-R loss
+  `.krls_mll_loss(dvals, Vty, lambda, n)` reuses the same eigen-
+  basis cache as LOO/GCV. Incompatible with `approx = "nystrom"`.
+  Composes with autotune over sigma (Gaussian) and with non-Gaussian
+  `whichkernel`. Sigma-by-MLL selection is deferred to Q8.
+
+## Internal
+
+* New C++ exports: `krls_posterior_var_cpp` (closed-form GP
+  variance in eigen-basis). Existing kernel exports
+  (`krls_kernel_cpp`, `krls_kernel_pred_cpp`, `krls_deriv_cpp`,
+  `krls_avg_deriv_var_cpp`) gain optional `kernel_type` + `kernel_c`
+  arguments with default `(0, 1.0)` (Gaussian, back-compat).
+* New R helpers: `.krls_mll_loss()`, `.krls_predict_variance()`.
+* `.krls_autotune_scalar()` accepts `kernel_type` + `poly_c`; when
+  non-Gaussian, forces the R-side per-cell fallback (the
+  Gaussian-specialised C++ inner is preserved untouched).
+* `slim_krls()` strips the new `dvals` field along with the
+  existing heavy intermediates. `slim_krls(keep_predict=FALSE)`
+  retains `$whichkernel`, `$kernel_type`, `$poly_c` for the
+  inspection-grade summary.
+* `predict.krls_rr()` accepts new `type = "variance"` and `unscale`
+  arguments; legacy fits (no `kernel_type`/`poly_c` field) default
+  to Gaussian via fallback at predict time.
+
+## Tests
+
+* `test-krls-kernels-poly.R` (~150 LoC, 17 tests + 2 slow): linear
+  kernel byte-equal vs hand-built `XX'`; poly2 byte-equal vs
+  `(XX'+c)^2`; linear deriv constant per column; poly2 deriv matches
+  finite difference to `tol = 1e-4`; validation gates; autotune
+  poly_c sweep; bagging + linear; Gaussian back-compat seal.
+* `test-krls-posterior-var.R` (~120 LoC, 8 tests + 1 slow): closed-
+  form matches brute force to `tol = 1e-8`; training-point var =
+  `1 - diag(H)`; monotonic increase with distance from training (1D
+  toy); `unscale` arg; Nystrom errors; bagged averages; poly2
+  posterior var diagonal; FP floor at 0.
+* `test-krls-mll.R` (~95 LoC, 6 tests + 1 slow): closed-form matches
+  hand-computed grid argmin; MLL ≠ LOO chosen lambda on real data;
+  Nystrom + MLL errors; composes with autotune; composes with
+  poly2.
+
+
 
 ## krls() — Phase Q1 parity batch
 
