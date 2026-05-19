@@ -45,8 +45,10 @@ test_that("ARD: scalar sigma path is byte-identical to v0.0.0.9044 snapshot", {
   expect_equal(fit$fitted,             baseline$fitted,             tolerance = 1e-10)
   expect_equal(fit$R2,                 baseline$R2,                 tolerance = 1e-10)
   expect_equal(fit$Looe,               baseline$Looe,               tolerance = 1e-10)
-  expect_identical(fit$sigma,              baseline$sigma)
-  expect_identical(fit$lambda,             baseline$lambda)
+  # Mac Accelerate BLAS perturbs sigma/lambda by O(1e-15) via dist()/
+  # median() and the golden-section eigendecomp; relax to 1e-10.
+  expect_equal(fit$sigma,              baseline$sigma,              tolerance = 1e-10)
+  expect_equal(fit$lambda,             baseline$lambda,             tolerance = 1e-10)
   expect_equal(fit$avgderivatives,     baseline$avgderivatives,     tolerance = 1e-10)
   expect_equal(fit$var.avgderivatives, baseline$var.avgderivatives, tolerance = 1e-10)
 })
