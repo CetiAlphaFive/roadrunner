@@ -1,3 +1,49 @@
+# roadrunner 0.0.0.9048
+
+## krls() — Phase Q1 parity batch
+
+Four small parity items, all R-side (no C++ changes), batched
+together to avoid four trivial release cycles.
+
+* **A3 — `Neffective` (effective df).** Fits now carry
+  `$Neffective`, the trace of the smoother hat matrix
+  `H = K (K + lambda I)^{-1}`. Computed in the eigen-basis as
+  `sum(d / (d + lambda))`, where `d` are the kernel eigenvalues
+  used for the solve. The Nystrom path uses the m-length
+  `Phi' Phi` spectrum so the formula generalises to
+  `sum(Sigma2 / (Sigma2 + lambda))`. `summary(fit)` prints an
+  `"Effective df: <value>"` line near the existing `R^2` line.
+  `Neffective -> 0` as `lambda -> Inf` and `-> n` (or the rank
+  of `K`) as `lambda -> 0`.
+* **A7 — `subset` on `krls.default()`.** The matrix /
+  data-frame default method now accepts `subset = NULL` (a
+  no-op, back-compatible) or a logical / integer vector
+  selecting rows of `X`. `y` and `weights` are sliced in
+  lockstep before any downstream processing. Mirrors the
+  formula method's `subset` semantics.
+* **A8 — `predict(..., type = "prob")` for binary fits.**
+  `predict.krls_rr()` gains a `type = c("response", "link",
+  "prob")` argument. `"response"` (default) preserves the prior
+  behaviour byte-for-byte. `"prob"` is valid only when the fit
+  is binary (`y` has exactly two unique values, tracked on the
+  fit via the new `$binary_y` field) and returns
+  `plogis(yhat)`. The docstring is explicit: this is a
+  calibration shortcut, **not** a true posterior probability;
+  the underlying fit remains least-squares loss. `"link"` is a
+  synonym for `"response"` reserved for the future
+  logistic-loss extension.
+* **A9 — `slim_krls()` / `unslim_krls()`.** New exported
+  helpers for cheap serialisation. `slim_krls(fit,
+  keep_predict = TRUE)` (default) strips the heavy `K`, `V`,
+  `Vsq`, `Vty`, `vcov.c`, `vcov.fitted` intermediates while
+  preserving everything `predict()` needs; saved size typically
+  drops by >50% at `n >= 200`. `slim_krls(fit, keep_predict =
+  FALSE)` strips further to an inspection-grade summary
+  (`coeffs`, `R2`, `Looe`, marginal effects, sigma, lambda,
+  `Neffective`); `predict()` then errors with a clear message.
+  `unslim_krls()` is a no-op placeholder — refit `krls()` with
+  the stored `$call` to rebuild the dropped fields.
+
 # roadrunner 0.0.0.9047
 
 ## krls() — autotune unification + auto-ARD dispatch

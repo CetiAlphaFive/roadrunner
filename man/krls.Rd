@@ -20,6 +20,7 @@ krls(X, ...)
   binary = TRUE,
   vcov = TRUE,
   weights = NULL,
+  subset = NULL,
   L = NULL,
   U = NULL,
   tol = NULL,
@@ -61,6 +62,7 @@ krls(X, ...)
   se.fit = FALSE,
   interval = c("none", "pint"),
   level = 0.95,
+  type = c("response", "link", "prob"),
   ...
 )
 }
@@ -76,8 +78,12 @@ contrasts, intercept dropped). Missing values are handled via
 \item{data}{Used only by the formula method. A data frame containing
 the variables referenced by the formula.}
 
-\item{subset}{Used only by the formula method. An optional integer
-or logical vector restricting rows of \code{data} used for the fit.}
+\item{subset}{Optional integer or logical vector restricting which
+rows of \code{data} / \code{X} are used for the fit. Mirrors the
+formula-method behaviour. When \code{X} is supplied directly
+(matrix or data frame), \code{subset} slices \code{X}, \code{y}, and \code{weights}
+immediately after input validation; \code{NULL} (default) is a no-op
+and back-compatible.}
 
 \item{y}{A numeric response vector or single-column matrix.  Constant
 \code{y} is rejected.}
@@ -294,6 +300,15 @@ created with \code{varmod = "const"} (or other non-\code{"none"}
 
 \item{level}{Confidence level for \code{interval = "pint"}. Default
 \code{0.95}.}
+
+\item{type}{Prediction type. \code{"response"} (default) returns
+predictions on the original \code{y} scale. \code{"link"} is currently a
+synonym for \code{"response"} (KRLS has no GLM link; reserved for
+future logistic-loss extension). \code{"prob"} is valid only for
+binary fits (\code{y} has exactly two unique values) and returns
+\code{plogis(yhat)}. This is a calibration shortcut: the underlying
+fit is still least-squares loss, not logistic loss; values are
+clamped to \verb{[0, 1]} but are not true posterior probabilities.}
 }
 \value{
 An object of S3 class \code{c("krls_rr", "krls")} with components

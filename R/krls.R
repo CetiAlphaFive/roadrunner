@@ -82,8 +82,12 @@
 #'   `y` is rejected.
 #' @param data Used only by the formula method. A data frame containing
 #'   the variables referenced by the formula.
-#' @param subset Used only by the formula method. An optional integer
-#'   or logical vector restricting rows of `data` used for the fit.
+#' @param subset Optional integer or logical vector restricting which
+#'   rows of `data` / `X` are used for the fit. Mirrors the
+#'   formula-method behaviour. When `X` is supplied directly
+#'   (matrix or data frame), `subset` slices `X`, `y`, and `weights`
+#'   immediately after input validation; `NULL` (default) is a no-op
+#'   and back-compatible.
 #' @param sigma Gaussian-kernel bandwidth.  Default `NULL`, which sets
 #'   sigma via the geomean_p formula: `sqrt(median(d2) * p)` where `d2`
 #'   are pairwise squared Euclidean distances on the standardised
@@ -418,7 +422,7 @@ krls.formula <- function(X, data = NULL, subset = NULL, ..., y = NULL) {
 krls.default <- function(X, y,
                          sigma = NULL, lambda = NULL,
                          derivative = TRUE, binary = TRUE, vcov = TRUE,
-                         weights = NULL,
+                         weights = NULL, subset = NULL,
                          L = NULL, U = NULL, tol = NULL, eigtrunc = NULL,
                          lambda.method = c("loo", "gcv", "cv"),
                          lambda.grid = NULL,
@@ -504,6 +508,46 @@ krls.default <- function(X, y,
   if (is.factor(X) || is.character(X)) {
     stop("X must be numeric (got ",
          if (is.factor(X)) "factor" else "character", ")")
+  }
+
+  ## --- subset (Phase Q1 / A7) --------------------------------------
+  ## Mirrors the formula method's `subset` behaviour for the
+  ## matrix/data.frame default method. Slice X, y, and weights up
+  ## front so all downstream code (NA imputation, weight norm,
+  ## standardisation, kernel) sees the same row set.
+  if (!is.null(subset)) {
+    if (is.logical(subset)) {
+      n_X <- if (is.data.frame(X)) nrow(X) else NROW(X)
+      if (length(subset) != n_X) {
+        stop("krls: logical `subset` must have length nrow(X) (got ",
+             length(subset), ", expected ", n_X, ").", call. = FALSE)
+      }
+      if (anyNA(subset))
+        stop("krls: `subset` must not contain NA.", call. = FALSE)
+      keep <- which(subset)
+    } else if (is.numeric(subset)) {
+      if (anyNA(subset) || any(!is.finite(subset)) ||
+          any(subset != as.integer(subset))) {
+        stop("krls: integer `subset` must be finite, non-NA, and integer-valued.",
+             call. = FALSE)
+      }
+      keep <- as.integer(subset)
+      n_X <- if (is.data.frame(X)) nrow(X) else NROW(X)
+      if (any(keep < 1L) || any(keep > n_X)) {
+        stop("krls: `subset` indices out of bounds (must be in 1:",
+             n_X, ").", call. = FALSE)
+      }
+    } else {
+      stop("krls: `subset` must be a logical or integer vector (got ",
+           class(subset)[1L], ").", call. = FALSE)
+    }
+    if (is.data.frame(X)) {
+      X <- X[keep, , drop = FALSE]
+    } else {
+      X <- X[keep, , drop = FALSE]
+    }
+    y <- if (is.matrix(y)) y[keep, , drop = FALSE] else y[keep]
+    if (!is.null(weights)) weights <- weights[keep]
   }
 
   ## --- data.frame factor / character expansion ---------------------
@@ -1040,6 +1084,13 @@ krls.default <- function(X, y,
     )
     fit$R2 <- 1 - sum((as.numeric(y.init) - yfitted_nys)^2) /
                   sum((as.numeric(y.init) - mean(as.numeric(y.init)))^2)
+    ## Phase Q1 / A3: Nystrom effective df uses the m-length Phi
+    ## spectrum (`Sigma2`). tr(H) = sum(Sigma2 / (Sigma2 + lambda)).
+    fit$Neffective <- if (!is.null(nys$Sigma2))
+      sum(as.numeric(nys$Sigma2) / (as.numeric(nys$Sigma2) + nys$lambda))
+      else NA_real_
+    ## Phase Q1 / A8: track binary y for predict(type = "prob").
+    fit$binary_y     <- length(unique(as.numeric(y.init))) == 2L
     fit$call         <- cl
     fit$na.action    <- na.action
     fit$na.medians   <- na_medians
@@ -1273,6 +1324,13 @@ krls.default <- function(X, y,
 
     fit$R2 <- 1 - sum((as.numeric(y.init) - yfitted_nys)^2) /
                   sum((as.numeric(y.init) - mean(as.numeric(y.init)))^2)
+
+    ## Phase Q1 / A3: Nystrom effective df from Phi spectrum.
+    fit$Neffective <- if (!is.null(nys$Sigma2))
+      sum(as.numeric(nys$Sigma2) / (as.numeric(nys$Sigma2) + nys$lambda))
+      else NA_real_
+    ## Phase Q1 / A8: track binary y for predict(type = "prob").
+    fit$binary_y     <- length(unique(as.numeric(y.init))) == 2L
 
     fit$call         <- cl
     fit$na.action    <- na.action
@@ -1609,16 +1667,27 @@ krls.default <- function(X, y,
   binaryindicator <- matrix(FALSE, 1L, d,
                             dimnames = list(NULL, colnames(X)))
 
+  ## Phase Q1 / A3: effective degrees of freedom = tr(H) where
+  ## H = K (K + lambda I)^{-1}. In the eigen-basis this is
+  ## sum(d / (d + lambda)).
+  Neffective <- sum(dvals / (dvals + lambda))
+
+  ## Phase Q1 / A8: track whether y is binary (exactly 2 unique values).
+  ## Used by predict(..., type = "prob") to gate the calibration shortcut.
+  binary_y <- length(unique(as.numeric(y.init))) == 2L
+
   out <- list(K = K, coeffs = coeffs, Looe = Looe, fitted = yfitted,
               X = X.init, y = y.init,
               sigma = sigma_scalar, lambda = lambda, R2 = R2,
+              Neffective = Neffective,
               sigma_vec  = sigma_vec,
               sigma_kind = sigma_kind,
               derivatives = derivmat,
               avgderivatives = avgderiv,
               var.avgderivatives = varavgderivmat,
               vcov.c = vcov.c, vcov.fitted = vcov.fitted,
-              binaryindicator = binaryindicator)
+              binaryindicator = binaryindicator,
+              binary_y = binary_y)
 
   # Bookkeeping for formula method / predict() / update()
   out$call <- cl
@@ -1743,16 +1812,50 @@ krls.default <- function(X, y,
 #'   `varmod`).
 #' @param level Confidence level for `interval = "pint"`. Default
 #'   `0.95`.
+#' @param type Prediction type. `"response"` (default) returns
+#'   predictions on the original `y` scale. `"link"` is currently a
+#'   synonym for `"response"` (KRLS has no GLM link; reserved for
+#'   future logistic-loss extension). `"prob"` is valid only for
+#'   binary fits (`y` has exactly two unique values) and returns
+#'   `plogis(yhat)`. This is a calibration shortcut: the underlying
+#'   fit is still least-squares loss, not logistic loss; values are
+#'   clamped to `[0, 1]` but are not true posterior probabilities.
 #' @export
 predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                               interval = c("none", "pint"),
-                              level = 0.95, ...) {
+                              level = 0.95,
+                              type = c("response", "link", "prob"),
+                              ...) {
   interval <- match.arg(interval)
+  type     <- match.arg(type)
   if (!inherits(object, "krls")) {
     stop("object is not of class 'krls'")
   }
+  ## Phase Q1 / A9: slimmed-fit guard.
+  if (isTRUE(object$slimmed) && !isTRUE(object$slim_keep_predict)) {
+    stop("predict(): this fit was slimmed; refit to enable predict.",
+         call. = FALSE)
+  }
   if (isTRUE(se.fit) && is.null(object$vcov.c)) {
     stop("refit with krls(..., vcov = TRUE) to compute standard errors")
+  }
+  ## Phase Q1 / A8: validate type = "prob" requires binary fit.
+  if (identical(type, "prob")) {
+    is_bin <- isTRUE(object$binary_y)
+    if (!is_bin) {
+      ## Fallback for older fits without `binary_y`: check y directly.
+      if (!is.null(object$y)) {
+        is_bin <- length(unique(as.numeric(object$y))) == 2L
+      }
+    }
+    if (!isTRUE(is_bin)) {
+      stop("krls: type = 'prob' requires a binary fit (y must have ",
+           "exactly two unique values).", call. = FALSE)
+    }
+    if (identical(interval, "pint")) {
+      stop("krls: type = 'prob' is not compatible with interval = 'pint'.",
+           call. = FALSE)
+    }
   }
   if (interval == "pint") {
     if (is.null(object$varmod) || is.null(object$varmod$sigma_hat))
@@ -1767,7 +1870,9 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   # --- Nystrom predict branch (Phase 2 T4) ---------------------------
   if (identical(object$approx, "nystrom")) {
     if (is.null(newdata)) {
-      return(list(fit = matrix(object$fitted, ncol = 1L),
+      fit_out <- as.numeric(object$fitted)
+      if (identical(type, "prob")) fit_out <- stats::plogis(fit_out)
+      return(list(fit = matrix(fit_out, ncol = 1L),
                   se.fit = NULL, vcov.fit = NULL,
                   newdata = NULL, newdataK = NULL))
     }
@@ -1801,6 +1906,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
       Xn_std, object$landmarks, as.numeric(object$coeffs), object$sigma
     ))
     yhat <- yhat_std * object$y_sd + object$y_mean
+    if (identical(type, "prob")) yhat <- stats::plogis(as.numeric(yhat))
     return(list(fit = matrix(yhat, ncol = 1L),
                 se.fit = NULL, vcov.fit = NULL,
                 newdata = Xn_std, newdataK = NULL))
@@ -1821,7 +1927,9 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                       upr = as.numeric(object$fitted) + half)
       return(pi_mat)
     }
-    return(list(fit = matrix(object$fitted, ncol = 1L),
+    fit_out <- as.numeric(object$fitted)
+    if (identical(type, "prob")) fit_out <- stats::plogis(fit_out)
+    return(list(fit = matrix(fit_out, ncol = 1L),
                 se.fit = NULL, vcov.fit = NULL,
                 newdata = NULL, newdataK = NULL))
   }
@@ -1958,6 +2066,10 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                     lwr = as.numeric(yhat) - half,
                     upr = as.numeric(yhat) + half)
     return(pi_mat)
+  }
+  ## Phase Q1 / A8: probability transform for binary fits.
+  if (identical(type, "prob")) {
+    yhat <- matrix(stats::plogis(as.numeric(yhat)), ncol = 1L)
   }
   list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
        newdata = Xn, newdataK = Knew,
@@ -2772,6 +2884,8 @@ summary.krls_rr <- function(object, ...) {
   out$call_info <- c(n = nrow(object$X), p = ncol(object$X),
                      sigma = object$sigma, lambda = object$lambda,
                      R2 = object$R2)
+  ## Phase Q1 / A3: expose Neffective on summary objects.
+  out$Neffective <- object$Neffective
   out$weighted <- !is.null(object$weights)
   out$autotune <- object$autotune
   out$cv <- object$cv
@@ -2844,6 +2958,12 @@ print.summary.krls_rr <- function(x, ...) {
                 signif(ci["sigma"], 4),
                 signif(ci["lambda"], 4),
                 signif(ci["R2"], 4)))
+  }
+  ## Phase Q1 / A3: effective degrees of freedom line.
+  if (!is.null(x$Neffective)) {
+    neff_str <- if (is.na(x$Neffective)) "NA"
+                else format(signif(as.numeric(x$Neffective), 4))
+    cat("  Effective df: ", neff_str, "\n", sep = "")
   }
   if (isTRUE(x$weighted)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
@@ -3087,4 +3207,111 @@ plot.krls_rr <- function(x,
     graphics::mtext(sub.caption, outer = TRUE, cex = 0.9, line = 0.5)
 
   invisible(x)
+}
+
+## ============================================================
+## Phase Q1 / A9 -- slim_krls() / unslim_krls() helpers.
+##
+## Strip heavy fields off a fit so saveRDS / serialisation is
+## cheap. Two modes:
+##
+##   keep_predict = TRUE  (default): keeps everything predict()
+##     needs (coeffs, sigma, lambda, X, scaling stats, factor
+##     bookkeeping, Nystrom landmarks). Drops only the O(n^2)
+##     and O(n*m) intermediates (K, V, Vsq, Vty, vcov.c).
+##   keep_predict = FALSE: keeps only inspection-grade summary
+##     fields (coeffs, R2, Looe, avgderivatives,
+##     var.avgderivatives, sigma, sigma_vec, lambda,
+##     Neffective). Predict refuses to run on this fit.
+##
+## unslim_krls() is currently a no-op; re-fitting is required to
+## rebuild the dropped fields.
+## ============================================================
+
+#' Strip heavy fields off a KRLS fit
+#'
+#' Removes large `n x n` (or `n x m`) intermediates from a fitted
+#' `krls_rr` object so it serialises (`saveRDS`) much smaller.
+#' Two modes:
+#'
+#' * `keep_predict = TRUE` (default): keeps everything
+#'   `predict.krls_rr()` needs (coeffs, sigma / sigma_vec, lambda,
+#'   the standardisation stats, factor bookkeeping, and Nystrom
+#'   landmarks where applicable). Drops the `K`, eigenvector
+#'   matrices `V` / `Vsq`, projected response `Vty`, and
+#'   `vcov.c`.
+#' * `keep_predict = FALSE`: keeps only inspection-grade summary
+#'   fields (`coeffs`, `R2`, `Looe`, `avgderivatives`,
+#'   `var.avgderivatives`, `sigma`, `sigma_vec`, `lambda`,
+#'   `Neffective`). `predict()` will refuse to run.
+#'
+#' The returned object carries the flag `$slimmed = TRUE`.
+#' `unslim_krls()` is a no-op (heavy intermediates can only be
+#' rebuilt by refitting).
+#'
+#' @param fit A `krls_rr` fit.
+#' @param keep_predict Logical. If `TRUE` (default), keep enough
+#'   state for `predict()` to run.
+#' @return A `krls_rr` object with heavy fields removed and
+#'   `$slimmed = TRUE`.
+#' @export
+slim_krls <- function(fit, keep_predict = TRUE) {
+  if (!inherits(fit, "krls_rr")) {
+    stop("slim_krls: `fit` must be a `krls_rr` object.", call. = FALSE)
+  }
+  stopifnot(is.logical(keep_predict), length(keep_predict) == 1L,
+            !is.na(keep_predict))
+
+  ## Fields that are always safe to strip (heavy O(n^2) or O(n*m)
+  ## intermediates that predict does not need).
+  always_strip <- c("K", "V", "Vsq", "Vty", "vcov.c", "vcov.fitted")
+  for (nm in always_strip) fit[[nm]] <- NULL
+
+  ## When keep_predict = FALSE, also strip predict-only state.
+  ## Keep only an inspection-grade summary set.
+  if (!isTRUE(keep_predict)) {
+    summary_keep <- c("coeffs", "R2", "Looe",
+                      "avgderivatives", "var.avgderivatives",
+                      "sigma", "sigma_vec", "sigma_kind",
+                      "lambda", "Neffective",
+                      "binary_y", "binaryindicator",
+                      "ard_kind", "ard_alpha", "ard_cap", "ard_imp",
+                      "call", "approx")
+    cls <- class(fit)
+    new_fit <- fit[intersect(names(fit), summary_keep)]
+    class(new_fit) <- cls
+    fit <- new_fit
+  }
+
+  fit$slimmed           <- TRUE
+  fit$slim_keep_predict <- isTRUE(keep_predict)
+  fit
+}
+
+#' Undo `slim_krls()` (placeholder)
+#'
+#' Heavy fields (`K`, `V`, `Vsq`, `Vty`, `vcov.c`,
+#' `vcov.fitted`) cannot be reconstructed without `X` and `y` and
+#' the original hyperparameters. This function therefore re-fits
+#' is *not* attempted; it simply returns the input unchanged and
+#' (optionally) prints a hint to refit. Reserved for a future
+#' release where re-construction from cached state may become
+#' available.
+#'
+#' @param fit A `krls_rr` fit previously passed through
+#'   `slim_krls()`.
+#' @return `fit`, unchanged. Refit `krls()` with the original
+#'   call to rebuild the dropped fields.
+#' @export
+unslim_krls <- function(fit) {
+  if (!inherits(fit, "krls_rr")) {
+    stop("unslim_krls: `fit` must be a `krls_rr` object.", call. = FALSE)
+  }
+  if (!isTRUE(fit$slimmed)) {
+    return(fit)
+  }
+  warning("unslim_krls: heavy fields cannot be reconstructed without ",
+          "the original X / y; refit krls() with the original call ",
+          "(stored on $call) to restore them.", call. = FALSE)
+  fit
 }
