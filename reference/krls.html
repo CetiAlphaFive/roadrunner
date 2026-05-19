@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9046</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9047</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -80,6 +80,8 @@ the original <code>(X, y)</code> scale.</p>
 <span>  autotune <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  autotune.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  autotune.nthreads <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  autotune.speed <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"balanced"</span>, <span class="st">"quality"</span>, <span class="st">"fast"</span><span class="op">)</span>,</span>
+<span>  autotune.warmstart <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  varmod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"const"</span><span class="op">)</span>,</span>
 <span>  n.boot <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  na.action <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"impute"</span>, <span class="st">"omit"</span><span class="op">)</span>,</span>
@@ -271,6 +273,28 @@ falls back to <code>1L</code> if unset. Capped at <code>length(autotune.grid)</c
 Only used when <code>autotune = TRUE</code>.</p></dd>
 
 
+<dt id="arg-autotune-speed">autotune.speed<a class="anchor" aria-label="anchor" href="#arg-autotune-speed"></a></dt>
+<dd><p>Speed/quality knob for autotune dispatch. Only
+used when <code>autotune = TRUE</code>. One of:</p><ul><li><p><code>"fast"</code>: scalar sigma grid only (v0.0.0.9046 behaviour exactly).</p></li>
+<li><p><code>"balanced"</code> (default): dispatches through cheap-tier ARD when
+<code>ncol(X) &gt;= 20</code> or <code>ncol(X) &gt;= nrow(X) / 10</code> (heuristic for
+high-p / sparse-signal regimes); otherwise scalar sigma only.</p></li>
+<li><p><code>"quality"</code>: always dispatches through ARD and sweeps a 6-cell
+grid over <code>ard.alpha in {0.5, 1, 2}</code> x
+<code>ard.imp in {"avgderiv", "vsq"}</code>; picks the winner by inner CV.
+On low-p dense data <code>"balanced"</code> is byte-equivalent to <code>"fast"</code>.</p></li>
+</ul></dd>
+
+
+<dt id="arg-autotune-warmstart">autotune.warmstart<a class="anchor" aria-label="anchor" href="#arg-autotune-warmstart"></a></dt>
+<dd><p>If <code>TRUE</code> (default), autotune first pre-fits
+on a 15% subsample (capped at 200 rows) and runs one ARD probe; if
+the probe does not improve held-out MSE over the isotropic baseline
+by more than 2%, the ARD dispatch branch is dropped and autotune
+collapses to scalar sigma only. Skipped when <code>n &lt; 200</code> or
+<code>autotune.speed = "fast"</code>.</p></dd>
+
+
 <dt id="arg-varmod">varmod<a class="anchor" aria-label="anchor" href="#arg-varmod"></a></dt>
 <dd><p>Residual variance model used to construct prediction
 intervals via <code>predict(..., interval = "pint")</code>. <code>"none"</code>
@@ -346,8 +370,10 @@ per-feature importance from the average marginal effects (or row-mean-
 square gradient, see <code>ard.imp</code>), and pass 2 refits with
 <code>s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha</code> clipped to
 <code>[sigma_iso / ard.cap, sigma_iso * ard.cap]</code>. Incompatible with
-<code>autotune = TRUE</code>, <code>approx = "nystrom"</code>, and a user-supplied vector
-<code>sigma</code>; all error at fit time.</p></dd>
+<code>approx = "nystrom"</code> and with a user-supplied vector <code>sigma</code>; both
+error at fit time. When <code>autotune = TRUE</code> and the user supplies
+<code>ard = "cheap"</code> explicitly, autotune routes through ARD regardless
+of <code>autotune.speed</code>.</p></dd>
 
 
 <dt id="arg-ard-alpha">ard.alpha<a class="anchor" aria-label="anchor" href="#arg-ard-alpha"></a></dt>

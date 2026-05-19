@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9046</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9047</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,43 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9047" id="roadrunner-0009047">roadrunner 0.0.0.9047<a class="anchor" aria-label="anchor" href="#roadrunner-0009047"></a></h2>
+<div class="section level3">
+<h3 id="krls--autotune-unification--auto-ard-dispatch-0-0-0-9047">krls() — autotune unification + auto-ARD dispatch<a class="anchor" aria-label="anchor" href="#krls--autotune-unification--auto-ard-dispatch-0-0-0-9047"></a></h3>
+<ul><li>
+<code>autotune = TRUE</code> becomes a hands-free dispatcher. New argument <code>autotune.speed = c("balanced", "quality", "fast")</code> (default <code>"balanced"</code>) picks between the v0.0.0.9046 scalar sigma sweep and an ARD-dispatched path that routes through the cheap-tier ARD orchestrator:
+<ul><li>
+<code>"fast"</code> keeps the v0.0.0.9046 scalar sigma grid behaviour byte-identically.</li>
+<li>
+<code>"balanced"</code> (default) dispatches through cheap-tier ARD when <code>ncol(X) &gt;= 20</code> or <code>ncol(X) &gt;= nrow(X) / 10</code> (heuristic for high-p / sparse-signal regimes); otherwise scalar sigma only.</li>
+<li>
+<code>"quality"</code> always dispatches through ARD and sweeps a 6-cell grid over <code>ard.alpha in {0.5, 1, 2}</code> x <code>ard.imp in {"avgderiv", "vsq"}</code>, picking the winner by inner K-fold CV.</li>
+</ul></li>
+<li>New argument <code>autotune.warmstart = TRUE</code> runs a cheap probe on a 15% subsample (capped at 200 rows) to test whether ARD dispatch outperforms the isotropic baseline; if the ARD probe does not improve held-out MSE by &gt;2%, the ARD branch is dropped. Skipped when <code>n &lt; 200</code> or <code>autotune.speed = "fast"</code>.</li>
+<li>The prior hard rejection of <code>ard != "none" + autotune = TRUE</code> is lifted. When the user pins <code>ard = "cheap"</code> explicitly under <code>autotune = TRUE</code>, autotune routes through ARD regardless of <code>autotune.speed</code>.</li>
+<li>
+<code>print.krls_rr()</code> now reports the autotune dispatch decision + selected <code>(alpha, imp)</code> for ARD-dispatched fits, and the chosen sigma for scalar fits.</li>
+<li>
+<code>$autotune</code> output schema gains <code>$speed</code>, <code>$warmstart</code>, <code>$ard_dispatched</code>, <code>$ard_decision_rule</code>, <code>$winner_sigma</code>, <code>$winner_alpha</code>, <code>$winner_imp</code>. <code>$winner</code> is preserved on the ARD path as the back-compat sentinel <code>NA_real_</code>.</li>
+</ul><div class="section level4">
+<h4 id="behaviour-change-0-0-0-9047">Behaviour change<a class="anchor" aria-label="anchor" href="#behaviour-change-0-0-0-9047"></a></h4>
+<blockquote>
+<p><strong>Behaviour change at v0.0.0.9047:</strong> <code>krls(autotune = TRUE)</code> now dispatches through cheap-tier ARD on high-p / sparse-signal data (<code>ncol(X) &gt;= 20</code> or <code>ncol(X) &gt;= nrow(X) / 10</code>) by default. To restore exact v0.0.0.9046 behaviour, pass <code>autotune.speed = "fast"</code>. On low-p dense data the default <code>"balanced"</code> mode is byte-identical to v0.0.0.9046.</p>
+</blockquote>
+</div>
+<div class="section level4">
+<h4 id="out-of-scope-p2c--p3--p5-0-0-0-9047">Out of scope (P2c / P3 / P5)<a class="anchor" aria-label="anchor" href="#out-of-scope-p2c--p3--p5-0-0-0-9047"></a></h4>
+<ul><li>Gradient-based / marginal-likelihood ARD optimisation.</li>
+<li>HSIC pre-screen for high-p feature selection.</li>
+<li>Vector-sigma autotune sweep (requires C++ rewrite of <code>krls_autotune_inner_cpp</code>).</li>
+<li>Nystrom + autotune-ARD composition.</li>
+<li>Multi-objective tuning (R^2 + sparsity).</li>
+<li>
+<code>ssf_grid</code> beyond <code>c(1.0)</code>; multi-threaded ARD cell grid.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9046" id="roadrunner-0009046">roadrunner 0.0.0.9046<a class="anchor" aria-label="anchor" href="#roadrunner-0009046"></a></h2>
 <div class="section level3">

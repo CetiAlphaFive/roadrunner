@@ -38,6 +38,8 @@ krls(
   autotune = FALSE,
   autotune.grid = NULL,
   autotune.nthreads = NULL,
+  autotune.speed = c("balanced", "quality", "fast"),
+  autotune.warmstart = TRUE,
   varmod = c("none", "const"),
   n.boot = 0L,
   na.action = c("impute", "omit"),
@@ -222,6 +224,30 @@ predict(
   `1L` if unset. Capped at `length(autotune.grid)`. Only used when
   `autotune = TRUE`.
 
+- autotune.speed:
+
+  Speed/quality knob for autotune dispatch. Only used when
+  `autotune = TRUE`. One of:
+
+  - `"fast"`: scalar sigma grid only (v0.0.0.9046 behaviour exactly).
+
+  - `"balanced"` (default): dispatches through cheap-tier ARD when
+    `ncol(X) >= 20` or `ncol(X) >= nrow(X) / 10` (heuristic for high-p /
+    sparse-signal regimes); otherwise scalar sigma only.
+
+  - `"quality"`: always dispatches through ARD and sweeps a 6-cell grid
+    over `ard.alpha in {0.5, 1, 2}` x `ard.imp in {"avgderiv", "vsq"}`;
+    picks the winner by inner CV. On low-p dense data `"balanced"` is
+    byte-equivalent to `"fast"`.
+
+- autotune.warmstart:
+
+  If `TRUE` (default), autotune first pre-fits on a 15% subsample
+  (capped at 200 rows) and runs one ARD probe; if the probe does not
+  improve held-out MSE over the isotropic baseline by more than 2%, the
+  ARD dispatch branch is dropped and autotune collapses to scalar sigma
+  only. Skipped when `n < 200` or `autotune.speed = "fast"`.
+
 - varmod:
 
   Residual variance model used to construct prediction intervals via
@@ -296,8 +322,10 @@ predict(
   square gradient, see `ard.imp`), and pass 2 refits with
   `s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha` clipped to
   `[sigma_iso / ard.cap, sigma_iso * ard.cap]`. Incompatible with
-  `autotune = TRUE`, `approx = "nystrom"`, and a user-supplied vector
-  `sigma`; all error at fit time.
+  `approx = "nystrom"` and with a user-supplied vector `sigma`; both
+  error at fit time. When `autotune = TRUE` and the user supplies
+  `ard = "cheap"` explicitly, autotune routes through ARD regardless of
+  `autotune.speed`.
 
 - ard.alpha:
 
