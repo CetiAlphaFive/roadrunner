@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9044</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9045</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,27 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9045" id="roadrunner-0009045">roadrunner 0.0.0.9045<a class="anchor" aria-label="anchor" href="#roadrunner-0009045"></a></h2>
+<div class="section level3">
+<h3 id="krls--per-feature-gaussian-bandwidth-manual-ard-0-0-0-9045">krls() — per-feature Gaussian bandwidth (manual ARD)<a class="anchor" aria-label="anchor" href="#krls--per-feature-gaussian-bandwidth-manual-ard-0-0-0-9045"></a></h3>
+<ul><li>
+<code>krls(..., sigma = c(s1, ..., sp))</code> now accepts a length-<code>ncol(X)</code> vector of strictly positive lengthscales. Gaussian kernel becomes K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k).</li>
+<li>Scalar sigma path is byte-identical to v0.0.0.9044 fits (FP determinism preserved via constant-vector fast detection in kernel worker).</li>
+<li>Marginal effects, vcov of average effects, and predict() all scale per-feature by 2/sigma_k and 4/sigma_k^2 respectively.</li>
+<li>
+<code>autotune = TRUE</code> + vector sigma errors at fit time; auto-selection of ARD lengthscales deferred to Phase 2b/2c.</li>
+<li>
+<code>approx = "nystrom"</code> + vector sigma errors at fit time; ARD + Nystrom is P5 stretch goal.</li>
+</ul><div class="section level4">
+<h4 id="out-of-scope-p2bp2cp3-0-0-0-9045">Out of scope (P2b/P2c/P3)<a class="anchor" aria-label="anchor" href="#out-of-scope-p2bp2cp3-0-0-0-9045"></a></h4>
+<ul><li>Cheap two-pass ARD selector.</li>
+<li>Gradient-based ARD optimisation.</li>
+<li>HSIC pre-screen.</li>
+<li>Autotune sweep over ARD vectors.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9044" id="roadrunner-0009044">roadrunner 0.0.0.9044<a class="anchor" aria-label="anchor" href="#roadrunner-0009044"></a></h2>
 <div class="section level3">

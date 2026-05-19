@@ -97,7 +97,14 @@ predict(
   Gaussian-kernel bandwidth. Default `NULL`, which sets sigma via the
   geomean_p formula: `sqrt(median(d2) * p)` where `d2` are pairwise
   squared Euclidean distances on the standardised predictors and
-  `p = ncol(X)`. Must be a positive scalar if supplied.
+  `p = ncol(X)`. May be supplied as a strictly positive scalar OR (since
+  v0.0.0.9045) as a length-`ncol(X)` vector of per-feature lengthscales
+  (manual ARD): the Gaussian kernel becomes
+  `K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k)`. Vector form is
+  incompatible with `autotune = TRUE` and with `approx = "nystrom"` in
+  this version; both error at fit time. For per-feature `sigma`,
+  lengthscales apply on the column-standardised predictor matrix used
+  internally (a value of `1` corresponds to one unit of `sd(X[, k])`).
 
 - lambda:
 

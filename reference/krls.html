@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9044</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9045</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -141,7 +141,15 @@ or logical vector restricting rows of <code>data</code> used for the fit.</p></d
 <dd><p>Gaussian-kernel bandwidth.  Default <code>NULL</code>, which sets
 sigma via the geomean_p formula: <code>sqrt(median(d2) * p)</code> where <code>d2</code>
 are pairwise squared Euclidean distances on the standardised
-predictors and <code>p = ncol(X)</code>.  Must be a positive scalar if supplied.</p></dd>
+predictors and <code>p = ncol(X)</code>. May be supplied as a strictly positive
+scalar OR (since v0.0.0.9045) as a length-<code>ncol(X)</code> vector of
+per-feature lengthscales (manual ARD): the Gaussian kernel becomes
+<code>K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k)</code>. Vector form is
+incompatible with <code>autotune = TRUE</code> and with <code>approx = "nystrom"</code>
+in this version; both error at fit time. For per-feature <code>sigma</code>,
+lengthscales apply on the column-standardised predictor matrix
+used internally (a value of <code>1</code> corresponds to one unit of
+<code>sd(X[, k])</code>).</p></dd>
 
 
 <dt id="arg-lambda">lambda<a class="anchor" aria-label="anchor" href="#arg-lambda"></a></dt>
