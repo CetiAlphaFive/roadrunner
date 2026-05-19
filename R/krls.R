@@ -311,6 +311,7 @@ krls.default <- function(X, y,
                          nfold = 0L, ncross = NULL, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE, autotune.grid = NULL,
+                         autotune.nthreads = NULL,
                          varmod = c("none", "const"),
                          n.boot = 0L,
                          na.action = c("impute", "omit"),
@@ -527,6 +528,24 @@ krls.default <- function(X, y,
               all(autotune.grid > 0))
     autotune.grid <- sort(unique(as.numeric(autotune.grid)))
   }
+
+  # autotune.nthreads -- default via getOption fallback
+  if (is.null(autotune.nthreads)) {
+    autotune.nthreads <- getOption(
+      "roadrunner.nthreads",
+      max(1L, parallel::detectCores(logical = FALSE))
+    )
+  }
+  stopifnot(is.numeric(autotune.nthreads), length(autotune.nthreads) == 1L,
+            autotune.nthreads >= 1)
+  autotune.nthreads <- as.integer(autotune.nthreads)
+  if (length(autotune.grid) > 0L) {
+    autotune.nthreads <- min(autotune.nthreads, length(autotune.grid))
+  }
+  if (isTRUE(RcppParallel::defaultNumThreads() == 1L)) {
+    autotune.nthreads <- 1L
+  }
+
   if (is.null(colnames(X))) colnames(X) <- paste0("x", seq_len(d))
 
   ## --- nthreads (Phase 8) -----------------------------------------
@@ -649,8 +668,24 @@ krls.default <- function(X, y,
     }
     ## MSE matrix: rows = sigma candidates, cols = nfold_at * ncross_at.
     n_sig <- length(autotune.grid)
+    sigma_grid_sorted <- autotune.grid   # already sorted+unique above
     mse_mat_at <- matrix(NA_real_, nrow = n_sig,
                          ncol = nfold_at * ncross_at)
+    lam_mat_at <- matrix(NA_real_, nrow = n_sig,
+                         ncol = nfold_at * ncross_at)
+    ## Use C++ inner only on the fast unweighted path with default
+    ## L/U/tol (the inner uses L0=eps + L_step=10 + U=n which matches
+    ## .krls_lambdasearch defaults exactly; non-default L/U/tol or
+    ## non-null weights fall back to the per-cell R loop for parity).
+    use_inner_cpp <- is.null(sqw) && is.null(L) && is.null(U) &&
+                       is.null(tol)
+    lambda_args <- list(
+      tol            = 1e-6,
+      L0             = .Machine$double.eps,
+      L_step         = 10.0,
+      U_start_from_n = TRUE
+    )
+    nthreads_used_final <- 1L
     col_at <- 1L
     for (cc_at in seq_len(ncross_at)) {
       ## Fresh fold partition for each repetition.
@@ -666,41 +701,57 @@ krls.default <- function(X, y,
         ys_tr <- ys[train_i]
         Xs_te <- Xs[test_i,  , drop = FALSE]
         ys_te <- ys[test_i]
-        for (si in seq_along(autotune.grid)) {
-          sig_s <- autotune.grid[si]
-          K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
-          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
-          if (!is.null(sqw)) {
-            sqw_tr <- sqrt(w_norm[train_i])
-            K_tr_use  <- K_tr * tcrossprod(sqw_tr)
-            ys_tr_use <- sqw_tr * ys_tr
-          } else {
-            sqw_tr <- NULL
-            K_tr_use  <- K_tr
-            ys_tr_use <- ys_tr
-          }
-          eo_k    <- krls_eig_cpp(K_tr_use)
-          dvals_k <- as.numeric(eo_k$values)
-          V_k     <- eo_k$vectors
-          Vsq_k   <- krls_vsq_cpp(V_k)
-          Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
-          ## Per-fold LOO closed-form lambda search for this sigma cell.
-          lam_k <- tryCatch(
-            .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
-                               n_y = length(train_i),
-                               L = L, U = U, tol = tol, noisy = FALSE),
-            error = function(e) NA_real_)
-          if (is.na(lam_k)) next
-          sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
-          c_solve <- as.numeric(sol_k$coeffs)
-          c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
-          yhat_te <- as.numeric(K_te %*% c_fold)
-          if (!is.null(sqw)) {
-            w_te <- w_norm[test_i]
-            mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
-              max(sum(w_te), .Machine$double.eps)
-          } else {
-            mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
+        if (use_inner_cpp) {
+          ## Shared squared-distance matrices for this fold; the C++
+          ## inner sweeps the sigma grid in parallel reusing them.
+          D_tr <- krls_pairwise_sqdist_cpp(Xs_tr, Xs_tr)
+          D_te <- krls_pairwise_sqdist_cpp(Xs_te, Xs_tr)
+          inner <- krls_autotune_inner_cpp(
+            D_tr, D_te, ys_tr, ys_te,
+            sigma_grid_sorted, lambda_args,
+            nthreads = autotune.nthreads
+          )
+          mse_mat_at[, col_at] <- as.numeric(inner$mse_per_sigma)
+          lam_mat_at[, col_at] <- as.numeric(inner$lambda_per_sigma)
+          nthreads_used_final  <- as.integer(inner$nthreads_used)
+        } else {
+          for (si in seq_along(autotune.grid)) {
+            sig_s <- autotune.grid[si]
+            K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
+            K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
+            if (!is.null(sqw)) {
+              sqw_tr <- sqrt(w_norm[train_i])
+              K_tr_use  <- K_tr * tcrossprod(sqw_tr)
+              ys_tr_use <- sqw_tr * ys_tr
+            } else {
+              sqw_tr <- NULL
+              K_tr_use  <- K_tr
+              ys_tr_use <- ys_tr
+            }
+            eo_k    <- krls_eig_cpp(K_tr_use)
+            dvals_k <- as.numeric(eo_k$values)
+            V_k     <- eo_k$vectors
+            Vsq_k   <- krls_vsq_cpp(V_k)
+            Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+            ## Per-fold LOO closed-form lambda search for this sigma cell.
+            lam_k <- tryCatch(
+              .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
+                                 n_y = length(train_i),
+                                 L = L, U = U, tol = tol, noisy = FALSE),
+              error = function(e) NA_real_)
+            if (is.na(lam_k)) next
+            sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
+            c_solve <- as.numeric(sol_k$coeffs)
+            c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+            yhat_te <- as.numeric(K_te %*% c_fold)
+            if (!is.null(sqw)) {
+              w_te <- w_norm[test_i]
+              mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
+                max(sum(w_te), .Machine$double.eps)
+            } else {
+              mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
+            }
+            lam_mat_at[si, col_at] <- lam_k
           }
         }
         col_at <- col_at + 1L
@@ -719,17 +770,21 @@ krls.default <- function(X, y,
     cand_at   <- which(mean_mse_at <= thresh_at)
     sigma <- max(autotune.grid[cand_at])   # largest sigma in the 1-SE band
     autotune_info <- list(
-      grid         = autotune.grid,
-      mse          = mean_mse_at,
-      winner       = sigma,
-      nfold        = nfold_at,
-      ncross       = ncross_at,
-      stratify     = isTRUE(stratify),
-      seed.cv      = seed.cv,
-      mse_per_fold = mse_mat_at,
-      se_mse       = se_at,
-      cv.1se       = TRUE,
-      sigma_1se    = sigma
+      grid              = autotune.grid,
+      mse               = mean_mse_at,
+      mse_per_sigma     = mean_mse_at,
+      winner            = sigma,
+      nfold             = nfold_at,
+      ncross            = ncross_at,
+      stratify          = isTRUE(stratify),
+      seed.cv           = seed.cv,
+      mse_per_fold      = mse_mat_at,
+      lam_per_fold      = lam_mat_at,
+      se_mse            = se_at,
+      cv.1se            = TRUE,
+      sigma_1se         = sigma,
+      sigma_grid_sorted = sigma_grid_sorted,
+      nthreads_used     = nthreads_used_final
     )
     if (trace > 1) {
       cat("Autotune sigma winner (1-SE):", round(sigma, 4),
