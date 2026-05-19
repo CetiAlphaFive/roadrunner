@@ -1,3 +1,57 @@
+# roadrunner 0.0.0.9040
+
+## `krls()` — four overfitting fixes (REQ-20260518-002)
+
+Addresses overfitting confirmed by diagnostic sweeps in REQ-20260518-001.
+All four changes are R-level only; the C++ engine is unchanged, so at a
+fixed `(sigma, lambda)` fits remain byte-identical to earlier versions.
+
+Empirical improvement on signal DGPs (`n=500, p=10`, `tune=none`, `R=10`
+replications; overfit ratio = `test_MSE / train_MSE`):
+
+| DGP         | Before (pre-fix) | After (post-fix) | Improvement |
+|-------------|-----------------|-----------------|-------------|
+| additive    | 3.35            | 1.58            | 53%         |
+| interaction | 4.38            | 2.10            | 52%         |
+| sparse      | 2.61            | 1.26            | 52%         |
+| linear      | 2.70            | 1.37            | 49%         |
+| noise       | 1.06            | 1.04            | —           |
+
+All improvement is attributable to Fix 1 (sigma default) and Fix 2 (lambda
+tolerance); Fixes 3 and 4 further stabilise autotune sigma selection.
+
+**Breaking defaults** (old values restorable by explicit arguments):
+
+- **Default `sigma` changed** from `ncol(X)` to the median pairwise
+  squared Euclidean distance on the standardised predictors (the
+  'median heuristic'). At `n=500, p=10` the oracle sigma is ~20 and the
+  median heuristic anchors near that neighbourhood; `sigma = ncol(X)`
+  was 10 (2x under-smoothed). Restore old behaviour with
+  `sigma = ncol(X)`.
+
+- **Default lambda tolerance changed** from `1e-3 * n` (n-dependent,
+  coarse at moderate n) to `1e-6` (fixed, 6-digit precision). The LOO
+  golden-section was empirically selecting lambda ~4x the argmin at
+  `sigma=20, n=500` under the old tolerance. The L-bracket climb now
+  uses multiplicative steps (x10 per step) instead of additive steps
+  (0.05 per step) for scale-robustness. Restore old behaviour with
+  `tol = 1e-3 * nrow(X)`.
+
+- **Autotune sigma grid changed** from `ncol(X) * c(0.25, 0.5, 1, 2,
+  4, 8)` (6 points fixed at `d`) to `sigma_anchor * c(0.125, 0.25,
+  0.5, 1, 2, 4, 8, 16, 32)` (9 points centred on the median heuristic
+  anchor). Restore old behaviour with `autotune.grid = ncol(X) *
+  c(0.25, 0.5, 1, 2, 4, 8)`.
+
+- **Autotune CV stabilised**: default folds raised from 5 to 10; default
+  cross-partition repeats raised from 1 to 2 (via the `ncross` argument,
+  whose default changes from `1L` to `NULL`); sigma selection now applies
+  the 1-SE rule (largest sigma within 1 SE of minimum CV-MSE, biasing
+  toward wider kernels when evidence is weak). The `autotune` component
+  of the fit gains new fields: `ncross`, `mse_per_fold`, `se_mse`,
+  `cv.1se`, `sigma_1se`. Restore old fold count with `nfold = 5`;
+  restore old repeat count with `ncross = 1`.
+
 # roadrunner 0.0.0.9033
 
 ## New feature: `krls()` -- Kernel Regularized Least Squares

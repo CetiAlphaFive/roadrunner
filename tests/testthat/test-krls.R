@@ -49,20 +49,23 @@ test_that("krls coefs / fitted / Looe match KRLS at matched (sigma, lambda)", {
 # ----------------------------------------------------------------------
 # Parity of automatic lambda search.
 # ----------------------------------------------------------------------
-test_that("auto lambda search agrees with KRLS::krls", {
+test_that("auto lambda search agrees with KRLS::krls at matched sigma", {
   skip_if_no_krls()
   d <- make_dgp(n = 60L, p = 3L, seed = 2L)
-  ref <- KRLS::krls(d$X, d$y, derivative = FALSE, vcov = TRUE,
+  ## Use the KRLS default sigma (ncol(X)) explicitly so that both solvers
+  ## start from the same kernel. roadrunner's default sigma changed to the
+  ## median heuristic in REQ-20260518-002; sigma must be matched for a
+  ## meaningful parity comparison.
+  ## roadrunner's tol is now 1e-6 (vs KRLS's 1e-3*n = 0.06), so lambda
+  ## may differ by up to the old tolerance. Coefficients are sensitive to
+  ## lambda near the minimum, so only check lambda agreement here; for
+  ## coefficient parity see the matched-(sigma, lambda) test above.
+  sigma <- ncol(d$X)
+  ref <- KRLS::krls(d$X, d$y, sigma = sigma, derivative = FALSE, vcov = TRUE,
                     print.level = 0)
-  fit <- roadrunner::krls(d$X, d$y, derivative = FALSE, vcov = TRUE,
-                          print.level = 0)
-  ## lambda search uses tol = 1e-3 * n which is fairly generous; allow
-  ## differences within tol.
+  fit <- roadrunner::krls(d$X, d$y, sigma = sigma, derivative = FALSE,
+                          vcov = TRUE, print.level = 0)
   expect_equal(fit$lambda, ref$lambda, tolerance = 1e-3 * nrow(d$X))
-  expect_equal(as.numeric(fit$coeffs), as.numeric(ref$coeffs),
-               tolerance = 1e-6)
-  expect_equal(as.numeric(fit$fitted), as.numeric(ref$fitted),
-               tolerance = 1e-6)
 })
 
 # ----------------------------------------------------------------------

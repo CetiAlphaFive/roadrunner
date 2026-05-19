@@ -84,8 +84,10 @@
 #'   the variables referenced by the formula.
 #' @param subset Used only by the formula method. An optional integer
 #'   or logical vector restricting rows of `data` used for the fit.
-#' @param sigma Gaussian-kernel bandwidth.  Default `ncol(X)`.  Must be
-#'   a positive scalar.
+#' @param sigma Gaussian-kernel bandwidth.  Default `NULL`, which sets
+#'   sigma to the median pairwise squared Euclidean distance on the
+#'   standardised predictors (the 'median heuristic').  Must be a
+#'   positive scalar if supplied.
 #' @param lambda Optional ridge penalty.  If `NULL` (default), selected
 #'   by golden-section search on the LOO error.
 #' @param derivative Logical.  If `TRUE` (default), compute pointwise
@@ -102,8 +104,10 @@
 #'   `weights = rep(1, n)` is byte-identical to the unweighted path.
 #' @param L,U Optional lower / upper bracket for the lambda search.  If
 #'   `NULL`, defaults follow `KRLS::krls()`.
-#' @param tol Tolerance for the lambda golden section.  Default
-#'   `1e-3 * n`.
+#' @param tol Tolerance for the lambda golden section.  Default `1e-6`
+#'   (fixed, independent of `n`; was `1e-3 * n` in earlier versions).
+#'   A fixed small tolerance gives 6-digit lambda precision regardless
+#'   of sample size.
 #' @param eigtrunc Optional eigenvalue truncation cutoff in `(0, 1]`.
 #'   When set, eigenvalues below `eigtrunc * max(d)` are dropped from
 #'   the solve.  `NULL` (default) keeps all eigenvalues.
@@ -116,19 +120,27 @@
 #' @param nfold Number of CV folds for `lambda.method = "cv"` or for
 #'   `autotune`. `0` (default) disables CV.
 #' @param ncross Number of CV repetitions (each builds a fresh fold
-#'   partition). Default `1`.
+#'   partition). Default `NULL`, which resolves to `2` for the autotune
+#'   sigma search (repeated-CV stabilisation) and `1` for
+#'   `lambda.method = 'cv'`. Explicit integer values are honoured
+#'   in both paths.
 #' @param stratify If `TRUE` (default), CV folds are quantile-
 #'   stratified on `y`.
 #' @param seed.cv Optional integer seed for the CV fold partition.
 #' @param cv.1se If `TRUE`, applies the one-standard-error rule when
 #'   picking lambda under CV (smallest model within 1 SE of the
 #'   minimum mean CV-MSE). Default `FALSE`.
-#' @param autotune If `TRUE`, runs an inner CV grid search over
-#'   `sigma` (default grid: `ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`)
-#'   and refits the winner on the full data. Default `FALSE`.
+#' @param autotune If `TRUE`, runs an inner repeated-CV grid search
+#'   over `sigma` (default: 9-point multiplicative grid centred on the
+#'   median-heuristic sigma anchor, from `anchor * 0.125` to
+#'   `anchor * 32`) and refits the winner on the full data using the
+#'   one-standard-error rule (selects the largest sigma within 1 SE of
+#'   the minimum CV-MSE). Default `FALSE`.
 #' @param autotune.grid Optional numeric vector of `sigma` candidates
-#'   for autotune. `NULL` (default) uses the default multiplicative
-#'   grid.
+#'   for autotune. `NULL` (default) uses the 9-point anchor-centred
+#'   grid `sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)`
+#'   where `sigma_anchor` is the median pairwise squared Euclidean
+#'   distance on the standardised predictors.
 #' @param varmod Residual variance model used to construct prediction
 #'   intervals via `predict(..., interval = "pint")`. `"none"`
 #'   (default) disables PIs; `"const"` uses a homoscedastic
@@ -148,6 +160,43 @@
 #'   `RcppParallel::defaultNumThreads()`.
 #' @param print.level Deprecated alias for `trace`. Prefer `trace`.
 #' @param ... Currently unused (caught for forward compatibility).
+#'
+#' @details
+#' **Scale-aware sigma default (median heuristic)**
+#'
+#' When `sigma = NULL`, roadrunner sets the Gaussian-kernel bandwidth to the
+#' median pairwise squared Euclidean distance computed on the standardised
+#' predictor matrix `Xs`.  Formally, let `d2_ij = ||Xs_i - Xs_j||^2`; then
+#' `sigma = median({d2_ij : i < j})`.  This anchors the kernel so that
+#' `K_ij = exp(-1) ≈ 0.37` at the median inter-observation distance — keeping
+#' the kernel in its informative operating range.  The heuristic adapts to the
+#' actual data scale and is substantially more reliable than the previous
+#' `sigma = ncol(X)` default, which was 2-4x too narrow at typical `(n, p)`
+#' settings and caused severe overfitting (overfit ratio 3-4x on signal DGPs at
+#' `n=500, p=10`; see REQ-20260518-001 diagnostic sweeps).
+#'
+#' For `n > 500` the pairwise distance matrix is `O(n^2)`; to keep the default
+#' cheap, a 500-row subsample is drawn with a fixed seed (`set.seed(2718)`) so
+#' the result is deterministic within a session.
+#'
+#' **Autotune-equals-default equivalence at well-fit settings**
+#'
+#' When autotune is enabled at settings where the default sigma is already near-
+#' optimal (e.g. additive and interaction DGPs at `n=500, p=10`), the autotune
+#' grid is centred on `sigma_anchor` and the CV argmin coincides with the grid
+#' centre.  The 1-SE rule then selects `sigma_anchor`, producing a fit identical
+#' to the non-autotuned default.  This is the expected behaviour — it confirms
+#' that the default sigma is well-chosen for these DGPs — not a failure of
+#' autotune.  Autotune yields improvements when the optimal sigma departs from
+#' the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).
+#'
+#' @note
+#' At a fixed `(sigma, lambda)` fits remain byte-identical to all earlier
+#' versions of roadrunner KRLS.  The four defaults changed in v0.0.0.9040
+#' (`sigma`, `tol`, autotune nfold/ncross, autotune grid) only affect results
+#' when those arguments are left at `NULL` / at their default.  Restore any
+#' old default explicitly: `sigma = ncol(X)`, `tol = 1e-3 * nrow(X)`,
+#' `nfold = 5`, `ncross = 1`, `autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)`.
 #'
 #' @return An object of S3 class `c("krls_rr", "krls")` with components
 #'   mirroring `KRLS::krls()`: `K`, `coeffs`, `Looe`, `fitted`, `X`,
@@ -248,7 +297,7 @@ krls.default <- function(X, y,
                          L = NULL, U = NULL, tol = NULL, eigtrunc = NULL,
                          lambda.method = c("loo", "cv"),
                          lambda.grid = NULL,
-                         nfold = 0L, ncross = 1L, stratify = TRUE,
+                         nfold = 0L, ncross = NULL, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE, autotune.grid = NULL,
                          varmod = c("none", "const"),
@@ -453,20 +502,19 @@ krls.default <- function(X, y,
       warning("eigtrunc = 0 is equivalent to NULL; ignoring")
     }
   }
-  if (is.null(sigma)) {
-    sigma <- d
-  } else {
+  ## sigma and autotune.grid defaults are set AFTER standardisation
+  ## (they need Xs for the scale-aware sigma anchor; see Fix 1 + Fix 4).
+  ## Capture whether the user supplied these args so we know whether to
+  ## compute sigma_anchor.
+  sigma_user_null     <- is.null(sigma)
+  autotune_grid_null  <- is.null(autotune.grid)
+  if (!is.null(sigma)) {
     stopifnot(is.numeric(sigma), length(sigma) == 1, sigma > 0)
   }
-  # --- autotune validation (Phase 4) --------------------------------
-  if (isTRUE(autotune)) {
-    if (is.null(autotune.grid)) {
-      autotune.grid <- as.numeric(d) * c(0.25, 0.5, 1, 2, 4, 8)
-    } else {
-      stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
-                all(autotune.grid > 0))
-      autotune.grid <- sort(unique(as.numeric(autotune.grid)))
-    }
+  if (!autotune_grid_null) {
+    stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
+              all(autotune.grid > 0))
+    autotune.grid <- sort(unique(as.numeric(autotune.grid)))
   }
   if (is.null(colnames(X))) colnames(X) <- paste0("x", seq_len(d))
 
@@ -492,6 +540,31 @@ krls.default <- function(X, y,
   Xs <- matrix(Xs, n, d, dimnames = list(NULL, colnames(X)))
   ys <- as.numeric(ys)
 
+  ## --- scale-aware sigma anchor (Fix 1 + Fix 4) --------------------
+  ## Compute sigma_anchor (median pairwise sq. dist on Xs) whenever
+  ## (a) user did not supply sigma, or (b) autotune is on and user did
+  ## not supply autotune.grid. Skip if neither condition holds.
+  sigma_anchor <- NULL
+  if (sigma_user_null || (isTRUE(autotune) && autotune_grid_null)) {
+    sigma_anchor <- .krls_sigma_anchor(Xs)
+  }
+
+  ## --- sigma default assignment (Fix 1) ----------------------------
+  if (sigma_user_null) {
+    sigma <- sigma_anchor
+  }
+  ## (non-NULL sigma already validated above)
+
+  ## --- autotune grid default assignment (Fix 4) --------------------
+  if (isTRUE(autotune)) {
+    if (autotune_grid_null) {
+      ## Centre the 9-point grid on sigma_anchor; 2x multiplicative spacing.
+      anchor_g <- if (!is.null(sigma_anchor)) sigma_anchor else sigma
+      autotune.grid <- anchor_g * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)
+    }
+    ## User-supplied autotune.grid already validated + sorted above.
+  }
+
   ## --- weighted-LS transform (Phase 2) ------------------------------
   # Solve a *weighted* KRLS by applying D = diag(sqrt(w)) on both sides
   # of K. The closed-form fit on D K D with target D ys recovers the
@@ -509,17 +582,24 @@ krls.default <- function(X, y,
     sqw <- NULL
   }
 
-  ## --- autotune over sigma (Phase 4) -------------------------------
+  ## --- autotune over sigma (Fix 3: repeated CV + 1-SE rule) --------
   # Inner-CV grid search: for each sigma candidate, run a K-fold
   # held-out MSE scan (using LOO closed-form per-fold lambda for each
   # cell) and pick the sigma with the lowest mean held-out MSE.
+  # Fix 3a: default nfold for autotune raised to 10 (from 5).
+  # Fix 3b: ncross_at outer repetitions (default 2 when ncross=NULL).
+  # Fix 3c: 1-SE rule selects the largest sigma within 1 SE of min MSE.
   autotune_info <- NULL
   if (isTRUE(autotune)) {
     nfold_at <- as.integer(nfold)
-    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 5L
+    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 10L   # Fix 3a
     if (nfold_at > nrow(X))
       stop("krls: autotune nfold (", nfold_at,
            ") exceeds nrow(X) (", nrow(X), ").")
+    ## Fix 3b: ncross_at — default 2 when ncross=NULL; respect explicit values.
+    ncross_at <- if (is.null(ncross)) 2L else as.integer(ncross)
+    if (is.na(ncross_at) || ncross_at < 1L) ncross_at <- 1L
+
     if (!is.null(seed.cv)) {
       if (exists(".Random.seed", envir = globalenv(),
                  inherits = FALSE)) {
@@ -534,92 +614,115 @@ krls.default <- function(X, y,
       set.seed(as.integer(seed.cv) + 7919L)  # distinct from CV stream
     }
     n_at <- nrow(X)
-    if (isTRUE(stratify) && n_at >= 20L) {
-      nb_at <- min(10L, max(2L, floor(n_at / 5)))
-      bins_at <- cut(as.numeric(y), breaks = nb_at,
-                     include.lowest = TRUE, labels = FALSE)
-      fid_at <- integer(n_at)
-      for (b in seq_len(nb_at)) {
-        idx_b <- which(bins_at == b)
-        if (length(idx_b) == 0L) next
-        idx_b <- sample(idx_b)
-        fid_at[idx_b] <- rep_len(seq_len(nfold_at), length(idx_b))
+    ## Helper: build one stratified-or-random fold assignment.
+    build_folds_at <- function(n_pts, k, strat) {
+      if (isTRUE(strat) && n_pts >= 20L) {
+        nb <- min(10L, max(2L, floor(n_pts / 5)))
+        bins <- cut(as.numeric(y), breaks = nb,
+                    include.lowest = TRUE, labels = FALSE)
+        fid <- integer(n_pts)
+        for (b in seq_len(nb)) {
+          idx_b <- which(bins == b)
+          if (length(idx_b) == 0L) next
+          idx_b <- sample(idx_b)
+          fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
+        }
+        if (any(fid == 0L)) {
+          miss <- which(fid == 0L)
+          fid[miss] <- rep_len(seq_len(k), length(miss))
+        }
+        fid
+      } else {
+        rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
       }
-      if (any(fid_at == 0L)) {
-        miss <- which(fid_at == 0L)
-        fid_at[miss] <- rep_len(seq_len(nfold_at), length(miss))
-      }
-    } else {
-      fid_at <- rep_len(seq_len(nfold_at), n_at)[sample.int(n_at)]
     }
-    mse_sigma <- numeric(length(autotune.grid))
-    for (si in seq_along(autotune.grid)) {
-      sig_s <- autotune.grid[si]
-      mse_folds <- numeric(nfold_at)
-      ok_folds <- 0L
+    ## MSE matrix: rows = sigma candidates, cols = nfold_at * ncross_at.
+    n_sig <- length(autotune.grid)
+    mse_mat_at <- matrix(NA_real_, nrow = n_sig,
+                         ncol = nfold_at * ncross_at)
+    col_at <- 1L
+    for (cc_at in seq_len(ncross_at)) {
+      ## Fresh fold partition for each repetition.
+      fid_at <- build_folds_at(n_at, nfold_at, stratify)
       for (k in seq_len(nfold_at)) {
         test_i  <- which(fid_at == k)
         train_i <- which(fid_at != k)
-        if (length(test_i) == 0L || length(train_i) < 3L) next
+        if (length(test_i) == 0L || length(train_i) < 3L) {
+          col_at <- col_at + 1L
+          next
+        }
         Xs_tr <- Xs[train_i, , drop = FALSE]
         ys_tr <- ys[train_i]
         Xs_te <- Xs[test_i,  , drop = FALSE]
         ys_te <- ys[test_i]
-        K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
-        K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
-        if (!is.null(sqw)) {
-          sqw_tr <- sqrt(w_norm[train_i])
-          K_tr_use  <- K_tr * tcrossprod(sqw_tr)
-          ys_tr_use <- sqw_tr * ys_tr
-        } else {
-          sqw_tr <- NULL
-          K_tr_use  <- K_tr
-          ys_tr_use <- ys_tr
+        for (si in seq_along(autotune.grid)) {
+          sig_s <- autotune.grid[si]
+          K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
+          if (!is.null(sqw)) {
+            sqw_tr <- sqrt(w_norm[train_i])
+            K_tr_use  <- K_tr * tcrossprod(sqw_tr)
+            ys_tr_use <- sqw_tr * ys_tr
+          } else {
+            sqw_tr <- NULL
+            K_tr_use  <- K_tr
+            ys_tr_use <- ys_tr
+          }
+          eo_k    <- krls_eig_cpp(K_tr_use)
+          dvals_k <- as.numeric(eo_k$values)
+          V_k     <- eo_k$vectors
+          Vsq_k   <- krls_vsq_cpp(V_k)
+          Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+          ## Per-fold LOO closed-form lambda search for this sigma cell.
+          lam_k <- tryCatch(
+            .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
+                               n_y = length(train_i),
+                               L = L, U = U, tol = tol, noisy = FALSE),
+            error = function(e) NA_real_)
+          if (is.na(lam_k)) next
+          sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
+          c_solve <- as.numeric(sol_k$coeffs)
+          c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+          yhat_te <- as.numeric(K_te %*% c_fold)
+          if (!is.null(sqw)) {
+            w_te <- w_norm[test_i]
+            mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
+              max(sum(w_te), .Machine$double.eps)
+          } else {
+            mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
+          }
         }
-        eo_k    <- krls_eig_cpp(K_tr_use)
-        dvals_k <- as.numeric(eo_k$values)
-        V_k     <- eo_k$vectors
-        Vsq_k   <- krls_vsq_cpp(V_k)
-        Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
-        # Per-fold LOO closed-form lambda search for this sigma cell.
-        lam_k <- tryCatch(
-          .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
-                             n_y = length(train_i),
-                             L = L, U = U, tol = tol, noisy = FALSE),
-          error = function(e) NA_real_)
-        if (is.na(lam_k)) next
-        sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
-        c_solve <- as.numeric(sol_k$coeffs)
-        c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
-        yhat_te <- as.numeric(K_te %*% c_fold)
-        if (!is.null(sqw)) {
-          w_te <- w_norm[test_i]
-          mse_folds[k] <- sum(w_te * (ys_te - yhat_te)^2) /
-            max(sum(w_te), .Machine$double.eps)
-        } else {
-          mse_folds[k] <- mean((ys_te - yhat_te)^2)
-        }
-        ok_folds <- ok_folds + 1L
+        col_at <- col_at + 1L
       }
-      mse_sigma[si] <- if (ok_folds > 0L)
-        sum(mse_folds[seq_len(ok_folds)]) / ok_folds
-      else NA_real_
     }
-    if (all(is.na(mse_sigma)))
+    mean_mse_at <- rowMeans(mse_mat_at, na.rm = TRUE)
+    if (all(is.na(mean_mse_at)))
       stop("krls: autotune produced no usable folds.")
-    best_si <- which.min(mse_sigma)
-    sigma <- autotune.grid[best_si]  # winner
+    best_si <- which.min(mean_mse_at)
+    ## Fix 3c: 1-SE rule — select the LARGEST sigma within 1 SE of min.
+    ## Wider kernel = more smoothing = less overfit.
+    sd_at  <- apply(mse_mat_at, 1L, function(z) sd(z, na.rm = TRUE))
+    nfok   <- rowSums(!is.na(mse_mat_at))
+    se_at  <- sd_at / sqrt(pmax(nfok, 1L))
+    thresh_at <- mean_mse_at[best_si] + se_at[best_si]
+    cand_at   <- which(mean_mse_at <= thresh_at)
+    sigma <- max(autotune.grid[cand_at])   # largest sigma in the 1-SE band
     autotune_info <- list(
-      grid      = autotune.grid,
-      mse       = mse_sigma,
-      winner    = sigma,
-      nfold     = nfold_at,
-      stratify  = isTRUE(stratify),
-      seed.cv   = seed.cv
+      grid         = autotune.grid,
+      mse          = mean_mse_at,
+      winner       = sigma,
+      nfold        = nfold_at,
+      ncross       = ncross_at,
+      stratify     = isTRUE(stratify),
+      seed.cv      = seed.cv,
+      mse_per_fold = mse_mat_at,
+      se_mse       = se_at,
+      cv.1se       = TRUE,
+      sigma_1se    = sigma
     )
     if (trace > 1) {
-      cat("Autotune sigma winner:", round(sigma, 4),
-          " (mse=", round(mse_sigma[best_si], 6), ")\n", sep = "")
+      cat("Autotune sigma winner (1-SE):", round(sigma, 4),
+          " (mse=", round(mean_mse_at[best_si], 6), ")\n", sep = "")
     }
   }
 
@@ -678,7 +781,7 @@ krls.default <- function(X, y,
       if (nfold_int > nrow(X))
         stop("krls: nfold (", nfold_int, ") exceeds nrow(X) (",
              nrow(X), ").")
-      ncross_int <- as.integer(ncross)
+      ncross_int <- if (is.null(ncross)) 1L else as.integer(ncross)
       if (is.na(ncross_int) || ncross_int < 1L) ncross_int <- 1L
 
       # Default lambda.grid: 30 log-spaced points within the standard
@@ -694,7 +797,7 @@ krls.default <- function(X, y,
         L_grid <- if (is.null(L)) {
           q  <- which.min(abs(dvals - (max(dvals) / 1000)))
           Lloc  <- .Machine$double.eps
-          while (sum(dvals / (dvals + Lloc)) > q) Lloc <- Lloc + 0.05
+          while (sum(dvals / (dvals + Lloc)) > q) Lloc <- Lloc * 10
           Lloc
         } else max(L, .Machine$double.eps)
         if (U_grid <= L_grid) {
@@ -1351,12 +1454,35 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   as.matrix(newdata)
 }
 
+## Fix 1: Scale-aware sigma default.
+## Returns the median pairwise squared Euclidean distance on the
+## standardised predictor matrix Xs (already mean-0, unit-sd per column).
+## For n > 500 a 500-row subsample is used for speed (deterministic seed
+## 2718 so the result is reproducible within a call).  Floored to
+## .Machine$double.eps to prevent degenerate (flat) kernels.
+.krls_sigma_anchor <- function(Xs) {
+  n <- nrow(Xs)
+  if (n > 500L) {
+    set.seed(2718L)
+    idx <- sample.int(n, 500L)
+    Xs_sub <- Xs[idx, , drop = FALSE]
+  } else {
+    Xs_sub <- Xs
+  }
+  d2 <- as.numeric(stats::dist(Xs_sub))^2
+  max(stats::median(d2), .Machine$double.eps)
+}
+
+## Fix 2: Tighter LOO lambda bracket and tolerance.
+## tol: changed from 1e-3 * n (n-dependent) to 1e-6 (fixed, 6-digit precision).
+## L bracket: changed from linear 0.05-step climb to log-scale x10 climb for
+## robustness across a wide range of eigenvalue scales.
 .krls_lambdasearch <- function(dvals, V, Vsq, Vty, n_y,
                                L = NULL, U = NULL, tol = NULL,
                                noisy = FALSE) {
   n <- n_y
   if (is.null(tol)) {
-    tol <- 1e-3 * n
+    tol <- 1e-6              ## Fix 2a: was 1e-3 * n
   } else {
     stopifnot(is.numeric(tol), length(tol) == 1, tol > 0)
   }
@@ -1369,7 +1495,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   if (is.null(L)) {
     q  <- which.min(abs(dvals - (max(dvals) / 1000)))
     L  <- .Machine$double.eps
-    while (sum(dvals / (dvals + L)) > q) L <- L + 0.05
+    while (sum(dvals / (dvals + L)) > q) L <- L * 10  ## Fix 2b: was L + 0.05
   } else {
     stopifnot(is.numeric(L), length(L) == 1, L >= 0)
   }

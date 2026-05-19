@@ -27,7 +27,7 @@ krls(X, ...)
   lambda.method = c("loo", "cv"),
   lambda.grid = NULL,
   nfold = 0L,
-  ncross = 1L,
+  ncross = NULL,
   stratify = TRUE,
   seed.cv = NULL,
   cv.1se = FALSE,
@@ -69,8 +69,10 @@ or logical vector restricting rows of \code{data} used for the fit.}
 \item{y}{A numeric response vector or single-column matrix.  Constant
 \code{y} is rejected.}
 
-\item{sigma}{Gaussian-kernel bandwidth.  Default \code{ncol(X)}.  Must be
-a positive scalar.}
+\item{sigma}{Gaussian-kernel bandwidth.  Default \code{NULL}, which sets
+sigma to the median pairwise squared Euclidean distance on the
+standardised predictors (the 'median heuristic').  Must be a
+positive scalar if supplied.}
 
 \item{lambda}{Optional ridge penalty.  If \code{NULL} (default), selected
 by golden-section search on the LOO error.}
@@ -94,8 +96,10 @@ weighted KRLS via a \verb{D K D} transform where \code{D = diag(sqrt(w))}.
 \item{L, U}{Optional lower / upper bracket for the lambda search.  If
 \code{NULL}, defaults follow \code{KRLS::krls()}.}
 
-\item{tol}{Tolerance for the lambda golden section.  Default
-\code{1e-3 * n}.}
+\item{tol}{Tolerance for the lambda golden section.  Default \code{1e-6}
+(fixed, independent of \code{n}; was \code{1e-3 * n} in earlier versions).
+A fixed small tolerance gives 6-digit lambda precision regardless
+of sample size.}
 
 \item{eigtrunc}{Optional eigenvalue truncation cutoff in \verb{(0, 1]}.
 When set, eigenvalues below \code{eigtrunc * max(d)} are dropped from
@@ -113,7 +117,10 @@ log-spaced grid in \verb{[L, U]}.}
 \code{autotune}. \code{0} (default) disables CV.}
 
 \item{ncross}{Number of CV repetitions (each builds a fresh fold
-partition). Default \code{1}.}
+partition). Default \code{NULL}, which resolves to \code{2} for the autotune
+sigma search (repeated-CV stabilisation) and \code{1} for
+\code{lambda.method = 'cv'}. Explicit integer values are honoured
+in both paths.}
 
 \item{stratify}{If \code{TRUE} (default), CV folds are quantile-
 stratified on \code{y}.}
@@ -124,13 +131,18 @@ stratified on \code{y}.}
 picking lambda under CV (smallest model within 1 SE of the
 minimum mean CV-MSE). Default \code{FALSE}.}
 
-\item{autotune}{If \code{TRUE}, runs an inner CV grid search over
-\code{sigma} (default grid: \code{ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)})
-and refits the winner on the full data. Default \code{FALSE}.}
+\item{autotune}{If \code{TRUE}, runs an inner repeated-CV grid search
+over \code{sigma} (default: 9-point multiplicative grid centred on the
+median-heuristic sigma anchor, from \code{anchor * 0.125} to
+\code{anchor * 32}) and refits the winner on the full data using the
+one-standard-error rule (selects the largest sigma within 1 SE of
+the minimum CV-MSE). Default \code{FALSE}.}
 
 \item{autotune.grid}{Optional numeric vector of \code{sigma} candidates
-for autotune. \code{NULL} (default) uses the default multiplicative
-grid.}
+for autotune. \code{NULL} (default) uses the 9-point anchor-centred
+grid \code{sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)}
+where \code{sigma_anchor} is the median pairwise squared Euclidean
+distance on the standardised predictors.}
 
 \item{varmod}{Residual variance model used to construct prediction
 intervals via \code{predict(..., interval = "pint")}. \code{"none"}
@@ -234,6 +246,42 @@ when marginal effects and variance estimates are requested.
 Memory scales as \code{O(n^2)}: the kernel and its squared eigenvector
 matrix are both stored.  Expect about \code{0.4 * n^2 / 1e6} MB of
 peak working memory (e.g. ~400MB at \code{n = 1000}, ~10GB at \code{n = 5000}).
+
+\strong{Scale-aware sigma default (median heuristic)}
+
+When \code{sigma = NULL}, roadrunner sets the Gaussian-kernel bandwidth to the
+median pairwise squared Euclidean distance computed on the standardised
+predictor matrix \code{Xs}.  Formally, let \verb{d2_ij = ||Xs_i - Xs_j||^2}; then
+\code{sigma = median({d2_ij : i < j})}.  This anchors the kernel so that
+\verb{K_ij = exp(-1) ≈ 0.37} at the median inter-observation distance — keeping
+the kernel in its informative operating range.  The heuristic adapts to the
+actual data scale and is substantially more reliable than the previous
+\code{sigma = ncol(X)} default, which was 2-4x too narrow at typical \verb{(n, p)}
+settings and caused severe overfitting (overfit ratio 3-4x on signal DGPs at
+\verb{n=500, p=10}; see REQ-20260518-001 diagnostic sweeps).
+
+For \code{n > 500} the pairwise distance matrix is \code{O(n^2)}; to keep the default
+cheap, a 500-row subsample is drawn with a fixed seed (\code{set.seed(2718)}) so
+the result is deterministic within a session.
+
+\strong{Autotune-equals-default equivalence at well-fit settings}
+
+When autotune is enabled at settings where the default sigma is already near-
+optimal (e.g. additive and interaction DGPs at \verb{n=500, p=10}), the autotune
+grid is centred on \code{sigma_anchor} and the CV argmin coincides with the grid
+centre.  The 1-SE rule then selects \code{sigma_anchor}, producing a fit identical
+to the non-autotuned default.  This is the expected behaviour — it confirms
+that the default sigma is well-chosen for these DGPs — not a failure of
+autotune.  Autotune yields improvements when the optimal sigma departs from
+the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).
+}
+\note{
+At a fixed \verb{(sigma, lambda)} fits remain byte-identical to all earlier
+versions of roadrunner KRLS.  The four defaults changed in v0.0.0.9040
+(\code{sigma}, \code{tol}, autotune nfold/ncross, autotune grid) only affect results
+when those arguments are left at \code{NULL} / at their default.  Restore any
+old default explicitly: \code{sigma = ncol(X)}, \code{tol = 1e-3 * nrow(X)},
+\code{nfold = 5}, \code{ncross = 1}, \code{autotune.grid = ncol(X) * c(0.25, 0.5, 1, 2, 4, 8)}.
 }
 \examples{
 set.seed(1)
