@@ -28,7 +28,7 @@ krls(
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  lambda.method = c("loo", "cv"),
+  lambda.method = c("loo", "gcv", "cv"),
   lambda.grid = NULL,
   nfold = 0L,
   ncross = NULL,
@@ -46,7 +46,7 @@ krls(
   landmarks = NULL,
   landmark_method = c("random", "kmeans"),
   landmark_seed = NULL,
-  nystrom_eps = 0.000000001,
+  nystrom_eps = 1e-09,
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -150,7 +150,10 @@ predict(
 
   Lambda-selection rule. `"loo"` (default) uses the closed-form
   leave-one-out golden-section search; `"cv"` uses K-fold CV over a grid
-  (`nfold > 0` required).
+  (`nfold > 0` required). `"gcv"` uses the closed-form generalised
+  cross-validation criterion (Craven & Wahba 1979) using the same
+  eigendecomposition; recommended when `n` is large or LOO behaves
+  unstably.
 
 - lambda.grid:
 

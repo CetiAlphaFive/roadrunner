@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9043</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9044</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,24 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9044" id="roadrunner-0009044">roadrunner 0.0.0.9044<a class="anchor" aria-label="anchor" href="#roadrunner-0009044"></a></h2>
+<div class="section level3">
+<h3 id="krls--gcv-lambda-selection-0-0-0-9044">krls() — GCV lambda selection<a class="anchor" aria-label="anchor" href="#krls--gcv-lambda-selection-0-0-0-9044"></a></h3>
+<ul><li>
+<code>krls(..., lambda.method = "gcv")</code> selects the ridge penalty by minimising the closed-form generalised cross-validation criterion (Craven &amp; Wahba 1979) on the existing eigendecomposition of <code>K</code>. Brings parity with <code>KRLS</code> v1.5-0+.</li>
+<li>Closed form: no extra kernel evaluation or refit; cost is one golden-section search over the same <code>[L, U]</code> bracket used by LOO.</li>
+<li>Denominator <code>(1 - trH/n)^2</code> is floored at <code>1e-8</code> to remain finite in the interpolation limit <code>lambda -&gt; 0</code>.</li>
+<li>
+<code>lambda.method = "loo"</code> remains the default. <code>"loo"</code> and <code>"cv"</code> paths are byte-identical to v0.0.0.9043 on a fixed-seed problem.</li>
+</ul><div class="section level4">
+<h4 id="out-of-scope-phase-0-0-0-9044">Out of scope (Phase 2/3)<a class="anchor" aria-label="anchor" href="#out-of-scope-phase-0-0-0-9044"></a></h4>
+<ul><li>ARD-kernel option (per-feature sigma).</li>
+<li>HSIC pre-screen for high-p feature selection.</li>
+<li>Autotune-dispatch routing through GCV (autotune still calls inner CV regardless of <code>lambda.method</code>).</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9043" id="roadrunner-0009043">roadrunner 0.0.0.9043<a class="anchor" aria-label="anchor" href="#roadrunner-0009043"></a></h2>
 <div class="section level3">

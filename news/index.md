@@ -1,5 +1,27 @@
 # Changelog
 
+## roadrunner 0.0.0.9044
+
+### krls() — GCV lambda selection
+
+- `krls(..., lambda.method = "gcv")` selects the ridge penalty by
+  minimising the closed-form generalised cross-validation criterion
+  (Craven & Wahba 1979) on the existing eigendecomposition of `K`.
+  Brings parity with `KRLS` v1.5-0+.
+- Closed form: no extra kernel evaluation or refit; cost is one
+  golden-section search over the same `[L, U]` bracket used by LOO.
+- Denominator `(1 - trH/n)^2` is floored at `1e-8` to remain finite in
+  the interpolation limit `lambda -> 0`.
+- `lambda.method = "loo"` remains the default. `"loo"` and `"cv"` paths
+  are byte-identical to v0.0.0.9043 on a fixed-seed problem.
+
+#### Out of scope (Phase 2/3)
+
+- ARD-kernel option (per-feature sigma).
+- HSIC pre-screen for high-p feature selection.
+- Autotune-dispatch routing through GCV (autotune still calls inner CV
+  regardless of `lambda.method`).
+
 ## roadrunner 0.0.0.9043
 
 ### krls() speedup — Phase 2 (Nystrom low-rank approximation)

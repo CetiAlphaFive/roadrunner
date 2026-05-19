@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9043</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9044</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -70,7 +70,7 @@ the original <code>(X, y)</code> scale.</p>
 <span>  U <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  tol <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  eigtrunc <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"cv"</span><span class="op">)</span>,</span>
+<span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"gcv"</span>, <span class="st">"cv"</span><span class="op">)</span>,</span>
 <span>  lambda.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nfold <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  ncross <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -88,7 +88,7 @@ the original <code>(X, y)</code> scale.</p>
 <span>  landmarks <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  landmark_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"random"</span>, <span class="st">"kmeans"</span><span class="op">)</span>,</span>
 <span>  landmark_seed <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  nystrom_eps <span class="op">=</span> <span class="fl">0.000000001</span>,</span>
+<span>  nystrom_eps <span class="op">=</span> <span class="fl">1e-09</span>,</span>
 <span>  trace <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nthreads <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  print.level <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -194,7 +194,10 @@ the solve.  <code>NULL</code> (default) keeps all eigenvalues.</p></dd>
 <dt id="arg-lambda-method">lambda.method<a class="anchor" aria-label="anchor" href="#arg-lambda-method"></a></dt>
 <dd><p>Lambda-selection rule. <code>"loo"</code> (default) uses
 the closed-form leave-one-out golden-section search; <code>"cv"</code>
-uses K-fold CV over a grid (<code>nfold &gt; 0</code> required).</p></dd>
+uses K-fold CV over a grid (<code>nfold &gt; 0</code> required). <code>"gcv"</code> uses
+the closed-form generalised cross-validation criterion (Craven &amp;
+Wahba 1979) using the same eigendecomposition; recommended when
+<code>n</code> is large or LOO behaves unstably.</p></dd>
 
 
 <dt id="arg-lambda-grid">lambda.grid<a class="anchor" aria-label="anchor" href="#arg-lambda-grid"></a></dt>
