@@ -79,7 +79,15 @@ or logical vector restricting rows of \code{data} used for the fit.}
 \item{sigma}{Gaussian-kernel bandwidth.  Default \code{NULL}, which sets
 sigma via the geomean_p formula: \code{sqrt(median(d2) * p)} where \code{d2}
 are pairwise squared Euclidean distances on the standardised
-predictors and \code{p = ncol(X)}.  Must be a positive scalar if supplied.}
+predictors and \code{p = ncol(X)}. May be supplied as a strictly positive
+scalar OR (since v0.0.0.9045) as a length-\code{ncol(X)} vector of
+per-feature lengthscales (manual ARD): the Gaussian kernel becomes
+\code{K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k)}. Vector form is
+incompatible with \code{autotune = TRUE} and with \code{approx = "nystrom"}
+in this version; both error at fit time. For per-feature \code{sigma},
+lengthscales apply on the column-standardised predictor matrix
+used internally (a value of \code{1} corresponds to one unit of
+\code{sd(X[, k])}).}
 
 \item{lambda}{Optional ridge penalty.  If \code{NULL} (default), selected
 by golden-section search on the LOO error.}

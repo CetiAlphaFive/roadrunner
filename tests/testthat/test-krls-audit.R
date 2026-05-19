@@ -238,7 +238,8 @@ test_that("avg-deriv variance row-sum identity matches explicit-L at <= 1e-12 (A
   Xs <- scale(X, center = TRUE, scale = apply(X, 2L, sd))
   Xs <- matrix(Xs, n, p)
   sigma <- 2; lambda <- 0.4
-  K  <- roadrunner:::krls_kernel_cpp(Xs, sigma)
+  sigma_vec <- rep(sigma, p)              # Phase 2a: engine takes length-p
+  K  <- roadrunner:::krls_kernel_cpp(Xs, sigma_vec)
   eo <- roadrunner:::krls_eig_cpp(K)
   d  <- as.numeric(eo$values); V <- eo$vectors
   Vc <- V %*% diag(1 / (d + lambda)^2) %*% t(V)
@@ -252,7 +253,7 @@ test_that("avg-deriv variance row-sum identity matches explicit-L at <= 1e-12 (A
   ref_var <- (4 / sigma^2 / n^2) * sigma2 *
              sum(t(L_full) %*% Vc %*% L_full)
 
-  cpp_var <- roadrunner:::krls_avg_deriv_var_cpp(Xs, K, V, d, sigma,
+  cpp_var <- roadrunner:::krls_avg_deriv_var_cpp(Xs, K, V, d, sigma_vec,
                                                   lambda, sigma2)[1L]
   expect_equal(cpp_var, ref_var, tolerance = 1e-12)
 })
@@ -455,12 +456,13 @@ test_that("avg-deriv variance row-sum identity holds multi-cell (AUDIT-006)", {
     set.seed(seed)
     X <- matrix(rnorm(n * p), n, p)
     Xs <- scale(X); Xs <- matrix(Xs, n, p)
-    K  <- roadrunner:::krls_kernel_cpp(Xs, sigma)
+    sigma_vec <- rep(sigma, p)            # Phase 2a: engine takes length-p
+    K  <- roadrunner:::krls_kernel_cpp(Xs, sigma_vec)
     eo <- roadrunner:::krls_eig_cpp(K)
     d  <- as.numeric(eo$values); V <- eo$vectors
     Vc <- V %*% diag(1 / (d + lambda)^2) %*% t(V)
     sigma2 <- 1.0
-    cpp_var <- roadrunner:::krls_avg_deriv_var_cpp(Xs, K, V, d, sigma,
+    cpp_var <- roadrunner:::krls_avg_deriv_var_cpp(Xs, K, V, d, sigma_vec,
                                                     lambda, sigma2)
     refs <- numeric(p)
     for (k in seq_len(p)) {
@@ -494,10 +496,11 @@ test_that("kernel worker is race-free under repeated nt=8 fits (AUDIT-007)", {
   X <- matrix(rnorm(n * p), n, p)
   Xs <- scale(X); Xs <- matrix(Xs, n, p)
   RcppParallel::setThreadOptions(numThreads = 1L)
-  K_ref <- roadrunner:::krls_kernel_cpp(Xs, p)
+  sigma_vec_p <- rep(as.numeric(p), p)   # Phase 2a: engine takes length-p
+  K_ref <- roadrunner:::krls_kernel_cpp(Xs, sigma_vec_p)
   RcppParallel::setThreadOptions(numThreads = 8L)
   for (rep in seq_len(20L)) {
-    K_new <- roadrunner:::krls_kernel_cpp(Xs, p)
+    K_new <- roadrunner:::krls_kernel_cpp(Xs, sigma_vec_p)
     expect_identical(K_new, K_ref)
   }
 })

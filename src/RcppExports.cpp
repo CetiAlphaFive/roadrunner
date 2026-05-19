@@ -78,27 +78,27 @@ BEGIN_RCPP
 END_RCPP
 }
 // krls_kernel_cpp
-NumericMatrix krls_kernel_cpp(const NumericMatrix& X, double sigma);
-RcppExport SEXP _roadrunner_krls_kernel_cpp(SEXP XSEXP, SEXP sigmaSEXP) {
+NumericMatrix krls_kernel_cpp(const NumericMatrix& X, const NumericVector& sigma_vec);
+RcppExport SEXP _roadrunner_krls_kernel_cpp(SEXP XSEXP, SEXP sigma_vecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const NumericMatrix& >::type X(XSEXP);
-    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_kernel_cpp(X, sigma));
+    Rcpp::traits::input_parameter< const NumericVector& >::type sigma_vec(sigma_vecSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_kernel_cpp(X, sigma_vec));
     return rcpp_result_gen;
 END_RCPP
 }
 // krls_kernel_pred_cpp
-NumericMatrix krls_kernel_pred_cpp(const NumericMatrix& Xnew, const NumericMatrix& Xtrain, double sigma);
-RcppExport SEXP _roadrunner_krls_kernel_pred_cpp(SEXP XnewSEXP, SEXP XtrainSEXP, SEXP sigmaSEXP) {
+NumericMatrix krls_kernel_pred_cpp(const NumericMatrix& Xnew, const NumericMatrix& Xtrain, const NumericVector& sigma_vec);
+RcppExport SEXP _roadrunner_krls_kernel_pred_cpp(SEXP XnewSEXP, SEXP XtrainSEXP, SEXP sigma_vecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const NumericMatrix& >::type Xnew(XnewSEXP);
     Rcpp::traits::input_parameter< const NumericMatrix& >::type Xtrain(XtrainSEXP);
-    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_kernel_pred_cpp(Xnew, Xtrain, sigma));
+    Rcpp::traits::input_parameter< const NumericVector& >::type sigma_vec(sigma_vecSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_kernel_pred_cpp(Xnew, Xtrain, sigma_vec));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -159,22 +159,22 @@ BEGIN_RCPP
 END_RCPP
 }
 // krls_deriv_cpp
-arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K, const arma::vec& c, double sigma);
-RcppExport SEXP _roadrunner_krls_deriv_cpp(SEXP XSEXP, SEXP KSEXP, SEXP cSEXP, SEXP sigmaSEXP) {
+arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K, const arma::vec& c, const arma::vec& sigma_vec);
+RcppExport SEXP _roadrunner_krls_deriv_cpp(SEXP XSEXP, SEXP KSEXP, SEXP cSEXP, SEXP sigma_vecSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type K(KSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type c(cSEXP);
-    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_deriv_cpp(X, K, c, sigma));
+    Rcpp::traits::input_parameter< const arma::vec& >::type sigma_vec(sigma_vecSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_deriv_cpp(X, K, c, sigma_vec));
     return rcpp_result_gen;
 END_RCPP
 }
 // krls_avg_deriv_var_cpp
-arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K, const arma::mat& V, const arma::vec& d, double sigma, double lambda, double sigma2);
-RcppExport SEXP _roadrunner_krls_avg_deriv_var_cpp(SEXP XSEXP, SEXP KSEXP, SEXP VSEXP, SEXP dSEXP, SEXP sigmaSEXP, SEXP lambdaSEXP, SEXP sigma2SEXP) {
+arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K, const arma::mat& V, const arma::vec& d, const arma::vec& sigma_vec, double lambda, double sigma2);
+RcppExport SEXP _roadrunner_krls_avg_deriv_var_cpp(SEXP XSEXP, SEXP KSEXP, SEXP VSEXP, SEXP dSEXP, SEXP sigma_vecSEXP, SEXP lambdaSEXP, SEXP sigma2SEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -182,10 +182,10 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type K(KSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type V(VSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type d(dSEXP);
-    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type sigma_vec(sigma_vecSEXP);
     Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
     Rcpp::traits::input_parameter< double >::type sigma2(sigma2SEXP);
-    rcpp_result_gen = Rcpp::wrap(krls_avg_deriv_var_cpp(X, K, V, d, sigma, lambda, sigma2));
+    rcpp_result_gen = Rcpp::wrap(krls_avg_deriv_var_cpp(X, K, V, d, sigma_vec, lambda, sigma2));
     return rcpp_result_gen;
 END_RCPP
 }

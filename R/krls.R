@@ -87,7 +87,15 @@
 #' @param sigma Gaussian-kernel bandwidth.  Default `NULL`, which sets
 #'   sigma via the geomean_p formula: `sqrt(median(d2) * p)` where `d2`
 #'   are pairwise squared Euclidean distances on the standardised
-#'   predictors and `p = ncol(X)`.  Must be a positive scalar if supplied.
+#'   predictors and `p = ncol(X)`. May be supplied as a strictly positive
+#'   scalar OR (since v0.0.0.9045) as a length-`ncol(X)` vector of
+#'   per-feature lengthscales (manual ARD): the Gaussian kernel becomes
+#'   `K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k)`. Vector form is
+#'   incompatible with `autotune = TRUE` and with `approx = "nystrom"`
+#'   in this version; both error at fit time. For per-feature `sigma`,
+#'   lengthscales apply on the column-standardised predictor matrix
+#'   used internally (a value of `1` corresponds to one unit of
+#'   `sd(X[, k])`).
 #' @param lambda Optional ridge penalty.  If `NULL` (default), selected
 #'   by golden-section search on the LOO error.
 #' @param derivative Logical.  If `TRUE` (default), compute pointwise
@@ -602,8 +610,30 @@ krls.default <- function(X, y,
   ## compute sigma_anchor.
   sigma_user_null     <- is.null(sigma)
   autotune_grid_null  <- is.null(autotune.grid)
+  ## Phase 2a (v0.0.0.9045): sigma accepts NULL, a positive scalar, OR a
+  ## length-ncol(X) positive vector (manual ARD lengthscales). Vector
+  ## form must be finite and strictly positive elementwise.
   if (!is.null(sigma)) {
-    stopifnot(is.numeric(sigma), length(sigma) == 1, sigma > 0)
+    if (!is.numeric(sigma))
+      stop("krls: sigma must be NULL, a positive scalar, or a length-",
+           "ncol(X) positive vector (got non-numeric).", call. = FALSE)
+    if (anyNA(sigma) || any(!is.finite(sigma)))
+      stop("krls: sigma must be finite (no NA / NaN / Inf).", call. = FALSE)
+    if (any(sigma <= 0))
+      stop("krls: sigma must be strictly positive (every element > 0).",
+           call. = FALSE)
+    if (length(sigma) != 1L && length(sigma) != ncol(X))
+      stop("krls: sigma must have length 1 or ncol(X) (got length ",
+           length(sigma), ", ncol(X) = ", ncol(X), ").", call. = FALSE)
+    ## Reject ARD + autotune up front (Phase 2a scope).
+    if (length(sigma) > 1L && isTRUE(autotune))
+      stop("krls: autotune over per-feature sigma (ARD) is not supported in ",
+           "this version; pass a scalar sigma or set autotune = FALSE.",
+           call. = FALSE)
+    ## Reject ARD + Nystrom up front (Phase 2a scope).
+    if (length(sigma) > 1L && identical(approx, "nystrom"))
+      stop("krls: approx = 'nystrom' does not yet support per-feature sigma ",
+           "(ARD); use approx = 'exact'.", call. = FALSE)
   }
   if (!autotune_grid_null) {
     stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
@@ -666,6 +696,29 @@ krls.default <- function(X, y,
     sigma <- sigma_anchor
   }
   ## (non-NULL sigma already validated above)
+
+  ## --- Phase 2a: broadcast sigma to length-p sigma_vec --------------
+  ## sigma may be NULL-resolved scalar, user scalar, or user length-p
+  ## vector at this point. Always materialise length-p sigma_vec for the
+  ## C++ engine. sigma_kind == "scalar" iff all elements are equal
+  ## (bit-exact); the v0.0.0.9044 FP path is preserved by the kernel
+  ## worker's constant-vector fast branch.
+  if (length(sigma) == 1L) {
+    sigma_vec    <- rep(as.numeric(sigma), d)
+    sigma_kind   <- "scalar"
+    sigma_scalar <- as.numeric(sigma)[1L]
+  } else {
+    sigma_vec    <- as.numeric(sigma)
+    ## Tolerate user passing a "scalar broadcast as length-p" (all-equal).
+    if (all(sigma_vec == sigma_vec[1L])) {
+      sigma_kind   <- "scalar"
+      sigma_scalar <- sigma_vec[1L]
+    } else {
+      sigma_kind   <- "ard"
+      sigma_scalar <- NA_real_
+    }
+  }
+  names(sigma_vec) <- colnames(X)
 
   ## --- autotune grid default assignment (Fix 4) --------------------
   if (isTRUE(autotune)) {
@@ -998,9 +1051,10 @@ krls.default <- function(X, y,
           nthreads_used_final  <- as.integer(inner$nthreads_used)
         } else {
           for (si in seq_along(autotune.grid)) {
-            sig_s <- autotune.grid[si]
-            K_tr <- krls_kernel_cpp(Xs_tr, sig_s)
-            K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s)
+            sig_s     <- autotune.grid[si]
+            sig_s_vec <- rep(as.numeric(sig_s), ncol(Xs_tr))
+            K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec)
+            K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec)
             if (!is.null(sqw)) {
               sqw_tr <- sqrt(w_norm[train_i])
               K_tr_use  <- K_tr * tcrossprod(sqw_tr)
@@ -1051,6 +1105,13 @@ krls.default <- function(X, y,
     thresh_at <- mean_mse_at[best_si] + se_at[best_si]
     cand_at   <- which(mean_mse_at <= thresh_at)
     sigma <- max(autotune.grid[cand_at])   # largest sigma in the 1-SE band
+    ## Refresh broadcast sigma_vec for the post-autotune fit. Autotune
+    ## sweeps a scalar grid (ARD rejected at validation), so winner is
+    ## scalar and sigma_kind stays "scalar".
+    sigma_vec    <- rep(as.numeric(sigma), d)
+    names(sigma_vec) <- colnames(X)
+    sigma_kind   <- "scalar"
+    sigma_scalar <- as.numeric(sigma)
     autotune_info <- list(
       grid              = autotune.grid,
       mse               = mean_mse_at,
@@ -1142,7 +1203,7 @@ krls.default <- function(X, y,
   }
 
   ## --- kernel + eigendecomposition ---------------------------------
-  K <- krls_kernel_cpp(Xs, sigma)
+  K <- krls_kernel_cpp(Xs, sigma_vec)
   if (!is.null(sqw)) {
     # Twist the kernel: K_w = D K D
     K_w <- K * tcrossprod(sqw)
@@ -1292,8 +1353,8 @@ krls.default <- function(X, y,
           ys_te <- ys[test_i]
           # Fold-local kernel + eigendecomp (the shared piece across
           # all lambda candidates per fold).
-          K_tr <- krls_kernel_cpp(Xs_tr, sigma)
-          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma)
+          K_tr <- krls_kernel_cpp(Xs_tr, sigma_vec)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma_vec)
           if (!is.null(w_norm)) {
             sqw_tr <- sqrt(w_norm[train_i])
             K_tr_use <- K_tr * tcrossprod(sqw_tr)
@@ -1402,7 +1463,7 @@ krls.default <- function(X, y,
   ## --- derivatives --------------------------------------------------
   derivmat <- avgderiv <- varavgderivmat <- NULL
   if (isTRUE(derivative)) {
-    derivmat_s <- krls_deriv_cpp(Xs, K, coeffs, sigma)
+    derivmat_s <- krls_deriv_cpp(Xs, K, coeffs, sigma_vec)
     if (!is.null(sqw)) {
       avgderiv_s <- matrix(
         colSums(derivmat_s * w_norm) / sum(w_norm),
@@ -1410,7 +1471,7 @@ krls.default <- function(X, y,
     } else {
       avgderiv_s <- matrix(colMeans(derivmat_s), nrow = 1L)
     }
-    varavg_s   <- krls_avg_deriv_var_cpp(Xs, K, V, dvals, sigma, lambda, sigma2)
+    varavg_s   <- krls_avg_deriv_var_cpp(Xs, K, V, dvals, sigma_vec, lambda, sigma2)
     colnames(derivmat_s)  <- colnames(X)
     colnames(avgderiv_s)  <- colnames(X)
     scale_vec <- as.numeric(y.init.sd) / X.init.sd
@@ -1469,7 +1530,9 @@ krls.default <- function(X, y,
 
   out <- list(K = K, coeffs = coeffs, Looe = Looe, fitted = yfitted,
               X = X.init, y = y.init,
-              sigma = sigma, lambda = lambda, R2 = R2,
+              sigma = sigma_scalar, lambda = lambda, R2 = R2,
+              sigma_vec  = sigma_vec,
+              sigma_kind = sigma_kind,
               derivatives = derivmat,
               avgderivatives = avgderiv,
               var.avgderivatives = varavgderivmat,
@@ -1500,7 +1563,12 @@ krls.default <- function(X, y,
   n_boot <- as.integer(n.boot)
   if (is.na(n_boot) || n_boot < 0L) n_boot <- 0L
   if (n_boot > 0L) {
-    sig_b   <- out$sigma
+    ## Phase 2a (v0.0.0.9045): pass the per-feature sigma_vec to each
+    ## replicate refit. When the central fit is scalar, sigma_vec is
+    ## bit-exact constant and the inner krls.default() will treat it
+    ## as scalar via the constant-vector fast path; ARD fits carry their
+    ## per-feature lengthscales verbatim into every replicate.
+    sig_b   <- out$sigma_vec
     lam_b   <- out$lambda
     n_full  <- nrow(X)
     if (!is.null(seed.cv)) {
@@ -1546,11 +1614,12 @@ krls.default <- function(X, y,
       #   - y (for mean/sd),
       #   - coeffs, sigma, lambda.
       boot_reps[[b]] <- list(
-        X      = f_b$X,
-        y      = f_b$y,
-        coeffs = f_b$coeffs,
-        sigma  = f_b$sigma,
-        lambda = f_b$lambda
+        X         = f_b$X,
+        y         = f_b$y,
+        coeffs    = f_b$coeffs,
+        sigma     = f_b$sigma,
+        sigma_vec = f_b$sigma_vec,
+        lambda    = f_b$lambda
       )
     }
     out$boot <- list(replicates = boot_reps, n.boot = n_boot,
@@ -1726,7 +1795,15 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   Xn     <- scale(xnew, center = Xmeans, scale = Xsd)
   Xn     <- matrix(Xn, nrow(xnew), ncol(xnew))
 
-  Knew   <- krls_kernel_pred_cpp(Xn, Xs, object$sigma)
+  ## Phase 2a (v0.0.0.9045): predict uses sigma_vec (length p). Legacy
+  ## fits (.rds saved under <= v0.0.0.9044) carry only scalar `sigma`;
+  ## reconstruct sigma_vec by broadcasting.
+  pred_sigma_vec <- if (!is.null(object$sigma_vec)) {
+    object$sigma_vec
+  } else {
+    rep(as.numeric(object$sigma), ncol(object$X))
+  }
+  Knew   <- krls_kernel_pred_cpp(Xn, Xs, pred_sigma_vec)
   yhat   <- Knew %*% object$coeffs
 
   vcov.fit <- se.fit.out <- NULL
@@ -1762,7 +1839,12 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
         Xs_b <- matrix(Xs_b, nrow(Rb$X), ncol(Rb$X))
         Xn_b <- scale(xnew, center = Xmeans_b, scale = Xsd_b)
         Xn_b <- matrix(Xn_b, nrow(xnew), ncol(xnew))
-        Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, Rb$sigma)
+        sig_b_vec <- if (!is.null(Rb$sigma_vec)) {
+          Rb$sigma_vec
+        } else {
+          rep(as.numeric(Rb$sigma), ncol(Rb$X))
+        }
+        Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, sig_b_vec)
         yhat_b <- as.numeric(Kn_b %*% Rb$coeffs)
         sd_yb  <- as.numeric(apply(Rb$y, 2L, sd))
         yhat_b <- yhat_b * sd_yb + mean(Rb$y)
@@ -2028,9 +2110,19 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
 print.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
   cat("  n =", nrow(x$X), "  p =", ncol(x$X), "\n")
-  cat("  sigma =", signif(x$sigma, 4),
-      "  lambda =", signif(x$lambda, 4),
-      "  R^2 =", signif(x$R2, 4), "\n")
+  if (identical(x$sigma_kind, "ard") && !is.null(x$sigma_vec)) {
+    sv <- as.numeric(x$sigma_vec)
+    cat("  sigma_vec: median=", signif(stats::median(sv), 4),
+        " min=", signif(min(sv), 4),
+        " max=", signif(max(sv), 4),
+        " (ARD, length ", length(sv), ")\n",
+        "  lambda =", signif(x$lambda, 4),
+        "  R^2 =", signif(x$R2, 4), "\n", sep = "")
+  } else {
+    cat("  sigma =", signif(x$sigma, 4),
+        "  lambda =", signif(x$lambda, 4),
+        "  R^2 =", signif(x$R2, 4), "\n")
+  }
   if (!is.null(x$weights)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
   }
@@ -2067,6 +2159,10 @@ summary.krls_rr <- function(object, ...) {
   out$autotune <- object$autotune
   out$cv <- object$cv
   out$boot_n <- if (!is.null(object$boot)) object$boot$n.boot else NULL
+  ## Phase 2a: stash sigma_vec when ARD so the printer can display
+  ## min/median/max and (when p > 6) top/bottom-3 features by sigma.
+  out$sigma_kind <- object$sigma_kind
+  out$sigma_vec  <- object$sigma_vec
   if (!is.null(object$avgderivatives)) {
     se <- sqrt(as.numeric(object$var.avgderivatives))
     avg <- as.numeric(object$avgderivatives)
@@ -2090,11 +2186,35 @@ summary.krls_rr <- function(object, ...) {
 print.summary.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
   ci <- x$call_info
-  cat(sprintf("  n = %d  p = %d  sigma = %s  lambda = %s  R^2 = %s\n",
-              as.integer(ci["n"]), as.integer(ci["p"]),
-              signif(ci["sigma"], 4),
-              signif(ci["lambda"], 4),
-              signif(ci["R2"], 4)))
+  if (identical(x$sigma_kind, "ard") && !is.null(x$sigma_vec)) {
+    sv <- as.numeric(x$sigma_vec)
+    cat(sprintf("  n = %d  p = %d  lambda = %s  R^2 = %s\n",
+                as.integer(ci["n"]), as.integer(ci["p"]),
+                signif(ci["lambda"], 4),
+                signif(ci["R2"], 4)))
+    cat(sprintf("  sigma_vec (ARD, length %d): min = %s  median = %s  max = %s\n",
+                length(sv),
+                signif(min(sv), 4),
+                signif(stats::median(sv), 4),
+                signif(max(sv), 4)))
+    if (length(sv) > 6L) {
+      ord_lo <- order(sv)[1:3]
+      ord_hi <- order(sv, decreasing = TRUE)[1:3]
+      nm <- if (!is.null(names(sv))) names(sv) else paste0("x", seq_along(sv))
+      cat("  bottom-3: ",
+          paste(sprintf("%s=%s", nm[ord_lo], signif(sv[ord_lo], 4)),
+                collapse = ", "), "\n")
+      cat("  top-3:    ",
+          paste(sprintf("%s=%s", nm[ord_hi], signif(sv[ord_hi], 4)),
+                collapse = ", "), "\n")
+    }
+  } else {
+    cat(sprintf("  n = %d  p = %d  sigma = %s  lambda = %s  R^2 = %s\n",
+                as.integer(ci["n"]), as.integer(ci["p"]),
+                signif(ci["sigma"], 4),
+                signif(ci["lambda"], 4),
+                signif(ci["R2"], 4)))
+  }
   if (isTRUE(x$weighted)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
   }

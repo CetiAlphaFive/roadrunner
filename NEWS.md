@@ -1,3 +1,26 @@
+# roadrunner 0.0.0.9045
+
+## krls() — per-feature Gaussian bandwidth (manual ARD)
+
+* `krls(..., sigma = c(s1, ..., sp))` now accepts a length-`ncol(X)`
+  vector of strictly positive lengthscales. Gaussian kernel becomes
+  K_ij = exp(-sum_k (x_ik - x_jk)^2 / sigma_k).
+* Scalar sigma path is byte-identical to v0.0.0.9044 fits (FP determinism
+  preserved via constant-vector fast detection in kernel worker).
+* Marginal effects, vcov of average effects, and predict() all scale
+  per-feature by 2/sigma_k and 4/sigma_k^2 respectively.
+* `autotune = TRUE` + vector sigma errors at fit time; auto-selection of
+  ARD lengthscales deferred to Phase 2b/2c.
+* `approx = "nystrom"` + vector sigma errors at fit time; ARD + Nystrom
+  is P5 stretch goal.
+
+### Out of scope (P2b/P2c/P3)
+
+* Cheap two-pass ARD selector.
+* Gradient-based ARD optimisation.
+* HSIC pre-screen.
+* Autotune sweep over ARD vectors.
+
 # roadrunner 0.0.0.9044
 
 ## krls() — GCV lambda selection

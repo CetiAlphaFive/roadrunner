@@ -13,12 +13,12 @@ mars_backward_only_cpp <- function(x_in, y_in, dirs_in, cuts_in, penalty, nprune
     .Call(`_roadrunner_mars_backward_only_cpp`, x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in, R_in, Qty_in)
 }
 
-krls_kernel_cpp <- function(X, sigma) {
-    .Call(`_roadrunner_krls_kernel_cpp`, X, sigma)
+krls_kernel_cpp <- function(X, sigma_vec) {
+    .Call(`_roadrunner_krls_kernel_cpp`, X, sigma_vec)
 }
 
-krls_kernel_pred_cpp <- function(Xnew, Xtrain, sigma) {
-    .Call(`_roadrunner_krls_kernel_pred_cpp`, Xnew, Xtrain, sigma)
+krls_kernel_pred_cpp <- function(Xnew, Xtrain, sigma_vec) {
+    .Call(`_roadrunner_krls_kernel_pred_cpp`, Xnew, Xtrain, sigma_vec)
 }
 
 krls_eig_cpp <- function(K) {
@@ -37,12 +37,12 @@ krls_gcv_loss_cpp <- function(d, Vty, yty, n_y, lambda) {
     .Call(`_roadrunner_krls_gcv_loss_cpp`, d, Vty, yty, n_y, lambda)
 }
 
-krls_deriv_cpp <- function(X, K, c, sigma) {
-    .Call(`_roadrunner_krls_deriv_cpp`, X, K, c, sigma)
+krls_deriv_cpp <- function(X, K, c, sigma_vec) {
+    .Call(`_roadrunner_krls_deriv_cpp`, X, K, c, sigma_vec)
 }
 
-krls_avg_deriv_var_cpp <- function(X, K, V, d, sigma, lambda, sigma2) {
-    .Call(`_roadrunner_krls_avg_deriv_var_cpp`, X, K, V, d, sigma, lambda, sigma2)
+krls_avg_deriv_var_cpp <- function(X, K, V, d, sigma_vec, lambda, sigma2) {
+    .Call(`_roadrunner_krls_avg_deriv_var_cpp`, X, K, V, d, sigma_vec, lambda, sigma2)
 }
 
 krls_vsq_cpp <- function(V) {
