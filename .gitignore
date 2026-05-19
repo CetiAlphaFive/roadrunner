@@ -19,3 +19,6 @@ CLAUDE.md
 cran-comments.md
 .claude/
 coarse-output/
+
+# Internal phase plans (not for public repo)
+inst/plans/
