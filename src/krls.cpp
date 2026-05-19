@@ -34,6 +34,7 @@
 
 #include <RcppArmadillo.h>
 #include <RcppParallel.h>
+#include <tbb/task_arena.h>
 #include <cmath>
 #include <cstddef>
 
@@ -366,6 +367,40 @@ static void krls_one_sigma(const arma::mat& D_tr, const arma::mat& D_te,
   lam_out = lam;
 }
 
+// Worker: each task is one sigma cell. Writes into pre-sized output
+// buffers indexed by the sigma's slot in sigma_grid. No cross-thread
+// shared mutable state inside krls_one_sigma -- all temporaries are
+// stack-local arma::mat / arma::vec.
+struct KrlsSigmaWorker : public RcppParallel::Worker {
+  const arma::mat& D_tr;
+  const arma::mat& D_te;
+  const arma::vec& y_tr;
+  const arma::vec& y_te;
+  const arma::vec& sigma_grid;
+  double lam_tol, L0, L_step;
+  arma::vec& mse;
+  arma::vec& lam;
+
+  KrlsSigmaWorker(const arma::mat& D_tr_, const arma::mat& D_te_,
+                  const arma::vec& y_tr_, const arma::vec& y_te_,
+                  const arma::vec& sigma_grid_,
+                  double lam_tol_, double L0_, double L_step_,
+                  arma::vec& mse_, arma::vec& lam_)
+    : D_tr(D_tr_), D_te(D_te_), y_tr(y_tr_), y_te(y_te_),
+      sigma_grid(sigma_grid_), lam_tol(lam_tol_), L0(L0_), L_step(L_step_),
+      mse(mse_), lam(lam_) {}
+
+  void operator()(std::size_t begin, std::size_t end) {
+    for (std::size_t i = begin; i < end; ++i) {
+      double m = 0.0, l = 0.0;
+      krls_one_sigma(D_tr, D_te, y_tr, y_te, sigma_grid(i),
+                     lam_tol, L0, L_step, m, l);
+      mse(i) = m;
+      lam(i) = l;
+    }
+  }
+};
+
 // [[Rcpp::export]]
 Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
                                    const arma::vec& y_tr, const arma::vec& y_te,
@@ -380,14 +415,21 @@ Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
   double L0      = Rcpp::as<double>(lambda_args["L0"]);
   double L_step  = Rcpp::as<double>(lambda_args["L_step"]);
 
-  // Sequential loop. Task 4 swaps in parallelFor.
-  for (arma::uword i = 0; i < nsigma; ++i) {
-    double m = 0.0, l = 0.0;
-    krls_one_sigma(D_tr, D_te, y_tr, y_te, sigma_grid(i),
-                   lam_tol, L0, L_step, m, l);
-    mse(i) = m;
-    lam(i) = l;
-  }
+  // Clamp worker count: at least 1, no more than nsigma (no idle workers).
+  int n_workers = nthreads;
+  if (n_workers < 1) n_workers = 1;
+  if ((arma::uword) n_workers > nsigma) n_workers = (int) nsigma;
+
+  KrlsSigmaWorker worker(D_tr, D_te, y_tr, y_te, sigma_grid,
+                         lam_tol, L0, L_step, mse, lam);
+  // Constrain the parallel_for to n_workers via a local task_arena so we
+  // don't mutate process-global TBB thread state (the R-side wrapper for
+  // ares() also calls RcppParallel::setThreadOptions, and we don't want
+  // to clobber it).
+  tbb::task_arena arena(n_workers);
+  arena.execute([&] {
+    RcppParallel::parallelFor(0, nsigma, worker, /*grainSize=*/1);
+  });
 
   // Wrap as plain NumericVector (no dim attribute) so tests comparing
   // against R-side numeric vectors pass without dim mismatches.
@@ -400,6 +442,6 @@ Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
   return Rcpp::List::create(
     Rcpp::Named("mse_per_sigma")    = mse_out,
     Rcpp::Named("lambda_per_sigma") = lam_out,
-    Rcpp::Named("nthreads_used")    = 1
+    Rcpp::Named("nthreads_used")    = n_workers
   );
 }

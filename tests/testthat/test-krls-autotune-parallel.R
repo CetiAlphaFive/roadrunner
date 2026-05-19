@@ -104,3 +104,53 @@ test_that("INNER-2: sigma_grid length 1 degenerate path works", {
   expect_true(is.finite(out$mse_per_sigma))
   expect_true(out$lambda_per_sigma > 0)
 })
+
+test_that("INNER-3: nthreads > nsigma clamps without spawning extra workers", {
+  set.seed(5L)
+  n_tr <- 30L; n_te <- 10L; p <- 2L
+  X_tr <- matrix(rnorm(n_tr * p), n_tr, p)
+  X_te <- matrix(rnorm(n_te * p), n_te, p)
+  y_tr <- rnorm(n_tr); y_te <- rnorm(n_te)
+  D_tr <- roadrunner:::krls_pairwise_sqdist_cpp(X_tr, X_tr)
+  D_te <- roadrunner:::krls_pairwise_sqdist_cpp(X_te, X_tr)
+  sg   <- c(2, 4, 8)
+  out1 <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, sg,
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 32L
+  )
+  out2 <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, sg,
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 1L
+  )
+  expect_equal(out1$mse_per_sigma, out2$mse_per_sigma, tolerance = 0)
+  expect_equal(out1$lambda_per_sigma, out2$lambda_per_sigma, tolerance = 0)
+})
+
+test_that("INNER-EQUIV: nthreads=1 vs nthreads=4 byte-identical on inner_cpp", {
+  set.seed(6L)
+  n_tr <- 80L; n_te <- 30L; p <- 4L
+  X_tr <- matrix(rnorm(n_tr * p), n_tr, p)
+  X_te <- matrix(rnorm(n_te * p), n_te, p)
+  y_tr <- rnorm(n_tr); y_te <- rnorm(n_te)
+  D_tr <- roadrunner:::krls_pairwise_sqdist_cpp(X_tr, X_tr)
+  D_te <- roadrunner:::krls_pairwise_sqdist_cpp(X_te, X_tr)
+  sg   <- c(1, 2, 4, 8, 16, 32)
+  o1 <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, sg,
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 1L
+  )
+  o4 <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, sg,
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 4L
+  )
+  expect_identical(o1$mse_per_sigma, o4$mse_per_sigma)
+  expect_identical(o1$lambda_per_sigma, o4$lambda_per_sigma)
+})
