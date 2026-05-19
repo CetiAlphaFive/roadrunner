@@ -34,7 +34,6 @@
 
 #include <RcppArmadillo.h>
 #include <RcppParallel.h>
-#include <tbb/task_arena.h>
 #include <cmath>
 #include <cstddef>
 
@@ -422,14 +421,11 @@ Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
 
   KrlsSigmaWorker worker(D_tr, D_te, y_tr, y_te, sigma_grid,
                          lam_tol, L0, L_step, mse, lam);
-  // Constrain the parallel_for to n_workers via a local task_arena so we
-  // don't mutate process-global TBB thread state (the R-side wrapper for
-  // ares() also calls RcppParallel::setThreadOptions, and we don't want
-  // to clobber it).
-  tbb::task_arena arena(n_workers);
-  arena.execute([&] {
-    RcppParallel::parallelFor(0, nsigma, worker, /*grainSize=*/1);
-  });
+  // Constrain the parallel_for to n_workers by passing numThreads directly
+  // (mirrors the Phase 2 Nystrom inner). Avoids tbb::task_arena, which
+  // depends on TBB symbols not shipped by Rtools45 on Windows.
+  RcppParallel::parallelFor(0, nsigma, worker, /*grainSize=*/1,
+                            /*numThreads=*/n_workers);
 
   // Wrap as plain NumericVector (no dim attribute) so tests comparing
   // against R-side numeric vectors pass without dim mismatches.
@@ -674,9 +670,9 @@ Rcpp::NumericVector krls_nystrom_predict_cpp(const arma::mat& X_new,
 // per-fold lambda choice (and downstream alpha + MSE) lines up with what the
 // non-autotune path would emit at the same fold partition.
 //
-// Threading: parallelFor receives numThreads directly (per Phase 1 lesson —
-// do NOT wrap in tbb::task_arena here; that's the autotune-level inner's
-// concern). Worker count clamped to [1, nsigma].
+// Threading: parallelFor receives numThreads directly (no tbb::task_arena —
+// Rtools45 on Windows does not ship the task_arena_base symbols). Worker
+// count clamped to [1, nsigma].
 // ---------------------------------------------------------------------------
 
 struct KrlsNystromSigmaWorker : public RcppParallel::Worker {

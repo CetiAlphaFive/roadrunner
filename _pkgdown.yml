@@ -17,6 +17,7 @@ reference:
   contents:
   - krls
   - plot.krls_rr
+  - get_landmarks
 - title: "Package"
   contents:
   - roadrunner-package
