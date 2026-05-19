@@ -43,6 +43,10 @@ krls(X, ...)
   landmark_method = c("random", "kmeans"),
   landmark_seed = NULL,
   nystrom_eps = 1e-09,
+  ard = c("none", "cheap"),
+  ard.alpha = 1,
+  ard.cap = 100,
+  ard.imp = c("avgderiv", "vsq"),
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -215,6 +219,28 @@ Defaults to \code{1e-9}. Stabilizes the m x m eigendecomposition when
 landmarks are near-collinear; the fit object's
 \code{nystrom_diagnostics$floored_count} reports how many eigenvalues hit
 this floor (useful for tuning m).}
+
+\item{ard}{Automatic ARD (per-feature lengthscale) selector. \code{"none"}
+(default) disables ARD selection; supply a scalar or length-\code{ncol(X)}
+vector \code{sigma} manually. \code{"cheap"} enables a two-pass orchestrator:
+pass 1 fits an isotropic anchor \code{krls()} at \code{sigma_anchor}, derives
+per-feature importance from the average marginal effects (or row-mean-
+square gradient, see \code{ard.imp}), and pass 2 refits with
+\code{s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha} clipped to
+\verb{[sigma_iso / ard.cap, sigma_iso * ard.cap]}. Incompatible with
+\code{autotune = TRUE}, \code{approx = "nystrom"}, and a user-supplied vector
+\code{sigma}; all error at fit time.}
+
+\item{ard.alpha}{Mapping exponent on the importance ratio. \code{0} reduces
+to isotropic; recommended range \verb{[0.5, 2.0]}. Default \code{1.0}.}
+
+\item{ard.cap}{Symmetric multiplicative ceiling on per-feature
+bandwidth: \code{s_k} is clipped to \verb{[sigma_iso / ard.cap, sigma_iso * ard.cap]}. Prevents eigendecomposition collapse on near-zero
+importance features. Default \code{100}.}
+
+\item{ard.imp}{Importance source for the cheap-tier mapping. \code{"avgderiv"}
+(default) uses \verb{|avgderivatives[k]|}; \code{"vsq"} uses
+\code{mean(derivatives[, k]^2)}, a slightly more robust signal.}
 
 \item{trace}{Integer. \code{0} is silent, \verb{> 0} enables progress
 diagnostics (currently: prints chosen lambda when \verb{> 1},

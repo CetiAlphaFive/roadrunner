@@ -203,6 +203,25 @@
 #'   landmarks are near-collinear; the fit object's
 #'   `nystrom_diagnostics$floored_count` reports how many eigenvalues hit
 #'   this floor (useful for tuning m).
+#' @param ard Automatic ARD (per-feature lengthscale) selector. `"none"`
+#'   (default) disables ARD selection; supply a scalar or length-`ncol(X)`
+#'   vector `sigma` manually. `"cheap"` enables a two-pass orchestrator:
+#'   pass 1 fits an isotropic anchor `krls()` at `sigma_anchor`, derives
+#'   per-feature importance from the average marginal effects (or row-mean-
+#'   square gradient, see `ard.imp`), and pass 2 refits with
+#'   `s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha` clipped to
+#'   `[sigma_iso / ard.cap, sigma_iso * ard.cap]`. Incompatible with
+#'   `autotune = TRUE`, `approx = "nystrom"`, and a user-supplied vector
+#'   `sigma`; all error at fit time.
+#' @param ard.alpha Mapping exponent on the importance ratio. `0` reduces
+#'   to isotropic; recommended range `[0.5, 2.0]`. Default `1.0`.
+#' @param ard.cap Symmetric multiplicative ceiling on per-feature
+#'   bandwidth: `s_k` is clipped to `[sigma_iso / ard.cap, sigma_iso *
+#'   ard.cap]`. Prevents eigendecomposition collapse on near-zero
+#'   importance features. Default `100`.
+#' @param ard.imp Importance source for the cheap-tier mapping. `"avgderiv"`
+#'   (default) uses `|avgderivatives[k]|`; `"vsq"` uses
+#'   `mean(derivatives[, k]^2)`, a slightly more robust signal.
 #' @param ... Currently unused (caught for forward compatibility).
 #'
 #' @details
@@ -398,6 +417,10 @@ krls.default <- function(X, y,
                          landmark_method = c("random", "kmeans"),
                          landmark_seed = NULL,
                          nystrom_eps = 1e-9,
+                         ard       = c("none", "cheap"),
+                         ard.alpha = 1.0,
+                         ard.cap   = 100,
+                         ard.imp   = c("avgderiv", "vsq"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
@@ -407,9 +430,31 @@ krls.default <- function(X, y,
   approx <- match.arg(approx)
   landmark_method <- match.arg(landmark_method)
   nystrom_eps <- .validate_nystrom_eps(nystrom_eps)
+  ard <- match.arg(ard)
+  ard.imp <- match.arg(ard.imp)
 
   if (lambda.method == "gcv" && approx == "nystrom") {
     stop("krls: lambda.method = 'gcv' is not supported with approx = 'nystrom'.")
+  }
+
+  ## --- Phase 2b: ARD composition guards (must run before pass 1) ----
+  if (ard != "none") {
+    if (isTRUE(autotune))
+      stop("krls: ard = '", ard, "' is incompatible with autotune = TRUE; ",
+           "ARD selection is performed via a two-pass orchestrator and ",
+           "cannot be combined with sigma autotune in this version.",
+           call. = FALSE)
+    if (identical(approx, "nystrom"))
+      stop("krls: ard = '", ard, "' is incompatible with approx = 'nystrom'; ",
+           "use approx = 'exact'.", call. = FALSE)
+    if (!is.numeric(ard.alpha) || length(ard.alpha) != 1L ||
+        !is.finite(ard.alpha) || ard.alpha < 0)
+      stop("krls: ard.alpha must be a single finite non-negative number ",
+           "(got ", deparse(ard.alpha), ").", call. = FALSE)
+    if (!is.numeric(ard.cap) || length(ard.cap) != 1L ||
+        !is.finite(ard.cap) || ard.cap <= 1)
+      stop("krls: ard.cap must be a single finite number > 1 ",
+           "(got ", deparse(ard.cap), ").", call. = FALSE)
   }
 
   ## --- print.level / trace harmonisation ---------------------------
@@ -634,6 +679,10 @@ krls.default <- function(X, y,
     if (length(sigma) > 1L && identical(approx, "nystrom"))
       stop("krls: approx = 'nystrom' does not yet support per-feature sigma ",
            "(ARD); use approx = 'exact'.", call. = FALSE)
+    ## Phase 2b: cheap-tier ARD owns sigma_vec; reject user-vector + cheap.
+    if (length(sigma) > 1L && ard != "none")
+      stop("krls: ard = 'cheap' selects sigma_vec internally; ",
+           "do not also pass a vector sigma.", call. = FALSE)
   }
   if (!autotune_grid_null) {
     stopifnot(is.numeric(autotune.grid), length(autotune.grid) >= 1L,
@@ -696,6 +745,60 @@ krls.default <- function(X, y,
     sigma <- sigma_anchor
   }
   ## (non-NULL sigma already validated above)
+
+  ## --- Phase 2b: cheap-tier ARD orchestrator -----------------------
+  ## When ard != "none", run a pass-1 isotropic anchor fit, derive
+  ## per-feature importances, map to sigma_vec, and replace `sigma` so
+  ## the rest of krls.default() proceeds as a vector-sigma path.
+  ## Pass 1 forces ard = "none" to prevent infinite recursion.
+  ard_state <- list(kind = "none", alpha = NA_real_, cap = NA_real_,
+                    imp = NA_character_, pass1_sigma = NA_real_,
+                    pass1_importance = NULL)
+
+  if (ard == "cheap") {
+    pass1_sig <- if (sigma_user_null) as.numeric(sigma_anchor)
+                 else as.numeric(sigma)[1L]
+
+    ## vcov = TRUE is required when derivative = TRUE; the heavy outputs
+    ## (vcov.c, vcov.fitted) are discarded immediately after imp_vec.
+    fit_iso <- tryCatch(
+      krls.default(
+        X = X.init, y = y.init,
+        sigma = pass1_sig, lambda = NULL,
+        derivative = TRUE, binary = FALSE, vcov = TRUE,
+        weights = if (!is.null(w_norm)) w_norm else NULL,
+        lambda.method = "loo",
+        autotune = FALSE,
+        varmod = "none",
+        n.boot = 0L,
+        na.action = na.action,
+        approx = "exact",
+        ard = "none",
+        trace = max(trace - 1L, 0L),
+        nthreads = nthreads
+      ),
+      error = function(e)
+        stop("krls(ard='cheap'): pass-1 isotropic fit failed: ",
+             conditionMessage(e), call. = FALSE)
+    )
+
+    imp_vec <- .krls_ard_importance(fit_iso, ard.imp)
+    sigma_vec_resolved <- .krls_ard_resolve_sigma(
+      pass1_sig, imp_vec, ard.alpha, ard.cap)
+
+    sigma <- sigma_vec_resolved
+    sigma_user_null <- FALSE
+
+    ard_state$kind             <- "cheap"
+    ard_state$alpha            <- as.numeric(ard.alpha)
+    ard_state$cap              <- as.numeric(ard.cap)
+    ard_state$imp              <- ard.imp
+    ard_state$pass1_sigma      <- pass1_sig
+    ard_state$pass1_importance <- imp_vec
+
+    ## fit_iso no longer needed; let GC reclaim its n x n kernel.
+    rm(fit_iso)
+  }
 
   ## --- Phase 2a: broadcast sigma to length-p sigma_vec --------------
   ## sigma may be NULL-resolved scalar, user scalar, or user length-p
@@ -1549,6 +1652,16 @@ krls.default <- function(X, y,
   if (!is.null(autotune_info)) out$autotune <- autotune_info
   if (!is.null(varmod_info)) out$varmod <- varmod_info
 
+  ## Phase 2b: cheap-tier ARD bookkeeping. `ard_kind == "none"` means
+  ## the fit was scalar or manual-ARD (P2a path). The pass-1 stash is
+  ## present iff the cheap orchestrator ran.
+  out$ard_kind         <- ard_state$kind
+  out$ard_alpha        <- ard_state$alpha
+  out$ard_cap          <- ard_state$cap
+  out$ard_imp          <- ard_state$imp
+  out$pass1_sigma      <- ard_state$pass1_sigma
+  out$pass1_importance <- ard_state$pass1_importance
+
   class(out) <- c("krls_rr", "krls")
 
   if (isTRUE(derivative) && isTRUE(binary)) {
@@ -2106,6 +2219,34 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   object
 }
 
+## Phase 2b: cheap-tier ARD helpers ----------------------------------
+## .krls_ard_importance() pulls a length-p importance vector off the
+## pass-1 isotropic fit, using the requested metric. Falls back to
+## avgderivatives when derivatives are unavailable (defensive; pass 1
+## forces derivative = TRUE).
+.krls_ard_importance <- function(fit_iso, imp_method) {
+  if (identical(imp_method, "vsq") && !is.null(fit_iso$derivatives)) {
+    imp <- colMeans(fit_iso$derivatives ^ 2)
+  } else {
+    imp <- abs(as.numeric(fit_iso$avgderivatives))
+  }
+  imp <- pmax(imp, .Machine$double.eps)
+  names(imp) <- colnames(fit_iso$X)
+  imp
+}
+
+## .krls_ard_resolve_sigma() maps a length-p importance vector to a
+## length-p sigma_vec, symmetrically clipped at [sigma_iso/cap,
+## sigma_iso*cap].
+.krls_ard_resolve_sigma <- function(sigma_iso, imp_vec, alpha, cap) {
+  ratio <- stats::median(imp_vec) / imp_vec
+  s_vec <- sigma_iso * (ratio ^ alpha)
+  s_vec <- pmin(s_vec, sigma_iso * cap)
+  s_vec <- pmax(s_vec, sigma_iso / cap)
+  names(s_vec) <- names(imp_vec)
+  s_vec
+}
+
 #' @export
 print.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
@@ -2118,6 +2259,13 @@ print.krls_rr <- function(x, ...) {
         " (ARD, length ", length(sv), ")\n",
         "  lambda =", signif(x$lambda, 4),
         "  R^2 =", signif(x$R2, 4), "\n", sep = "")
+    if (identical(x$ard_kind, "cheap")) {
+      cat("  ARD (cheap): imp=", x$ard_imp,
+          "  alpha=", signif(x$ard_alpha, 4),
+          "  cap=", signif(x$ard_cap, 4),
+          "  pass1_sigma=", signif(x$pass1_sigma, 4),
+          "\n", sep = "")
+    }
   } else {
     cat("  sigma =", signif(x$sigma, 4),
         "  lambda =", signif(x$lambda, 4),
@@ -2163,6 +2311,12 @@ summary.krls_rr <- function(object, ...) {
   ## min/median/max and (when p > 6) top/bottom-3 features by sigma.
   out$sigma_kind <- object$sigma_kind
   out$sigma_vec  <- object$sigma_vec
+  ## Phase 2b: stash cheap-tier ARD knobs for the summary printer.
+  out$ard_kind    <- object$ard_kind
+  out$ard_alpha   <- object$ard_alpha
+  out$ard_cap     <- object$ard_cap
+  out$ard_imp     <- object$ard_imp
+  out$pass1_sigma <- object$pass1_sigma
   if (!is.null(object$avgderivatives)) {
     se <- sqrt(as.numeric(object$var.avgderivatives))
     avg <- as.numeric(object$avgderivatives)
@@ -2207,6 +2361,13 @@ print.summary.krls_rr <- function(x, ...) {
       cat("  top-3:    ",
           paste(sprintf("%s=%s", nm[ord_hi], signif(sv[ord_hi], 4)),
                 collapse = ", "), "\n")
+    }
+    if (identical(x$ard_kind, "cheap")) {
+      cat("  ARD (cheap): imp=", x$ard_imp,
+          "  alpha=", signif(x$ard_alpha, 4),
+          "  cap=", signif(x$ard_cap, 4),
+          "  pass1_sigma=", signif(x$pass1_sigma, 4),
+          "\n", sep = "")
     }
   } else {
     cat(sprintf("  n = %d  p = %d  sigma = %s  lambda = %s  R^2 = %s\n",
