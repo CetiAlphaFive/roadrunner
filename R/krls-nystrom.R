@@ -72,7 +72,7 @@
 
   if (is.null(landmarks)) {
     if (is.null(nystrom_m)) {
-      nystrom_m <- ceiling(sqrt(n) * 2)
+      nystrom_m <- ceiling(sqrt(n) * 3)
     }
     nystrom_m <- .validate_nystrom_m(nystrom_m, n)
     return(.with_seed(landmark_seed, {

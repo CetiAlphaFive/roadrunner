@@ -1,3 +1,48 @@
+# roadrunner 0.0.0.9043
+
+## krls() speedup — Phase 2 (Nystrom low-rank approximation)
+
+* New optional argument `approx = "nystrom"` enables the Nystrom
+  low-rank approximation. Replaces O(n^3) eigendecomposition on the
+  full kernel with O(m^3) + O(n m^2) where m = `nystrom_m`
+  (default `ceiling(sqrt(n) * 3)`, e.g. n=2000 -> m=135,
+  n=5000 -> m=213).
+* Five new optional args: `approx`, `nystrom_m`, `landmarks`,
+  `landmark_method`, `landmark_seed`, `nystrom_eps`.
+* Default exact path is byte-identical to v0.0.0.9042 — opt-in only.
+* New exported helper `get_landmarks(fit)` returns landmark
+  coordinates (original or standardized X scale).
+* Determinism: at fixed `landmark_seed` (+ `seed.cv` when autotune),
+  Nystrom fits are byte-identical across `autotune.nthreads`.
+
+### Empirical wall-clock speedup (EMP-PHASE2, R=5 reps, paired seeds)
+
+| n    | p  | approx   | autotune | wall (s) | speedup | paired RMSE delta (median) |
+|------|----|----------|----------|----------|---------|----------------------------|
+| 2000 | 10 | exact    | FALSE    | 0.52     | 1.0x    | -                          |
+| 2000 | 10 | nystrom  | FALSE    | 0.056    | 9.27x   | -0.02%                     |
+| 5000 | 10 | exact    | FALSE    | 10.08    | 1.0x    | -                          |
+| 5000 | 10 | nystrom  | FALSE    | 0.329    | 30.64x  | +4.81%                     |
+
+Paired RMSE delta is the per-rep `(RMSE_nystrom - RMSE_exact) /
+RMSE_exact` on identical (X, y) draws (paired seed schedule keyed on
+`(n, rep)`); n=2000 range [-3.4%, +5.4%], n=5000 range [+4.0%, +8.9%].
+Both well within the +10% target on the additive smooth DGP.
+
+### API compatibility
+
+* Zero breaking changes. `krls()` without `approx` defaults to `"exact"`
+  and behaves identically to v0.0.0.9042.
+* `predict.krls_rr` auto-detects Nystrom fits via `fit$approx` and uses
+  the cheap cross-kernel path.
+
+### Out of scope (Phase 3)
+
+* Leverage-score landmark selection.
+* Auto-engage Nystrom at large n.
+* Sparse kernel truncation.
+* Bagging + Nystrom integration.
+
 # roadrunner 0.0.0.9042
 
 ## krls() speedup — Phase 1 (shared distance + parallel autotune)

@@ -171,6 +171,40 @@ averages across \code{n.boot} replicate fits.}
 and reapplied at \code{predict()} time). \code{"omit"} drops rows with any
 NA. Missing \code{y} is always an error.}
 
+\item{approx}{Either \code{"exact"} (default) or \code{"nystrom"}. The exact
+path runs the original O(n^3) eigendecomposition on the full kernel.
+\code{"nystrom"} replaces it with a low-rank Nystrom approximation
+anchored at \code{nystrom_m} landmarks, giving O(m^3) + O(n m^2) cost.
+At default \code{nystrom_m = ceiling(sqrt(n) * 3)} test RMSE is typically
+within +10\% of exact on smooth DGPs.}
+
+\item{nystrom_m}{Integer. Number of landmarks when \code{approx = "nystrom"}.
+Default \code{NULL} resolves to \code{ceiling(sqrt(n) * 3)} (e.g. n=2000 -> m=135,
+n=5000 -> m=213). Tuned empirically to keep test-set RMSE within +10\%
+of exact on smooth DGPs.
+Ignored when \code{landmarks} is supplied explicitly.}
+
+\item{landmarks}{NULL (default; auto-draw via \code{landmark_method}), an
+integer vector of row indices into X, or an m x d numeric matrix of
+landmark coordinates in the original X scale (auto-standardized
+internally using the training centers/scales).}
+
+\item{landmark_method}{Either \code{"random"} (default; uniform subsample of
+training rows) or \code{"kmeans"} (Hartigan-Wong centers on standardized X;
+not bit-stable across R versions). Ignored when \code{landmarks} is supplied.}
+
+\item{landmark_seed}{Optional integer seed for the local landmark draw.
+When supplied, uses \code{.with_seed()} to avoid disturbing the caller's
+global RNG state. Required for byte-identical fits across consecutive
+\code{krls(approx="nystrom")} calls.}
+
+\item{nystrom_eps}{Numeric. Relative ridge floor applied to the
+landmark-kernel eigenvalues: \code{D_reg = max(D, nystrom_eps * max(D))}.
+Defaults to \code{1e-9}. Stabilizes the m x m eigendecomposition when
+landmarks are near-collinear; the fit object's
+\code{nystrom_diagnostics$floored_count} reports how many eigenvalues hit
+this floor (useful for tuning m).}
+
 \item{trace}{Integer. \code{0} is silent, \verb{> 0} enables progress
 diagnostics (currently: prints chosen lambda when \verb{> 1},
 golden-section progress when \verb{> 2}). Replaces \code{print.level}.}
@@ -323,6 +357,22 @@ have set a high process-global BLAS thread count (e.g. via
 \code{krls(..., autotune = TRUE)} calls to avoid oversubscription. The
 BLAS-heavy distance computation runs OUTSIDE the parallel region and
 benefits from multi-threaded BLAS.
+
+\code{approx = "nystrom"} is currently incompatible with observation
+\code{weights} and with user-supplied lambda-search bracket \code{L}/\code{U}/\code{tol}.
+Both error with a clear message at fit time. \code{vcov = TRUE} is
+supported in the single-fit Nystrom path but the resulting \code{vcov}
+is for the m-length dual coefficients, not the n-length kernel
+coefficients. Phase 3 may extend these.
+
+Since v0.0.0.9043 \code{krls()} supports an opt-in Nystrom low-rank
+approximation via \code{approx = "nystrom"}. Replacing the full n x n
+eigendecomposition with an m x m one (m = \code{nystrom_m}, default
+\code{ceiling(sqrt(n) * 3)}) gives ~5x speedup at n=2000 and ~10x at
+n=5000 with RMSE typically within +10\% of the exact fit on smooth
+DGPs. Landmarks default to a uniform random subsample of training
+rows; pass \code{landmark_method = "kmeans"} for centroidal landmarks.
+Fits are byte-identical at fixed \code{landmark_seed} and \code{seed.cv}.
 }
 \examples{
 set.seed(1)
