@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9042</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9043</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -83,6 +83,12 @@ the original <code>(X, y)</code> scale.</p>
 <span>  varmod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"const"</span><span class="op">)</span>,</span>
 <span>  n.boot <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  na.action <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"impute"</span>, <span class="st">"omit"</span><span class="op">)</span>,</span>
+<span>  approx <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"exact"</span>, <span class="st">"nystrom"</span><span class="op">)</span>,</span>
+<span>  nystrom_m <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  landmarks <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  landmark_method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"random"</span>, <span class="st">"kmeans"</span><span class="op">)</span>,</span>
+<span>  landmark_seed <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  nystrom_eps <span class="op">=</span> <span class="fl">0.000000001</span>,</span>
 <span>  trace <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nthreads <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  print.level <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -270,6 +276,52 @@ and reapplied at <code><a href="https://rdrr.io/r/stats/predict.html" class="ext
 NA. Missing <code>y</code> is always an error.</p></dd>
 
 
+<dt id="arg-approx">approx<a class="anchor" aria-label="anchor" href="#arg-approx"></a></dt>
+<dd><p>Either <code>"exact"</code> (default) or <code>"nystrom"</code>. The exact
+path runs the original O(n^3) eigendecomposition on the full kernel.
+<code>"nystrom"</code> replaces it with a low-rank Nystrom approximation
+anchored at <code>nystrom_m</code> landmarks, giving O(m^3) + O(n m^2) cost.
+At default <code>nystrom_m = ceiling(sqrt(n) * 3)</code> test RMSE is typically
+within +10% of exact on smooth DGPs.</p></dd>
+
+
+<dt id="arg-nystrom-m">nystrom_m<a class="anchor" aria-label="anchor" href="#arg-nystrom-m"></a></dt>
+<dd><p>Integer. Number of landmarks when <code>approx = "nystrom"</code>.
+Default <code>NULL</code> resolves to <code>ceiling(sqrt(n) * 3)</code> (e.g. n=2000 -&gt; m=135,
+n=5000 -&gt; m=213). Tuned empirically to keep test-set RMSE within +10%
+of exact on smooth DGPs.
+Ignored when <code>landmarks</code> is supplied explicitly.</p></dd>
+
+
+<dt id="arg-landmarks">landmarks<a class="anchor" aria-label="anchor" href="#arg-landmarks"></a></dt>
+<dd><p>NULL (default; auto-draw via <code>landmark_method</code>), an
+integer vector of row indices into X, or an m x d numeric matrix of
+landmark coordinates in the original X scale (auto-standardized
+internally using the training centers/scales).</p></dd>
+
+
+<dt id="arg-landmark-method">landmark_method<a class="anchor" aria-label="anchor" href="#arg-landmark-method"></a></dt>
+<dd><p>Either <code>"random"</code> (default; uniform subsample of
+training rows) or <code>"kmeans"</code> (Hartigan-Wong centers on standardized X;
+not bit-stable across R versions). Ignored when <code>landmarks</code> is supplied.</p></dd>
+
+
+<dt id="arg-landmark-seed">landmark_seed<a class="anchor" aria-label="anchor" href="#arg-landmark-seed"></a></dt>
+<dd><p>Optional integer seed for the local landmark draw.
+When supplied, uses <code>.with_seed()</code> to avoid disturbing the caller's
+global RNG state. Required for byte-identical fits across consecutive
+<code>krls(approx="nystrom")</code> calls.</p></dd>
+
+
+<dt id="arg-nystrom-eps">nystrom_eps<a class="anchor" aria-label="anchor" href="#arg-nystrom-eps"></a></dt>
+<dd><p>Numeric. Relative ridge floor applied to the
+landmark-kernel eigenvalues: <code>D_reg = max(D, nystrom_eps * max(D))</code>.
+Defaults to <code>1e-9</code>. Stabilizes the m x m eigendecomposition when
+landmarks are near-collinear; the fit object's
+<code>nystrom_diagnostics$floored_count</code> reports how many eigenvalues hit
+this floor (useful for tuning m).</p></dd>
+
+
 <dt id="arg-trace">trace<a class="anchor" aria-label="anchor" href="#arg-trace"></a></dt>
 <dd><p>Integer. <code>0</code> is silent, <code>&gt; 0</code> enables progress
 diagnostics (currently: prints chosen lambda when <code>&gt; 1</code>,
@@ -415,6 +467,20 @@ have set a high process-global BLAS thread count (e.g. via
 <code>krls(..., autotune = TRUE)</code> calls to avoid oversubscription. The
 BLAS-heavy distance computation runs OUTSIDE the parallel region and
 benefits from multi-threaded BLAS.</p>
+<p><code>approx = "nystrom"</code> is currently incompatible with observation
+<code>weights</code> and with user-supplied lambda-search bracket <code>L</code>/<code>U</code>/<code>tol</code>.
+Both error with a clear message at fit time. <code>vcov = TRUE</code> is
+supported in the single-fit Nystrom path but the resulting <code>vcov</code>
+is for the m-length dual coefficients, not the n-length kernel
+coefficients. Phase 3 may extend these.</p>
+<p>Since v0.0.0.9043 <code>krls()</code> supports an opt-in Nystrom low-rank
+approximation via <code>approx = "nystrom"</code>. Replacing the full n x n
+eigendecomposition with an m x m one (m = <code>nystrom_m</code>, default
+<code>ceiling(sqrt(n) * 3)</code>) gives ~5x speedup at n=2000 and ~10x at
+n=5000 with RMSE typically within +10% of the exact fit on smooth
+DGPs. Landmarks default to a uniform random subsample of training
+rows; pass <code>landmark_method = "kmeans"</code> for centroidal landmarks.
+Fits are byte-identical at fixed <code>landmark_seed</code> and <code>seed.cv</code>.</p>
     </div>
     <div class="section level2">
     <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a></h2>

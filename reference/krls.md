@@ -41,6 +41,12 @@ krls(
   varmod = c("none", "const"),
   n.boot = 0L,
   na.action = c("impute", "omit"),
+  approx = c("exact", "nystrom"),
+  nystrom_m = NULL,
+  landmarks = NULL,
+  landmark_method = c("random", "kmeans"),
+  landmark_seed = NULL,
+  nystrom_eps = 0.000000001,
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -222,6 +228,50 @@ predict(
   [`predict()`](https://rdrr.io/r/stats/predict.html) time). `"omit"`
   drops rows with any NA. Missing `y` is always an error.
 
+- approx:
+
+  Either `"exact"` (default) or `"nystrom"`. The exact path runs the
+  original O(n^3) eigendecomposition on the full kernel. `"nystrom"`
+  replaces it with a low-rank Nystrom approximation anchored at
+  `nystrom_m` landmarks, giving O(m^3) + O(n m^2) cost. At default
+  `nystrom_m = ceiling(sqrt(n) * 3)` test RMSE is typically within +10%
+  of exact on smooth DGPs.
+
+- nystrom_m:
+
+  Integer. Number of landmarks when `approx = "nystrom"`. Default `NULL`
+  resolves to `ceiling(sqrt(n) * 3)` (e.g. n=2000 -\> m=135, n=5000 -\>
+  m=213). Tuned empirically to keep test-set RMSE within +10% of exact
+  on smooth DGPs. Ignored when `landmarks` is supplied explicitly.
+
+- landmarks:
+
+  NULL (default; auto-draw via `landmark_method`), an integer vector of
+  row indices into X, or an m x d numeric matrix of landmark coordinates
+  in the original X scale (auto-standardized internally using the
+  training centers/scales).
+
+- landmark_method:
+
+  Either `"random"` (default; uniform subsample of training rows) or
+  `"kmeans"` (Hartigan-Wong centers on standardized X; not bit-stable
+  across R versions). Ignored when `landmarks` is supplied.
+
+- landmark_seed:
+
+  Optional integer seed for the local landmark draw. When supplied, uses
+  `.with_seed()` to avoid disturbing the caller's global RNG state.
+  Required for byte-identical fits across consecutive
+  `krls(approx="nystrom")` calls.
+
+- nystrom_eps:
+
+  Numeric. Relative ridge floor applied to the landmark-kernel
+  eigenvalues: `D_reg = max(D, nystrom_eps * max(D))`. Defaults to
+  `1e-9`. Stabilizes the m x m eigendecomposition when landmarks are
+  near-collinear; the fit object's `nystrom_diagnostics$floored_count`
+  reports how many eigenvalues hit this floor (useful for tuning m).
+
 - trace:
 
   Integer. `0` is silent, `> 0` enables progress diagnostics (currently:
@@ -401,6 +451,22 @@ have set a high process-global BLAS thread count (e.g. via
 `krls(..., autotune = TRUE)` calls to avoid oversubscription. The
 BLAS-heavy distance computation runs OUTSIDE the parallel region and
 benefits from multi-threaded BLAS.
+
+`approx = "nystrom"` is currently incompatible with observation
+`weights` and with user-supplied lambda-search bracket `L`/`U`/`tol`.
+Both error with a clear message at fit time. `vcov = TRUE` is supported
+in the single-fit Nystrom path but the resulting `vcov` is for the
+m-length dual coefficients, not the n-length kernel coefficients. Phase
+3 may extend these.
+
+Since v0.0.0.9043 `krls()` supports an opt-in Nystrom low-rank
+approximation via `approx = "nystrom"`. Replacing the full n x n
+eigendecomposition with an m x m one (m = `nystrom_m`, default
+`ceiling(sqrt(n) * 3)`) gives ~5x speedup at n=2000 and ~10x at n=5000
+with RMSE typically within +10% of the exact fit on smooth DGPs.
+Landmarks default to a uniform random subsample of training rows; pass
+`landmark_method = "kmeans"` for centroidal landmarks. Fits are
+byte-identical at fixed `landmark_seed` and `seed.cv`.
 
 ## References
 

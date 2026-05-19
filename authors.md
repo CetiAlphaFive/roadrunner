@@ -11,13 +11,13 @@ Source:
 [`DESCRIPTION`](https://github.com/CetiAlphaFive/roadrunner/blob/main/DESCRIPTION)
 
 Rametta JT (2026). *roadrunner: Fast, Low-Dependency Machine Learning
-Algorithms*. R package version 0.0.0.9042,
+Algorithms*. R package version 0.0.0.9043,
 <https://cetialphafive.github.io/roadrunner/>.
 
     @Manual{,
       title = {roadrunner: Fast, Low-Dependency Machine Learning Algorithms},
       author = {Jack T. Rametta},
       year = {2026},
-      note = {R package version 0.0.0.9042},
+      note = {R package version 0.0.0.9043},
       url = {https://cetialphafive.github.io/roadrunner/},
     }

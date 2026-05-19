@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9042</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9043</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,69 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9043" id="roadrunner-0009043">roadrunner 0.0.0.9043<a class="anchor" aria-label="anchor" href="#roadrunner-0009043"></a></h2>
+<div class="section level3">
+<h3 id="krls-speedup--phase-nystrom-low-rank-approximation-0-0-0-9043">krls() speedup — Phase 2 (Nystrom low-rank approximation)<a class="anchor" aria-label="anchor" href="#krls-speedup--phase-nystrom-low-rank-approximation-0-0-0-9043"></a></h3>
+<ul><li>New optional argument <code>approx = "nystrom"</code> enables the Nystrom low-rank approximation. Replaces O(n^3) eigendecomposition on the full kernel with O(m^3) + O(n m^2) where m = <code>nystrom_m</code> (default <code>ceiling(sqrt(n) * 3)</code>, e.g. n=2000 -&gt; m=135, n=5000 -&gt; m=213).</li>
+<li>Five new optional args: <code>approx</code>, <code>nystrom_m</code>, <code>landmarks</code>, <code>landmark_method</code>, <code>landmark_seed</code>, <code>nystrom_eps</code>.</li>
+<li>Default exact path is byte-identical to v0.0.0.9042 — opt-in only.</li>
+<li>New exported helper <code>get_landmarks(fit)</code> returns landmark coordinates (original or standardized X scale).</li>
+<li>Determinism: at fixed <code>landmark_seed</code> (+ <code>seed.cv</code> when autotune), Nystrom fits are byte-identical across <code>autotune.nthreads</code>.</li>
+</ul><div class="section level4">
+<h4 id="empirical-wall-clock-speedup-emp-phase2-r5-reps-paired-seeds-0-0-0-9043">Empirical wall-clock speedup (EMP-PHASE2, R=5 reps, paired seeds)<a class="anchor" aria-label="anchor" href="#empirical-wall-clock-speedup-emp-phase2-r5-reps-paired-seeds-0-0-0-9043"></a></h4>
+<table class="table"><colgroup><col width="7%"><col width="5%"><col width="12%"><col width="12%"><col width="12%"><col width="11%"><col width="36%"></colgroup><thead><tr><th>n</th>
+<th>p</th>
+<th>approx</th>
+<th>autotune</th>
+<th>wall (s)</th>
+<th>speedup</th>
+<th>paired RMSE delta (median)</th>
+</tr></thead><tbody><tr><td>2000</td>
+<td>10</td>
+<td>exact</td>
+<td>FALSE</td>
+<td>0.52</td>
+<td>1.0x</td>
+<td>-</td>
+</tr><tr><td>2000</td>
+<td>10</td>
+<td>nystrom</td>
+<td>FALSE</td>
+<td>0.056</td>
+<td>9.27x</td>
+<td>-0.02%</td>
+</tr><tr><td>5000</td>
+<td>10</td>
+<td>exact</td>
+<td>FALSE</td>
+<td>10.08</td>
+<td>1.0x</td>
+<td>-</td>
+</tr><tr><td>5000</td>
+<td>10</td>
+<td>nystrom</td>
+<td>FALSE</td>
+<td>0.329</td>
+<td>30.64x</td>
+<td>+4.81%</td>
+</tr></tbody></table><p>Paired RMSE delta is the per-rep <code>(RMSE_nystrom - RMSE_exact) / RMSE_exact</code> on identical (X, y) draws (paired seed schedule keyed on <code>(n, rep)</code>); n=2000 range [-3.4%, +5.4%], n=5000 range [+4.0%, +8.9%]. Both well within the +10% target on the additive smooth DGP.</p>
+</div>
+<div class="section level4">
+<h4 id="api-compatibility-0-0-0-9043">API compatibility<a class="anchor" aria-label="anchor" href="#api-compatibility-0-0-0-9043"></a></h4>
+<ul><li>Zero breaking changes. <code><a href="../reference/krls.html">krls()</a></code> without <code>approx</code> defaults to <code>"exact"</code> and behaves identically to v0.0.0.9042.</li>
+<li>
+<code>predict.krls_rr</code> auto-detects Nystrom fits via <code>fit$approx</code> and uses the cheap cross-kernel path.</li>
+</ul></div>
+<div class="section level4">
+<h4 id="out-of-scope-phase-0-0-0-9043">Out of scope (Phase 3)<a class="anchor" aria-label="anchor" href="#out-of-scope-phase-0-0-0-9043"></a></h4>
+<ul><li>Leverage-score landmark selection.</li>
+<li>Auto-engage Nystrom at large n.</li>
+<li>Sparse kernel truncation.</li>
+<li>Bagging + Nystrom integration.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9042" id="roadrunner-0009042">roadrunner 0.0.0.9042<a class="anchor" aria-label="anchor" href="#roadrunner-0009042"></a></h2>
 <div class="section level3">
