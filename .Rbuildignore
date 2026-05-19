@@ -11,15 +11,11 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
 ^README\.Rmd$
-^ares\.Rcheck$
-^ares_.*\.tar\.gz$
 ^roadrunner\.Rcheck$
 ^roadrunner_.*\.tar\.gz$
 ^\.positai$
 ^\.claude$
 ^doc$
 ^Meta$
-^audit-.*$
-^KRLS-CLASSIFICATION-PLAN\.md$
 ^pkgdown$
 ^\.lintr$
