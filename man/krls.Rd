@@ -34,6 +34,8 @@ krls(X, ...)
   autotune = FALSE,
   autotune.grid = NULL,
   autotune.nthreads = NULL,
+  autotune.speed = c("balanced", "quality", "fast"),
+  autotune.warmstart = TRUE,
   varmod = c("none", "const"),
   n.boot = 0L,
   na.action = c("impute", "omit"),
@@ -172,6 +174,26 @@ reads from \code{getOption("roadrunner.krls.autotune.nthreads")}, and
 falls back to \code{1L} if unset. Capped at \code{length(autotune.grid)}.
 Only used when \code{autotune = TRUE}.}
 
+\item{autotune.speed}{Speed/quality knob for autotune dispatch. Only
+used when \code{autotune = TRUE}. One of:
+\itemize{
+\item \code{"fast"}: scalar sigma grid only (v0.0.0.9046 behaviour exactly).
+\item \code{"balanced"} (default): dispatches through cheap-tier ARD when
+\code{ncol(X) >= 20} or \code{ncol(X) >= nrow(X) / 10} (heuristic for
+high-p / sparse-signal regimes); otherwise scalar sigma only.
+\item \code{"quality"}: always dispatches through ARD and sweeps a 6-cell
+grid over \verb{ard.alpha in \{0.5, 1, 2\}} x
+\verb{ard.imp in \{"avgderiv", "vsq"\}}; picks the winner by inner CV.
+On low-p dense data \code{"balanced"} is byte-equivalent to \code{"fast"}.
+}}
+
+\item{autotune.warmstart}{If \code{TRUE} (default), autotune first pre-fits
+on a 15\% subsample (capped at 200 rows) and runs one ARD probe; if
+the probe does not improve held-out MSE over the isotropic baseline
+by more than 2\%, the ARD dispatch branch is dropped and autotune
+collapses to scalar sigma only. Skipped when \code{n < 200} or
+\code{autotune.speed = "fast"}.}
+
 \item{varmod}{Residual variance model used to construct prediction
 intervals via \code{predict(..., interval = "pint")}. \code{"none"}
 (default) disables PIs; \code{"const"} uses a homoscedastic
@@ -228,8 +250,10 @@ per-feature importance from the average marginal effects (or row-mean-
 square gradient, see \code{ard.imp}), and pass 2 refits with
 \code{s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha} clipped to
 \verb{[sigma_iso / ard.cap, sigma_iso * ard.cap]}. Incompatible with
-\code{autotune = TRUE}, \code{approx = "nystrom"}, and a user-supplied vector
-\code{sigma}; all error at fit time.}
+\code{approx = "nystrom"} and with a user-supplied vector \code{sigma}; both
+error at fit time. When \code{autotune = TRUE} and the user supplies
+\code{ard = "cheap"} explicitly, autotune routes through ARD regardless
+of \code{autotune.speed}.}
 
 \item{ard.alpha}{Mapping exponent on the importance ratio. \code{0} reduces
 to isotropic; recommended range \verb{[0.5, 2.0]}. Default \code{1.0}.}

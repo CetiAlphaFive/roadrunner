@@ -1,3 +1,56 @@
+# roadrunner 0.0.0.9047
+
+## krls() — autotune unification + auto-ARD dispatch
+
+* `autotune = TRUE` becomes a hands-free dispatcher. New argument
+  `autotune.speed = c("balanced", "quality", "fast")` (default
+  `"balanced"`) picks between the v0.0.0.9046 scalar sigma sweep and an
+  ARD-dispatched path that routes through the cheap-tier ARD
+  orchestrator:
+  - `"fast"` keeps the v0.0.0.9046 scalar sigma grid behaviour
+    byte-identically.
+  - `"balanced"` (default) dispatches through cheap-tier ARD when
+    `ncol(X) >= 20` or `ncol(X) >= nrow(X) / 10` (heuristic for high-p /
+    sparse-signal regimes); otherwise scalar sigma only.
+  - `"quality"` always dispatches through ARD and sweeps a 6-cell grid
+    over `ard.alpha in {0.5, 1, 2}` x `ard.imp in {"avgderiv", "vsq"}`,
+    picking the winner by inner K-fold CV.
+* New argument `autotune.warmstart = TRUE` runs a cheap probe on a 15%
+  subsample (capped at 200 rows) to test whether ARD dispatch
+  outperforms the isotropic baseline; if the ARD probe does not improve
+  held-out MSE by >2%, the ARD branch is dropped. Skipped when
+  `n < 200` or `autotune.speed = "fast"`.
+* The prior hard rejection of `ard != "none" + autotune = TRUE` is
+  lifted. When the user pins `ard = "cheap"` explicitly under
+  `autotune = TRUE`, autotune routes through ARD regardless of
+  `autotune.speed`.
+* `print.krls_rr()` now reports the autotune dispatch decision +
+  selected `(alpha, imp)` for ARD-dispatched fits, and the chosen sigma
+  for scalar fits.
+* `$autotune` output schema gains `$speed`, `$warmstart`,
+  `$ard_dispatched`, `$ard_decision_rule`, `$winner_sigma`,
+  `$winner_alpha`, `$winner_imp`. `$winner` is preserved on the ARD path
+  as the back-compat sentinel `NA_real_`.
+
+### Behaviour change
+
+> **Behaviour change at v0.0.0.9047:** `krls(autotune = TRUE)` now
+> dispatches through cheap-tier ARD on high-p / sparse-signal data
+> (`ncol(X) >= 20` or `ncol(X) >= nrow(X) / 10`) by default. To restore
+> exact v0.0.0.9046 behaviour, pass `autotune.speed = "fast"`. On low-p
+> dense data the default `"balanced"` mode is byte-identical to
+> v0.0.0.9046.
+
+### Out of scope (P2c / P3 / P5)
+
+* Gradient-based / marginal-likelihood ARD optimisation.
+* HSIC pre-screen for high-p feature selection.
+* Vector-sigma autotune sweep (requires C++ rewrite of
+  `krls_autotune_inner_cpp`).
+* Nystrom + autotune-ARD composition.
+* Multi-objective tuning (R^2 + sparsity).
+* `ssf_grid` beyond `c(1.0)`; multi-threaded ARD cell grid.
+
 # roadrunner 0.0.0.9046
 
 ## krls() — automatic two-pass ARD selector (cheap tier)

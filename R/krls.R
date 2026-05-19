@@ -157,6 +157,22 @@
 #'   reads from `getOption("roadrunner.krls.autotune.nthreads")`, and
 #'   falls back to `1L` if unset. Capped at `length(autotune.grid)`.
 #'   Only used when `autotune = TRUE`.
+#' @param autotune.speed Speed/quality knob for autotune dispatch. Only
+#'   used when `autotune = TRUE`. One of:
+#'   - `"fast"`: scalar sigma grid only (v0.0.0.9046 behaviour exactly).
+#'   - `"balanced"` (default): dispatches through cheap-tier ARD when
+#'     `ncol(X) >= 20` or `ncol(X) >= nrow(X) / 10` (heuristic for
+#'     high-p / sparse-signal regimes); otherwise scalar sigma only.
+#'   - `"quality"`: always dispatches through ARD and sweeps a 6-cell
+#'     grid over `ard.alpha in {0.5, 1, 2}` x
+#'     `ard.imp in {"avgderiv", "vsq"}`; picks the winner by inner CV.
+#'   On low-p dense data `"balanced"` is byte-equivalent to `"fast"`.
+#' @param autotune.warmstart If `TRUE` (default), autotune first pre-fits
+#'   on a 15% subsample (capped at 200 rows) and runs one ARD probe; if
+#'   the probe does not improve held-out MSE over the isotropic baseline
+#'   by more than 2%, the ARD dispatch branch is dropped and autotune
+#'   collapses to scalar sigma only. Skipped when `n < 200` or
+#'   `autotune.speed = "fast"`.
 #' @param varmod Residual variance model used to construct prediction
 #'   intervals via `predict(..., interval = "pint")`. `"none"`
 #'   (default) disables PIs; `"const"` uses a homoscedastic
@@ -211,8 +227,10 @@
 #'   square gradient, see `ard.imp`), and pass 2 refits with
 #'   `s_k = sigma_iso * (median(imp) / imp_k)^ard.alpha` clipped to
 #'   `[sigma_iso / ard.cap, sigma_iso * ard.cap]`. Incompatible with
-#'   `autotune = TRUE`, `approx = "nystrom"`, and a user-supplied vector
-#'   `sigma`; all error at fit time.
+#'   `approx = "nystrom"` and with a user-supplied vector `sigma`; both
+#'   error at fit time. When `autotune = TRUE` and the user supplies
+#'   `ard = "cheap"` explicitly, autotune routes through ARD regardless
+#'   of `autotune.speed`.
 #' @param ard.alpha Mapping exponent on the importance ratio. `0` reduces
 #'   to isotropic; recommended range `[0.5, 2.0]`. Default `1.0`.
 #' @param ard.cap Symmetric multiplicative ceiling on per-feature
@@ -408,6 +426,8 @@ krls.default <- function(X, y,
                          seed.cv = NULL, cv.1se = FALSE,
                          autotune = FALSE, autotune.grid = NULL,
                          autotune.nthreads = NULL,
+                         autotune.speed = c("balanced", "quality", "fast"),
+                         autotune.warmstart = TRUE,
                          varmod = c("none", "const"),
                          n.boot = 0L,
                          na.action = c("impute", "omit"),
@@ -432,18 +452,17 @@ krls.default <- function(X, y,
   nystrom_eps <- .validate_nystrom_eps(nystrom_eps)
   ard <- match.arg(ard)
   ard.imp <- match.arg(ard.imp)
+  autotune_speed <- match.arg(autotune.speed)
 
   if (lambda.method == "gcv" && approx == "nystrom") {
     stop("krls: lambda.method = 'gcv' is not supported with approx = 'nystrom'.")
   }
 
-  ## --- Phase 2b: ARD composition guards (must run before pass 1) ----
+  ## --- Phase 2b/2.5: ARD composition guards (must run before pass 1) -
+  ## The ARD + autotune rejection was lifted in v0.0.0.9047: autotune
+  ## now dispatches through cheap-tier ARD on high-p data by default,
+  ## and respects an explicit `ard = "cheap"` user pin.
   if (ard != "none") {
-    if (isTRUE(autotune))
-      stop("krls: ard = '", ard, "' is incompatible with autotune = TRUE; ",
-           "ARD selection is performed via a two-pass orchestrator and ",
-           "cannot be combined with sigma autotune in this version.",
-           call. = FALSE)
     if (identical(approx, "nystrom"))
       stop("krls: ard = '", ard, "' is incompatible with approx = 'nystrom'; ",
            "use approx = 'exact'.", call. = FALSE)
@@ -759,45 +778,16 @@ krls.default <- function(X, y,
     pass1_sig <- if (sigma_user_null) as.numeric(sigma_anchor)
                  else as.numeric(sigma)[1L]
 
-    ## vcov = TRUE is required when derivative = TRUE; the heavy outputs
-    ## (vcov.c, vcov.fitted) are discarded immediately after imp_vec.
-    fit_iso <- tryCatch(
-      krls.default(
-        X = X.init, y = y.init,
-        sigma = pass1_sig, lambda = NULL,
-        derivative = TRUE, binary = FALSE, vcov = TRUE,
-        weights = if (!is.null(w_norm)) w_norm else NULL,
-        lambda.method = "loo",
-        autotune = FALSE,
-        varmod = "none",
-        n.boot = 0L,
-        na.action = na.action,
-        approx = "exact",
-        ard = "none",
-        trace = max(trace - 1L, 0L),
-        nthreads = nthreads
-      ),
-      error = function(e)
-        stop("krls(ard='cheap'): pass-1 isotropic fit failed: ",
-             conditionMessage(e), call. = FALSE)
+    cheap_res <- .krls_run_cheap_ard(
+      X.init = X.init, y.init = y.init,
+      pass1_sig = pass1_sig,
+      ard.alpha = ard.alpha, ard.cap = ard.cap, ard.imp = ard.imp,
+      w_norm = w_norm,
+      na.action = na.action, trace = trace, nthreads = nthreads
     )
-
-    imp_vec <- .krls_ard_importance(fit_iso, ard.imp)
-    sigma_vec_resolved <- .krls_ard_resolve_sigma(
-      pass1_sig, imp_vec, ard.alpha, ard.cap)
-
-    sigma <- sigma_vec_resolved
+    sigma <- cheap_res$sigma_vec
     sigma_user_null <- FALSE
-
-    ard_state$kind             <- "cheap"
-    ard_state$alpha            <- as.numeric(ard.alpha)
-    ard_state$cap              <- as.numeric(ard.cap)
-    ard_state$imp              <- ard.imp
-    ard_state$pass1_sigma      <- pass1_sig
-    ard_state$pass1_importance <- imp_vec
-
-    ## fit_iso no longer needed; let GC reclaim its n x n kernel.
-    rm(fit_iso)
+    ard_state <- cheap_res$ard_state
   }
 
   ## --- Phase 2a: broadcast sigma to length-p sigma_vec --------------
@@ -1058,183 +1048,171 @@ krls.default <- function(X, y,
     return(fit)
   }
 
+  ## --- v0.0.0.9047: unified autotune dispatch ---------------------
+  ## Three dispatch paths:
+  ##   (a) scalar sigma sweep  (== v0.0.0.9046 behaviour).
+  ##   (b) ARD-dispatched: route the autotune budget through
+  ##       cheap-tier ARD with an optional inner (alpha, imp) grid.
+  ##   (c) Nystrom path is handled above; this block runs only when
+  ##       approx = "exact".
+  ##
+  ## The decision draws on three signals (in priority order):
+  ##   1. user pin: `ard = "cheap"` -> ARD path always.
+  ##   2. autotune.speed: "fast" -> scalar always; "quality" -> ARD always.
+  ##   3. "balanced": heuristic (p >= 20 or p >= n/10) + optional warmstart
+  ##      probe that drops the ARD branch when the cheap probe does not
+  ##      improve held-out MSE by > 2%.
   if (isTRUE(autotune)) {
     nfold_at <- as.integer(nfold)
-    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 10L   # Fix 3a
+    if (is.na(nfold_at) || nfold_at <= 0L) nfold_at <- 10L
     if (nfold_at > nrow(X))
       stop("krls: autotune nfold (", nfold_at,
            ") exceeds nrow(X) (", nrow(X), ").")
-    ## Fix 3b: ncross_at — default 2 when ncross=NULL; respect explicit values.
     ncross_at <- if (is.null(ncross)) 2L else as.integer(ncross)
     if (is.na(ncross_at) || ncross_at < 1L) ncross_at <- 1L
-
-    if (!is.null(seed.cv)) {
-      if (exists(".Random.seed", envir = globalenv(),
-                 inherits = FALSE)) {
-        old_seed_at <- get(".Random.seed", envir = globalenv(),
-                            inherits = FALSE)
-        on.exit(assign(".Random.seed", old_seed_at,
-                       envir = globalenv()), add = TRUE)
-      } else {
-        on.exit(rm(list = ".Random.seed", envir = globalenv()),
-                add = TRUE)
-      }
-      set.seed(as.integer(seed.cv) + 7919L)  # distinct from CV stream
-    }
     n_at <- nrow(X)
-    ## Helper: build one stratified-or-random fold assignment.
-    build_folds_at <- function(n_pts, k, strat) {
-      if (isTRUE(strat) && n_pts >= 20L) {
-        nb <- min(10L, max(2L, floor(n_pts / 5)))
-        bins <- cut(as.numeric(y), breaks = nb,
-                    include.lowest = TRUE, labels = FALSE)
-        fid <- integer(n_pts)
-        for (b in seq_len(nb)) {
-          idx_b <- which(bins == b)
-          if (length(idx_b) == 0L) next
-          idx_b <- sample(idx_b)
-          fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
-        }
-        if (any(fid == 0L)) {
-          miss <- which(fid == 0L)
-          fid[miss] <- rep_len(seq_len(k), length(miss))
-        }
-        fid
+
+    ## --- warmstart probe (optional) ------------------------------
+    warmstart_lift <- NULL
+    if (isTRUE(autotune.warmstart) && n_at >= 200L &&
+        autotune_speed != "fast" && identical(ard, "none")) {
+      warmstart_lift <- .krls_autotune_warmstart_probe(
+        Xs = Xs, ys = ys,
+        sigma_anchor = if (!is.null(sigma_anchor)) sigma_anchor
+                       else as.numeric(sigma_scalar),
+        seed.cv = seed.cv,
+        ard.alpha = ard.alpha, ard.imp = ard.imp, ard.cap = ard.cap,
+        w_norm = w_norm
+      )
+    }
+
+    ## --- dispatch decision ---------------------------------------
+    dispatch <- .krls_decide_ard_dispatch(
+      n = n_at, p = d, autotune_speed = autotune_speed,
+      ard_user_pin = ard, warmstart_lift = warmstart_lift
+    )
+
+    if (!dispatch$dispatch) {
+      ## ---- SCALAR PATH (== v0.0.0.9046) ----------------------
+      sc <- .krls_autotune_scalar(
+        Xs = Xs, ys = ys, y = y,
+        autotune.grid = autotune.grid,
+        nfold_at = nfold_at, ncross_at = ncross_at,
+        stratify = stratify, seed.cv = seed.cv,
+        autotune.nthreads = autotune.nthreads,
+        w_norm = w_norm, sqw = sqw,
+        L = L, U = U, tol = tol,
+        n_at = n_at, d = d, trace = trace
+      )
+      sigma         <- sc$sigma
+      sigma_vec     <- rep(as.numeric(sigma), d)
+      names(sigma_vec) <- colnames(X)
+      sigma_kind    <- "scalar"
+      sigma_scalar  <- as.numeric(sigma)
+      autotune_info <- sc$autotune_info
+      autotune_info$speed             <- autotune_speed
+      autotune_info$warmstart         <- isTRUE(autotune.warmstart)
+      autotune_info$ard_dispatched    <- FALSE
+      autotune_info$ard_decision_rule <- dispatch$reason
+      autotune_info$winner_sigma      <- sigma
+      autotune_info$winner_alpha      <- NA_real_
+      autotune_info$winner_imp        <- NA_character_
+    } else {
+      ## ---- ARD DISPATCH PATH ---------------------------------
+      ## Build (alpha, imp, ssf) grid. Quality sweeps the full grid;
+      ## balanced + user-pin defer to whatever the user supplied
+      ## (single cell if nothing pinned).
+      user_call <- as.list(cl)
+      alpha_user_pinned <- !is.null(user_call$ard.alpha)
+      imp_user_pinned   <- !is.null(user_call$ard.imp)
+
+      if (identical(autotune_speed, "quality")) {
+        alpha_grid <- if (alpha_user_pinned) as.numeric(ard.alpha)
+                      else c(0.5, 1.0, 2.0)
+        imp_grid   <- if (imp_user_pinned) ard.imp
+                      else c("avgderiv", "vsq")
       } else {
-        rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+        ## balanced (heuristic-fired) OR user-pinned ard = "cheap"
+        alpha_grid <- as.numeric(ard.alpha)
+        imp_grid   <- ard.imp
       }
-    }
-    ## MSE matrix: rows = sigma candidates, cols = nfold_at * ncross_at.
-    n_sig <- length(autotune.grid)
-    sigma_grid_sorted <- autotune.grid   # already sorted+unique above
-    mse_mat_at <- matrix(NA_real_, nrow = n_sig,
-                         ncol = nfold_at * ncross_at)
-    lam_mat_at <- matrix(NA_real_, nrow = n_sig,
-                         ncol = nfold_at * ncross_at)
-    ## Use C++ inner only on the fast unweighted path with default
-    ## L/U/tol (the inner uses L0=eps + L_step=10 + U=n which matches
-    ## .krls_lambdasearch defaults exactly; non-default L/U/tol or
-    ## non-null weights fall back to the per-cell R loop for parity).
-    use_inner_cpp <- is.null(sqw) && is.null(L) && is.null(U) &&
-                       is.null(tol)
-    lambda_args <- list(
-      tol            = 1e-6,
-      L0             = .Machine$double.eps,
-      L_step         = 10.0,
-      U_start_from_n = TRUE
-    )
-    nthreads_used_final <- 1L
-    col_at <- 1L
-    for (cc_at in seq_len(ncross_at)) {
-      ## Fresh fold partition for each repetition.
-      fid_at <- build_folds_at(n_at, nfold_at, stratify)
-      for (k in seq_len(nfold_at)) {
-        test_i  <- which(fid_at == k)
-        train_i <- which(fid_at != k)
-        if (length(test_i) == 0L || length(train_i) < 3L) {
-          col_at <- col_at + 1L
-          next
-        }
-        Xs_tr <- Xs[train_i, , drop = FALSE]
-        ys_tr <- ys[train_i]
-        Xs_te <- Xs[test_i,  , drop = FALSE]
-        ys_te <- ys[test_i]
-        if (use_inner_cpp) {
-          ## Shared squared-distance matrices for this fold; the C++
-          ## inner sweeps the sigma grid in parallel reusing them.
-          D_tr <- krls_pairwise_sqdist_cpp(Xs_tr, Xs_tr)
-          D_te <- krls_pairwise_sqdist_cpp(Xs_te, Xs_tr)
-          inner <- krls_autotune_inner_cpp(
-            D_tr, D_te, ys_tr, ys_te,
-            sigma_grid_sorted, lambda_args,
-            nthreads = autotune.nthreads
-          )
-          mse_mat_at[, col_at] <- as.numeric(inner$mse_per_sigma)
-          lam_mat_at[, col_at] <- as.numeric(inner$lambda_per_sigma)
-          nthreads_used_final  <- as.integer(inner$nthreads_used)
-        } else {
-          for (si in seq_along(autotune.grid)) {
-            sig_s     <- autotune.grid[si]
-            sig_s_vec <- rep(as.numeric(sig_s), ncol(Xs_tr))
-            K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec)
-            K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec)
-            if (!is.null(sqw)) {
-              sqw_tr <- sqrt(w_norm[train_i])
-              K_tr_use  <- K_tr * tcrossprod(sqw_tr)
-              ys_tr_use <- sqw_tr * ys_tr
-            } else {
-              sqw_tr <- NULL
-              K_tr_use  <- K_tr
-              ys_tr_use <- ys_tr
-            }
-            eo_k    <- krls_eig_cpp(K_tr_use)
-            dvals_k <- as.numeric(eo_k$values)
-            V_k     <- eo_k$vectors
-            Vsq_k   <- krls_vsq_cpp(V_k)
-            Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
-            ## Per-fold LOO closed-form lambda search for this sigma cell.
-            lam_k <- tryCatch(
-              .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
-                                 n_y = length(train_i),
-                                 L = L, U = U, tol = tol, noisy = FALSE),
-              error = function(e) NA_real_)
-            if (is.na(lam_k)) next
-            sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
-            c_solve <- as.numeric(sol_k$coeffs)
-            c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
-            yhat_te <- as.numeric(K_te %*% c_fold)
-            if (!is.null(sqw)) {
-              w_te <- w_norm[test_i]
-              mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
-                max(sum(w_te), .Machine$double.eps)
-            } else {
-              mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
-            }
-            lam_mat_at[si, col_at] <- lam_k
-          }
-        }
-        col_at <- col_at + 1L
+      ssf_grid <- 1.0
+
+      cells <- expand.grid(alpha = alpha_grid, imp = imp_grid,
+                           ssf = ssf_grid,
+                           KEEP.OUT.ATTRS = FALSE,
+                           stringsAsFactors = FALSE)
+
+      ard_res <- .krls_autotune_ard_grid(
+        Xs = Xs, ys = ys, y = y, d = d,
+        cells = cells,
+        sigma_anchor = if (!is.null(sigma_anchor)) sigma_anchor
+                       else as.numeric(sigma_scalar),
+        ard.cap = ard.cap,
+        nfold_at = nfold_at, ncross_at = ncross_at,
+        stratify = stratify, seed.cv = seed.cv,
+        w_norm = w_norm, sqw = sqw,
+        L = L, U = U, tol = tol,
+        n_at = n_at
+      )
+      best_alpha <- as.numeric(cells$alpha[ard_res$best])
+      best_imp   <- as.character(cells$imp[ard_res$best])
+
+      ## Re-run cheap orchestrator with the chosen (alpha, imp) on the
+      ## full data. This produces sigma_vec_resolved and ard_state for
+      ## the post-autotune fit. Pass1 sigma == sigma_anchor.
+      pass1_sig_final <- if (!is.null(sigma_anchor))
+        as.numeric(sigma_anchor) else as.numeric(sigma_scalar)
+      cheap_res <- .krls_run_cheap_ard(
+        X.init = X.init, y.init = y.init,
+        pass1_sig = pass1_sig_final,
+        ard.alpha = best_alpha, ard.cap = ard.cap, ard.imp = best_imp,
+        w_norm = w_norm,
+        na.action = na.action, trace = trace, nthreads = nthreads
+      )
+      ard_state    <- cheap_res$ard_state
+      ard.alpha    <- best_alpha
+      ard.imp      <- best_imp
+      ard          <- "cheap"
+      sigma        <- cheap_res$sigma_vec
+      sigma_vec    <- as.numeric(cheap_res$sigma_vec)
+      names(sigma_vec) <- colnames(X)
+      sigma_kind   <- if (all(sigma_vec == sigma_vec[1L])) "scalar" else "ard"
+      sigma_scalar <- if (identical(sigma_kind, "scalar"))
+        sigma_vec[1L] else NA_real_
+
+      autotune_info <- list(
+        speed             = autotune_speed,
+        warmstart         = isTRUE(autotune.warmstart),
+        ard_dispatched    = TRUE,
+        ard_decision_rule = dispatch$reason,
+        grid              = cells,
+        mse               = ard_res$cell_mse,
+        winner            = NA_real_,
+        winner_sigma      = NA_real_,
+        winner_alpha      = best_alpha,
+        winner_imp        = best_imp,
+        nfold             = nfold_at,
+        ncross            = ncross_at,
+        stratify          = isTRUE(stratify),
+        seed.cv           = seed.cv,
+        cv.1se            = TRUE,
+        sigma_grid_sorted = NULL,
+        nthreads_used     = 1L,
+        ard               = list(
+          kind      = "cheap",
+          alpha     = best_alpha,
+          cap       = as.numeric(ard.cap),
+          imp       = best_imp,
+          sigma_vec = as.numeric(sigma_vec)
+        )
+      )
+      if (trace > 1) {
+        cat("Autotune ARD-dispatch winner: alpha=", best_alpha,
+            " imp=", best_imp,
+            " (cv-mse=", round(ard_res$cell_mse[ard_res$best], 6),
+            ")\n", sep = "")
       }
-    }
-    mean_mse_at <- rowMeans(mse_mat_at, na.rm = TRUE)
-    if (all(is.na(mean_mse_at)))
-      stop("krls: autotune produced no usable folds.")
-    best_si <- which.min(mean_mse_at)
-    ## Fix 3c: 1-SE rule — select the LARGEST sigma within 1 SE of min.
-    ## Wider kernel = more smoothing = less overfit.
-    sd_at  <- apply(mse_mat_at, 1L, function(z) sd(z, na.rm = TRUE))
-    nfok   <- rowSums(!is.na(mse_mat_at))
-    se_at  <- sd_at / sqrt(pmax(nfok, 1L))
-    thresh_at <- mean_mse_at[best_si] + se_at[best_si]
-    cand_at   <- which(mean_mse_at <= thresh_at)
-    sigma <- max(autotune.grid[cand_at])   # largest sigma in the 1-SE band
-    ## Refresh broadcast sigma_vec for the post-autotune fit. Autotune
-    ## sweeps a scalar grid (ARD rejected at validation), so winner is
-    ## scalar and sigma_kind stays "scalar".
-    sigma_vec    <- rep(as.numeric(sigma), d)
-    names(sigma_vec) <- colnames(X)
-    sigma_kind   <- "scalar"
-    sigma_scalar <- as.numeric(sigma)
-    autotune_info <- list(
-      grid              = autotune.grid,
-      mse               = mean_mse_at,
-      mse_per_sigma     = mean_mse_at,
-      winner            = sigma,
-      nfold             = nfold_at,
-      ncross            = ncross_at,
-      stratify          = isTRUE(stratify),
-      seed.cv           = seed.cv,
-      mse_per_fold      = mse_mat_at,
-      lam_per_fold      = lam_mat_at,
-      se_mse            = se_at,
-      cv.1se            = TRUE,
-      sigma_1se         = sigma,
-      sigma_grid_sorted = sigma_grid_sorted,
-      nthreads_used     = nthreads_used_final
-    )
-    if (trace > 1) {
-      cat("Autotune sigma winner (1-SE):", round(sigma, 4),
-          " (mse=", round(mean_mse_at[best_si], 6), ")\n", sep = "")
     }
   }
 
@@ -2247,6 +2225,482 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   s_vec
 }
 
+## Phase 2.5 (v0.0.0.9047) helpers -----------------------------------
+
+## .krls_run_cheap_ard() runs the pass-1 isotropic anchor fit, extracts
+## per-feature importance, and resolves sigma_vec via the cheap mapping.
+## Refactored out of krls.default() so the autotune ARD-dispatch path
+## can reuse it after picking (alpha, imp).
+##
+## Returns list(sigma_vec, ard_state). Behaviour preserves v0.0.0.9046
+## byte-identically when called with the same args the inline block used.
+.krls_run_cheap_ard <- function(X.init, y.init, pass1_sig,
+                                ard.alpha, ard.cap, ard.imp,
+                                w_norm = NULL, na.action,
+                                trace = 0L, nthreads = 0L) {
+  fit_iso <- tryCatch(
+    krls.default(
+      X = X.init, y = y.init,
+      sigma = pass1_sig, lambda = NULL,
+      derivative = TRUE, binary = FALSE, vcov = TRUE,
+      weights = if (!is.null(w_norm)) w_norm else NULL,
+      lambda.method = "loo",
+      autotune = FALSE,
+      varmod = "none",
+      n.boot = 0L,
+      na.action = na.action,
+      approx = "exact",
+      ard = "none",
+      trace = max(trace - 1L, 0L),
+      nthreads = nthreads
+    ),
+    error = function(e)
+      stop("krls(ard='cheap'): pass-1 isotropic fit failed: ",
+           conditionMessage(e), call. = FALSE)
+  )
+  imp_vec <- .krls_ard_importance(fit_iso, ard.imp)
+  sigma_vec_resolved <- .krls_ard_resolve_sigma(
+    pass1_sig, imp_vec, ard.alpha, ard.cap)
+  ard_state <- list(
+    kind             = "cheap",
+    alpha            = as.numeric(ard.alpha),
+    cap              = as.numeric(ard.cap),
+    imp              = ard.imp,
+    pass1_sigma      = pass1_sig,
+    pass1_importance = imp_vec
+  )
+  rm(fit_iso)
+  list(sigma_vec = sigma_vec_resolved, ard_state = ard_state)
+}
+
+## .krls_decide_ard_dispatch() picks between scalar and ARD autotune
+## paths. Returns list(dispatch, reason).
+.krls_decide_ard_dispatch <- function(n, p, autotune_speed, ard_user_pin,
+                                      warmstart_lift) {
+  if (identical(ard_user_pin, "cheap"))
+    return(list(dispatch = TRUE, reason = "user-supplied"))
+  if (identical(autotune_speed, "fast"))
+    return(list(dispatch = FALSE, reason = "speed=fast"))
+  if (identical(autotune_speed, "quality"))
+    return(list(dispatch = TRUE, reason = "speed=quality"))
+  ## balanced
+  thresh_p <- getOption("roadrunner.krls.autotune.ard_threshold_p", 20L)
+  heur_p   <- p >= as.integer(thresh_p)
+  heur_pn  <- p >= n / 10
+  if (!(heur_p || heur_pn))
+    return(list(dispatch = FALSE, reason = "balanced-lowp"))
+  if (!is.null(warmstart_lift) && isFALSE(warmstart_lift))
+    return(list(dispatch = FALSE, reason = "warmstart-rejected"))
+  list(dispatch = TRUE,
+       reason   = if (heur_p) "p>=20" else "p>=n/10")
+}
+
+## .krls_autotune_warmstart_probe(): a cheap iso-vs-cheap-ARD probe on
+## a 15% subsample. Returns TRUE iff cheap ARD beats isotropic by > 2%
+## held-out MSE; FALSE if not; NULL on tryCatch failure (caller falls
+## through to pure heuristic).
+.krls_autotune_warmstart_probe <- function(Xs, ys, sigma_anchor,
+                                            seed.cv,
+                                            ard.alpha, ard.imp, ard.cap,
+                                            w_norm = NULL) {
+  n <- nrow(Xs)
+  n_sub <- min(200L, max(100L, as.integer(round(0.15 * n))))
+  if (n_sub >= n) return(NULL)
+
+  has_seed <- !is.null(seed.cv)
+  if (has_seed) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed_ws <- get(".Random.seed", envir = globalenv(),
+                         inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed_ws, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed.cv) + 503L)
+  }
+
+  tryCatch({
+    sub_idx <- sample.int(n, n_sub, replace = FALSE)
+    Xs_sub <- Xs[sub_idx, , drop = FALSE]
+    ys_sub <- as.numeric(ys[sub_idx])
+    n_tr <- as.integer(round(0.80 * n_sub))
+    if (n_tr < 10L || n_tr >= n_sub) return(NULL)
+    tr_idx <- seq_len(n_tr)
+    te_idx <- (n_tr + 1L):n_sub
+    Xs_tr  <- Xs_sub[tr_idx, , drop = FALSE]
+    ys_tr  <- ys_sub[tr_idx]
+    Xs_te  <- Xs_sub[te_idx, , drop = FALSE]
+    ys_te  <- ys_sub[te_idx]
+    w_tr   <- if (!is.null(w_norm)) {
+      ww <- w_norm[sub_idx][tr_idx]; m <- mean(ww); if (m > 0) ww / m else ww
+    } else NULL
+
+    ## iso baseline
+    iso_fit <- .krls_minimal_fit(Xs_tr, ys_tr, sigma_anchor, w_tr,
+                                 compute_deriv = FALSE)
+    K_te_iso <- krls_kernel_pred_cpp(Xs_te, Xs_tr,
+                                     rep(as.numeric(sigma_anchor), ncol(Xs_tr)))
+    yhat_iso <- as.numeric(K_te_iso %*% iso_fit$coeffs_final)
+    iso_mse  <- mean((ys_te - yhat_iso)^2)
+
+    ## ARD probe
+    iso_fit_with_deriv <- .krls_minimal_fit(Xs_tr, ys_tr, sigma_anchor,
+                                            w_tr, compute_deriv = TRUE)
+    imp_vec <- if (identical(ard.imp, "vsq") &&
+                   !is.null(iso_fit_with_deriv$derivatives)) {
+      pmax(colMeans(iso_fit_with_deriv$derivatives ^ 2),
+           .Machine$double.eps)
+    } else {
+      pmax(abs(as.numeric(iso_fit_with_deriv$avgderivatives)),
+           .Machine$double.eps)
+    }
+    sigma_vec_probe <- .krls_ard_resolve_sigma(
+      as.numeric(sigma_anchor), imp_vec, ard.alpha, ard.cap)
+    ard_fit <- .krls_minimal_fit(Xs_tr, ys_tr, sigma_vec_probe, w_tr,
+                                 compute_deriv = FALSE)
+    K_te_ard <- krls_kernel_pred_cpp(Xs_te, Xs_tr,
+                                     as.numeric(sigma_vec_probe))
+    yhat_ard <- as.numeric(K_te_ard %*% ard_fit$coeffs_final)
+    ard_mse  <- mean((ys_te - yhat_ard)^2)
+
+    ard_mse <= 0.98 * iso_mse
+  }, error = function(e) NULL)
+}
+
+## .krls_minimal_fit(): light KRLS-only solve. Returns coefficients on
+## the standardised scale plus (optionally) the derivatives + avg-deriv
+## row vector needed for ARD importance extraction. NOT a public API —
+## used inside warmstart probe and ARD CV inner loop.
+##
+## Arguments:
+##   Xs            - n x p standardised X.
+##   ys            - n-vector standardised y.
+##   sigma         - scalar or length-p numeric.
+##   w_tr          - optional fold weights (already normalised mean=1).
+##   compute_deriv - if TRUE, compute derivatives + avgderivatives matrix.
+.krls_minimal_fit <- function(Xs, ys, sigma, w_tr = NULL,
+                              compute_deriv = FALSE) {
+  p <- ncol(Xs)
+  sig_vec <- if (length(sigma) == 1L) rep(as.numeric(sigma), p)
+             else as.numeric(sigma)
+  K <- krls_kernel_cpp(Xs, sig_vec)
+  if (!is.null(w_tr)) {
+    sqw_tr <- sqrt(w_tr)
+    K_use  <- K * tcrossprod(sqw_tr)
+    ys_use <- sqw_tr * ys
+  } else {
+    sqw_tr <- NULL
+    K_use  <- K
+    ys_use <- ys
+  }
+  eo    <- krls_eig_cpp(K_use)
+  d     <- as.numeric(eo$values)
+  V     <- eo$vectors
+  Vsq   <- krls_vsq_cpp(V)
+  Vty   <- as.numeric(crossprod(V, ys_use))
+  lam   <- .krls_lambdasearch(d, V, Vsq, Vty,
+                              n_y = length(ys),
+                              L = NULL, U = NULL, tol = NULL,
+                              noisy = FALSE)
+  sol   <- krls_solve_cpp(d, V, Vsq, Vty, lam)
+  c_solve <- as.numeric(sol$coeffs)
+  c_final <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+
+  derivmat <- avgderiv <- NULL
+  if (isTRUE(compute_deriv)) {
+    derivmat <- krls_deriv_cpp(Xs, K, c_final, sig_vec)
+    if (!is.null(w_tr)) {
+      avgderiv <- matrix(colSums(derivmat * w_tr) / sum(w_tr), nrow = 1L)
+    } else {
+      avgderiv <- matrix(colMeans(derivmat), nrow = 1L)
+    }
+    colnames(derivmat) <- colnames(Xs)
+    colnames(avgderiv) <- colnames(Xs)
+  }
+  list(coeffs_final = c_final, lambda = lam,
+       derivatives = derivmat, avgderivatives = avgderiv,
+       X = Xs)
+}
+
+## .krls_autotune_scalar(): existing v0.0.0.9046 scalar autotune block
+## lifted into a helper. Returns list(sigma, autotune_info). Behaviour
+## must be byte-identical to v0.0.0.9046 when called via the
+## (autotune.speed = "fast", autotune.warmstart = FALSE) path.
+.krls_autotune_scalar <- function(Xs, ys, y,
+                                  autotune.grid,
+                                  nfold_at, ncross_at,
+                                  stratify, seed.cv,
+                                  autotune.nthreads,
+                                  w_norm, sqw,
+                                  L, U, tol,
+                                  n_at, d, trace) {
+  if (!is.null(seed.cv)) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed_at <- get(".Random.seed", envir = globalenv(),
+                          inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed_at, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed.cv) + 7919L)
+  }
+  build_folds_at <- function(n_pts, k, strat) {
+    if (isTRUE(strat) && n_pts >= 20L) {
+      nb <- min(10L, max(2L, floor(n_pts / 5)))
+      bins <- cut(as.numeric(y), breaks = nb,
+                  include.lowest = TRUE, labels = FALSE)
+      fid <- integer(n_pts)
+      for (b in seq_len(nb)) {
+        idx_b <- which(bins == b)
+        if (length(idx_b) == 0L) next
+        idx_b <- sample(idx_b)
+        fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
+      }
+      if (any(fid == 0L)) {
+        miss <- which(fid == 0L)
+        fid[miss] <- rep_len(seq_len(k), length(miss))
+      }
+      fid
+    } else {
+      rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+    }
+  }
+  n_sig <- length(autotune.grid)
+  sigma_grid_sorted <- autotune.grid
+  mse_mat_at <- matrix(NA_real_, nrow = n_sig,
+                       ncol = nfold_at * ncross_at)
+  lam_mat_at <- matrix(NA_real_, nrow = n_sig,
+                       ncol = nfold_at * ncross_at)
+  use_inner_cpp <- is.null(sqw) && is.null(L) && is.null(U) &&
+                     is.null(tol)
+  lambda_args <- list(
+    tol            = 1e-6,
+    L0             = .Machine$double.eps,
+    L_step         = 10.0,
+    U_start_from_n = TRUE
+  )
+  nthreads_used_final <- 1L
+  col_at <- 1L
+  for (cc_at in seq_len(ncross_at)) {
+    fid_at <- build_folds_at(n_at, nfold_at, stratify)
+    for (k in seq_len(nfold_at)) {
+      test_i  <- which(fid_at == k)
+      train_i <- which(fid_at != k)
+      if (length(test_i) == 0L || length(train_i) < 3L) {
+        col_at <- col_at + 1L
+        next
+      }
+      Xs_tr <- Xs[train_i, , drop = FALSE]
+      ys_tr <- ys[train_i]
+      Xs_te <- Xs[test_i,  , drop = FALSE]
+      ys_te <- ys[test_i]
+      if (use_inner_cpp) {
+        D_tr <- krls_pairwise_sqdist_cpp(Xs_tr, Xs_tr)
+        D_te <- krls_pairwise_sqdist_cpp(Xs_te, Xs_tr)
+        inner <- krls_autotune_inner_cpp(
+          D_tr, D_te, ys_tr, ys_te,
+          sigma_grid_sorted, lambda_args,
+          nthreads = autotune.nthreads
+        )
+        mse_mat_at[, col_at] <- as.numeric(inner$mse_per_sigma)
+        lam_mat_at[, col_at] <- as.numeric(inner$lambda_per_sigma)
+        nthreads_used_final  <- as.integer(inner$nthreads_used)
+      } else {
+        for (si in seq_along(autotune.grid)) {
+          sig_s     <- autotune.grid[si]
+          sig_s_vec <- rep(as.numeric(sig_s), ncol(Xs_tr))
+          K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec)
+          if (!is.null(sqw)) {
+            sqw_tr <- sqrt(w_norm[train_i])
+            K_tr_use  <- K_tr * tcrossprod(sqw_tr)
+            ys_tr_use <- sqw_tr * ys_tr
+          } else {
+            sqw_tr <- NULL
+            K_tr_use  <- K_tr
+            ys_tr_use <- ys_tr
+          }
+          eo_k    <- krls_eig_cpp(K_tr_use)
+          dvals_k <- as.numeric(eo_k$values)
+          V_k     <- eo_k$vectors
+          Vsq_k   <- krls_vsq_cpp(V_k)
+          Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+          lam_k <- tryCatch(
+            .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
+                               n_y = length(train_i),
+                               L = L, U = U, tol = tol, noisy = FALSE),
+            error = function(e) NA_real_)
+          if (is.na(lam_k)) next
+          sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
+          c_solve <- as.numeric(sol_k$coeffs)
+          c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+          yhat_te <- as.numeric(K_te %*% c_fold)
+          if (!is.null(sqw)) {
+            w_te <- w_norm[test_i]
+            mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
+              max(sum(w_te), .Machine$double.eps)
+          } else {
+            mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
+          }
+          lam_mat_at[si, col_at] <- lam_k
+        }
+      }
+      col_at <- col_at + 1L
+    }
+  }
+  mean_mse_at <- rowMeans(mse_mat_at, na.rm = TRUE)
+  if (all(is.na(mean_mse_at)))
+    stop("krls: autotune produced no usable folds.")
+  best_si <- which.min(mean_mse_at)
+  sd_at  <- apply(mse_mat_at, 1L, function(z) sd(z, na.rm = TRUE))
+  nfok   <- rowSums(!is.na(mse_mat_at))
+  se_at  <- sd_at / sqrt(pmax(nfok, 1L))
+  thresh_at <- mean_mse_at[best_si] + se_at[best_si]
+  cand_at   <- which(mean_mse_at <= thresh_at)
+  sigma <- max(autotune.grid[cand_at])
+  if (trace > 1) {
+    cat("Autotune sigma winner (1-SE):", round(sigma, 4),
+        " (mse=", round(mean_mse_at[best_si], 6), ")\n", sep = "")
+  }
+  autotune_info <- list(
+    grid              = autotune.grid,
+    mse               = mean_mse_at,
+    mse_per_sigma     = mean_mse_at,
+    winner            = sigma,
+    nfold             = nfold_at,
+    ncross            = ncross_at,
+    stratify          = isTRUE(stratify),
+    seed.cv           = seed.cv,
+    mse_per_fold      = mse_mat_at,
+    lam_per_fold      = lam_mat_at,
+    se_mse            = se_at,
+    cv.1se            = TRUE,
+    sigma_1se         = sigma,
+    sigma_grid_sorted = sigma_grid_sorted,
+    nthreads_used     = nthreads_used_final
+  )
+  list(sigma = sigma, autotune_info = autotune_info)
+}
+
+## .krls_autotune_ard_grid(): inner K-fold MSE scan over a (alpha, imp,
+## ssf) grid. Per cell, per fold: pass1 isotropic solve -> derive
+## importance -> resolve sigma_vec -> pass2 solve -> MSE on held-out
+## fold. Returns list(cell_mse, best). Does NOT recursively call
+## krls.default() — uses .krls_minimal_fit() directly.
+.krls_autotune_ard_grid <- function(Xs, ys, y, d, cells,
+                                    sigma_anchor, ard.cap,
+                                    nfold_at, ncross_at,
+                                    stratify, seed.cv,
+                                    w_norm, sqw,
+                                    L, U, tol, n_at) {
+  if (!is.null(seed.cv)) {
+    if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+      old_seed_at <- get(".Random.seed", envir = globalenv(),
+                          inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed_at, envir = globalenv()),
+              add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+    }
+    set.seed(as.integer(seed.cv) + 7919L)
+  }
+  build_folds_at <- function(n_pts, k, strat) {
+    if (isTRUE(strat) && n_pts >= 20L) {
+      nb <- min(10L, max(2L, floor(n_pts / 5)))
+      bins <- cut(as.numeric(y), breaks = nb,
+                  include.lowest = TRUE, labels = FALSE)
+      fid <- integer(n_pts)
+      for (b in seq_len(nb)) {
+        idx_b <- which(bins == b)
+        if (length(idx_b) == 0L) next
+        idx_b <- sample(idx_b)
+        fid[idx_b] <- rep_len(seq_len(k), length(idx_b))
+      }
+      if (any(fid == 0L)) {
+        miss <- which(fid == 0L)
+        fid[miss] <- rep_len(seq_len(k), length(miss))
+      }
+      fid
+    } else {
+      rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+    }
+  }
+
+  n_cell <- nrow(cells)
+  mse_mat <- matrix(NA_real_, nrow = n_cell,
+                    ncol = nfold_at * ncross_at)
+  pass1_sig <- as.numeric(sigma_anchor)
+  pass1_sig_vec_full <- rep(pass1_sig, ncol(Xs))
+
+  col_at <- 1L
+  for (cc_at in seq_len(ncross_at)) {
+    fid_at <- build_folds_at(n_at, nfold_at, stratify)
+    for (k in seq_len(nfold_at)) {
+      test_i  <- which(fid_at == k)
+      train_i <- which(fid_at != k)
+      if (length(test_i) == 0L || length(train_i) < 3L) {
+        col_at <- col_at + 1L
+        next
+      }
+      Xs_tr <- Xs[train_i, , drop = FALSE]
+      ys_tr <- ys[train_i]
+      Xs_te <- Xs[test_i,  , drop = FALSE]
+      ys_te <- ys[test_i]
+      w_tr  <- if (!is.null(w_norm)) {
+        ww <- w_norm[train_i]; m <- mean(ww); if (m > 0) ww / m else ww
+      } else NULL
+      w_te  <- if (!is.null(w_norm)) w_norm[test_i] else NULL
+
+      ## Pass 1: isotropic solve + derivatives. Cached across cells
+      ## that share `ssf` (currently always 1.0).
+      pass1 <- tryCatch(
+        .krls_minimal_fit(Xs_tr, ys_tr, pass1_sig, w_tr,
+                          compute_deriv = TRUE),
+        error = function(e) NULL)
+      if (is.null(pass1)) {
+        col_at <- col_at + 1L
+        next
+      }
+
+      for (ci in seq_len(n_cell)) {
+        alpha_ci <- as.numeric(cells$alpha[ci])
+        imp_ci   <- as.character(cells$imp[ci])
+        imp_vec <- if (identical(imp_ci, "vsq") &&
+                       !is.null(pass1$derivatives)) {
+          pmax(colMeans(pass1$derivatives ^ 2), .Machine$double.eps)
+        } else {
+          pmax(abs(as.numeric(pass1$avgderivatives)),
+               .Machine$double.eps)
+        }
+        sigma_vec_ci <- .krls_ard_resolve_sigma(
+          pass1_sig, imp_vec, alpha_ci, ard.cap)
+        pass2 <- tryCatch(
+          .krls_minimal_fit(Xs_tr, ys_tr, sigma_vec_ci, w_tr,
+                            compute_deriv = FALSE),
+          error = function(e) NULL)
+        if (is.null(pass2)) next
+        K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr,
+                                     as.numeric(sigma_vec_ci))
+        yhat_te <- as.numeric(K_te %*% pass2$coeffs_final)
+        if (!is.null(w_te)) {
+          mse_mat[ci, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
+            max(sum(w_te), .Machine$double.eps)
+        } else {
+          mse_mat[ci, col_at] <- mean((ys_te - yhat_te)^2)
+        }
+      }
+      col_at <- col_at + 1L
+    }
+  }
+  cell_mse <- rowMeans(mse_mat, na.rm = TRUE)
+  if (all(is.na(cell_mse)))
+    stop("krls: autotune ARD-dispatch produced no usable folds.")
+  best <- which.min(cell_mse)
+  list(cell_mse = cell_mse, best = best, mse_per_fold = mse_mat)
+}
+
 #' @export
 print.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
@@ -2275,9 +2729,24 @@ print.krls_rr <- function(x, ...) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
   }
   if (!is.null(x$autotune)) {
-    cat("  Autotune: sigma=", signif(x$autotune$winner, 4),
-        " (grid: ", paste(signif(x$autotune$grid, 3), collapse = ", "),
-        ")\n", sep = "")
+    at <- x$autotune
+    if (isTRUE(at$ard_dispatched)) {
+      cat("  Autotune (ARD dispatched", sep = "")
+      if (!is.null(at$ard_decision_rule))
+        cat(", rule=", at$ard_decision_rule, sep = "")
+      if (!is.null(at$speed))
+        cat(", speed=", at$speed, sep = "")
+      cat("): alpha=", signif(at$winner_alpha, 4),
+          " imp=", at$winner_imp, "\n", sep = "")
+    } else {
+      cat("  Autotune: sigma=", signif(at$winner, 4),
+          " (grid: ",
+          paste(signif(at$grid, 3), collapse = ", "), ")",
+          if (!is.null(at$speed)) paste0("  speed=", at$speed) else "",
+          if (!is.null(at$ard_decision_rule))
+            paste0("  rule=", at$ard_decision_rule) else "",
+          "\n", sep = "")
+    }
   }
   if (!is.null(x$cv)) {
     cat("  CV: ", x$cv$nfold, "-fold x ", x$cv$ncross,
@@ -2380,8 +2849,17 @@ print.summary.krls_rr <- function(x, ...) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
   }
   if (!is.null(x$autotune)) {
-    cat("  Autotune: sigma=", signif(x$autotune$winner, 4), "\n",
-        sep = "")
+    at <- x$autotune
+    if (isTRUE(at$ard_dispatched)) {
+      cat("  Autotune (ARD dispatched",
+          if (!is.null(at$ard_decision_rule))
+            paste0(", rule=", at$ard_decision_rule) else "",
+          "): alpha=", signif(at$winner_alpha, 4),
+          " imp=", at$winner_imp, "\n", sep = "")
+    } else {
+      cat("  Autotune: sigma=", signif(at$winner, 4), "\n",
+          sep = "")
+    }
   }
   if (!is.null(x$cv)) {
     cat("  CV: ", x$cv$nfold, "-fold x ", x$cv$ncross,

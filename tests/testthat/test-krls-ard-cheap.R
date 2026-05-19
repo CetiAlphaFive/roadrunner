@@ -178,16 +178,15 @@ test_that("ARD cheap: composes with lambda.method = 'cv'", {
   expect_false(is.null(f_cv$cv))
 })
 
-test_that("ARD cheap: composition rejections (autotune / nystrom / vector sigma)", {
+test_that("ARD cheap: composition rejections (nystrom / vector sigma)", {
+  # Note (v0.0.0.9047): the prior ard='cheap' + autotune=TRUE rejection
+  # was lifted; autotune now dispatches through ARD when the user pins
+  # ard='cheap'. The nystrom + vector-sigma rejections remain.
   set.seed(99)
   n_tr <- 80; p <- 5
   X_tr <- matrix(rnorm(n_tr * p), n_tr, p)
   y_tr <- sin(X_tr[, 1]) + 0.3 * rnorm(n_tr)
 
-  expect_error(
-    krls(X_tr, y_tr, ard = "cheap", autotune = TRUE),
-    "incompatible with autotune"
-  )
   expect_error(
     krls(X_tr, y_tr, ard = "cheap", approx = "nystrom"),
     "incompatible with approx"
