@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9045</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9046</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,25 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9046" id="roadrunner-0009046">roadrunner 0.0.0.9046<a class="anchor" aria-label="anchor" href="#roadrunner-0009046"></a></h2>
+<div class="section level3">
+<h3 id="krls--automatic-two-pass-ard-selector-cheap-tier-0-0-0-9046">krls() — automatic two-pass ARD selector (cheap tier)<a class="anchor" aria-label="anchor" href="#krls--automatic-two-pass-ard-selector-cheap-tier-0-0-0-9046"></a></h3>
+<ul><li>New argument <code>ard = "cheap"</code> enables a two-pass automatic ARD pipeline: pass 1 fits isotropic KRLS at the scale-aware sigma anchor; pass 2 refits with per-feature lengthscales derived from pass-1 marginal- effect importances via <code>s_k = sigma_iso * (median(imp) / imp_k)^alpha</code>, clipped to <code>[sigma_iso / cap, sigma_iso * cap]</code>.</li>
+<li>New args <code>ard.alpha = 1.0</code> (mapping exponent), <code>ard.cap = 100</code> (symmetric multiplicative ceiling), <code>ard.imp = c("avgderiv", "vsq")</code> (importance source).</li>
+<li>Default <code>ard = "none"</code> is byte-identical to v0.0.0.9045.</li>
+<li>Composes with bagging (<code>n.boot</code>), CV (<code>lambda.method = "cv"</code>), GCV, weights, and varmod. Rejects autotune + ARD and Nystrom + ARD at fit time (same constraints as manual vector sigma in P2a).</li>
+<li>Compute cost: ~3-5x scalar isotropic. Pass 1 is a throwaway fit; its <code>varmod</code> / <code>binary</code> / <code>n.boot</code> are forced off, but <code>vcov</code> stays on because the engine couples it to <code>derivative = TRUE</code> (which we need for importance extraction). The pass-1 outputs are discarded after the per-feature importance vector is read off.</li>
+<li>Empirical lift: on grf::generate_causal_data aw3 with n_train=750, p=100 (sparse signal, mostly noise dimensions), test R^2 rises from 0.13 (isotropic) to 0.33 (ard=‘cheap’), comparable to ranger (0.34) on the same data.</li>
+</ul><div class="section level4">
+<h4 id="out-of-scope-p2c--p3--p5-0-0-0-9046">Out of scope (P2c / P3 / P5)<a class="anchor" aria-label="anchor" href="#out-of-scope-p2c--p3--p5-0-0-0-9046"></a></h4>
+<ul><li>Gradient-based / marginal-likelihood ARD optimisation.</li>
+<li>HSIC pre-screen for high-p feature selection.</li>
+<li>Autotune over per-feature sigma.</li>
+<li>Nystrom + ARD composition.</li>
+</ul></div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9045" id="roadrunner-0009045">roadrunner 0.0.0.9045<a class="anchor" aria-label="anchor" href="#roadrunner-0009045"></a></h2>
 <div class="section level3">

@@ -1,5 +1,39 @@
 # Changelog
 
+## roadrunner 0.0.0.9046
+
+### krls() — automatic two-pass ARD selector (cheap tier)
+
+- New argument `ard = "cheap"` enables a two-pass automatic ARD
+  pipeline: pass 1 fits isotropic KRLS at the scale-aware sigma anchor;
+  pass 2 refits with per-feature lengthscales derived from pass-1
+  marginal- effect importances via
+  `s_k = sigma_iso * (median(imp) / imp_k)^alpha`, clipped to
+  `[sigma_iso / cap, sigma_iso * cap]`.
+- New args `ard.alpha = 1.0` (mapping exponent), `ard.cap = 100`
+  (symmetric multiplicative ceiling), `ard.imp = c("avgderiv", "vsq")`
+  (importance source).
+- Default `ard = "none"` is byte-identical to v0.0.0.9045.
+- Composes with bagging (`n.boot`), CV (`lambda.method = "cv"`), GCV,
+  weights, and varmod. Rejects autotune + ARD and Nystrom + ARD at fit
+  time (same constraints as manual vector sigma in P2a).
+- Compute cost: ~3-5x scalar isotropic. Pass 1 is a throwaway fit; its
+  `varmod` / `binary` / `n.boot` are forced off, but `vcov` stays on
+  because the engine couples it to `derivative = TRUE` (which we need
+  for importance extraction). The pass-1 outputs are discarded after the
+  per-feature importance vector is read off.
+- Empirical lift: on grf::generate_causal_data aw3 with n_train=750,
+  p=100 (sparse signal, mostly noise dimensions), test R^2 rises from
+  0.13 (isotropic) to 0.33 (ard=‘cheap’), comparable to ranger (0.34) on
+  the same data.
+
+#### Out of scope (P2c / P3 / P5)
+
+- Gradient-based / marginal-likelihood ARD optimisation.
+- HSIC pre-screen for high-p feature selection.
+- Autotune over per-feature sigma.
+- Nystrom + ARD composition.
+
 ## roadrunner 0.0.0.9045
 
 ### krls() — per-feature Gaussian bandwidth (manual ARD)
