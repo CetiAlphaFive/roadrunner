@@ -189,3 +189,50 @@ test_that("NYS-GETLM-1: get_landmarks returns landmarks in requested scale", {
   fit2 <- list(approx = "exact"); class(fit2) <- "krls_rr"
   expect_error(get_landmarks(fit2), "not built with approx")
 })
+
+test_that("NYS-DET-1: same landmark_seed yields byte-identical fits", {
+  set.seed(20L)
+  n <- 120L; p <- 4L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.3 * rnorm(n))
+  f1 <- roadrunner::krls(X, y, approx = "nystrom",
+                         nystrom_m = 30L, landmark_seed = 42L,
+                         derivative = FALSE, vcov = FALSE)
+  f2 <- roadrunner::krls(X, y, approx = "nystrom",
+                         nystrom_m = 30L, landmark_seed = 42L,
+                         derivative = FALSE, vcov = FALSE)
+  expect_identical(f1$sigma,  f2$sigma)
+  expect_identical(f1$lambda, f2$lambda)
+  expect_identical(f1$coeffs, f2$coeffs)
+})
+
+test_that("NYS-DET-2: landmark_seed does not disturb caller's RNG state", {
+  set.seed(21L)
+  n <- 80L; p <- 3L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- rnorm(n)
+
+  set.seed(999L)
+  v_before <- rnorm(5L)
+  set.seed(999L)
+  fit <- roadrunner::krls(X, y, approx = "nystrom", nystrom_m = 20L,
+                          landmark_seed = 42L, derivative = FALSE,
+                          vcov = FALSE)
+  v_after <- rnorm(5L)
+
+  expect_identical(v_before, v_after)
+})
+
+test_that("NYS-PRED-1: predict on a Nystrom fit returns length-n_new numeric", {
+  set.seed(22L)
+  n <- 100L; p <- 3L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X) + 0.3 * rnorm(n))
+  fit <- roadrunner::krls(X, y, approx = "nystrom", nystrom_m = 25L,
+                          landmark_seed = 42L, derivative = FALSE,
+                          vcov = FALSE)
+  Xn <- matrix(rnorm(15 * p), 15, p)
+  yhat <- predict(fit, newdata = Xn)$fit
+  expect_length(yhat, 15L)
+  expect_true(all(is.finite(yhat)))
+})

@@ -337,12 +337,21 @@ krls.default <- function(X, y,
                          varmod = c("none", "const"),
                          n.boot = 0L,
                          na.action = c("impute", "omit"),
+                         approx = c("exact", "nystrom"),
+                         nystrom_m = NULL,
+                         landmarks = NULL,
+                         landmark_method = c("random", "kmeans"),
+                         landmark_seed = NULL,
+                         nystrom_eps = 1e-9,
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
   na.action <- match.arg(na.action)
   lambda.method <- match.arg(lambda.method)
   varmod <- match.arg(varmod)
+  approx <- match.arg(approx)
+  landmark_method <- match.arg(landmark_method)
+  nystrom_eps <- .validate_nystrom_eps(nystrom_eps)
 
   ## --- print.level / trace harmonisation ---------------------------
   # Phase 8: `trace` is the canonical name (matches ares).  `print.level`
@@ -814,6 +823,73 @@ krls.default <- function(X, y,
     }
   }
 
+  ## --- Nystrom non-autotune routing (Phase 2 T4) --------------------
+  if (identical(approx, "nystrom") && !isTRUE(autotune)) {
+    if (!is.null(w_norm)) {
+      stop("krls: approx = 'nystrom' does not yet support `weights`.",
+           call. = FALSE)
+    }
+    X_means_loc <- colMeans(X.init)
+    X_sds_loc   <- X.init.sd
+    lm <- .resolve_landmarks(landmarks, landmark_method, nystrom_m,
+                             Xs, X_centers = X_means_loc,
+                             X_scales = X_sds_loc,
+                             landmark_seed = landmark_seed)
+    Z_std <- lm$matrix
+
+    lambda_args_nys <- list(
+      tol = 1e-6, L0 = .Machine$double.eps,
+      L_step = 10.0, U_start_from_n = TRUE
+    )
+
+    nys <- krls_nystrom_fit_cpp(
+      Xs, Z_std, ys, sigma, lambda_args_nys,
+      nystrom_eps, compute_vcov = isTRUE(vcov)
+    )
+
+    yfitted_nys <- as.numeric(nys$fitted_std) * as.numeric(y.init.sd) +
+                     y.init.mean
+
+    fit <- list(
+      coeffs    = nys$coeffs,
+      fitted    = yfitted_nys,
+      X         = X.init,
+      y         = y.init,
+      sigma     = sigma,
+      lambda    = nys$lambda,
+      X_means   = X_means_loc,
+      X_sds     = X_sds_loc,
+      y_mean    = y.init.mean,
+      y_sd      = as.numeric(y.init.sd),
+      approx    = "nystrom",
+      landmarks = Z_std,
+      landmark_indices = lm$indices,
+      landmark_method  = lm$method_used,
+      nystrom_m        = nys$nystrom_m,
+      nystrom_eps      = nystrom_eps,
+      W_eigen          = nys$W_eigen,
+      Dinvsqrt         = nys$Dinvsqrt,
+      Sigma2           = nys$Sigma2,
+      vcov_alpha       = if (isTRUE(vcov)) nys$vcov_alpha else NULL,
+      nystrom_diagnostics = list(
+        floored_count = nys$floored_count,
+        D_min_raw     = nys$D_min_raw,
+        D_max_raw     = nys$D_max_raw
+      )
+    )
+
+    fit$R2 <- 1 - sum((as.numeric(y.init) - yfitted_nys)^2) /
+                  sum((as.numeric(y.init) - mean(as.numeric(y.init)))^2)
+
+    fit$call         <- cl
+    fit$na.action    <- na.action
+    fit$na.medians   <- na_medians
+    fit$factor_info  <- factor_info
+
+    class(fit) <- c("krls_rr", "krls")
+    return(fit)
+  }
+
   ## --- kernel + eigendecomposition ---------------------------------
   K <- krls_kernel_cpp(Xs, sigma)
   if (!is.null(sqw)) {
@@ -1268,6 +1344,48 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     if (is.null(object$vcov.c))
       stop("krls: interval='pint' requires vcov = TRUE at fit time.",
            call. = FALSE)
+  }
+
+  # --- Nystrom predict branch (Phase 2 T4) ---------------------------
+  if (identical(object$approx, "nystrom")) {
+    if (is.null(newdata)) {
+      return(list(fit = matrix(object$fitted, ncol = 1L),
+                  se.fit = NULL, vcov.fit = NULL,
+                  newdata = NULL, newdataK = NULL))
+    }
+    xnew <- .krls_build_design(object, newdata)
+    storage.mode(xnew) <- "double"
+    if (ncol(object$X) != ncol(xnew)) {
+      stop("ncol(newdata) (", ncol(xnew),
+           ") differs from ncol(X) from fitted krls object (",
+           ncol(object$X), ")")
+    }
+    if (any(is.na(xnew))) {
+      if (!is.null(object$na.medians)) {
+        for (j in seq_len(ncol(xnew))) {
+          na_j <- is.na(xnew[, j])
+          if (any(na_j)) xnew[na_j, j] <- object$na.medians[j]
+        }
+        warning("krls: median-imputed ", sum(is.na(xnew)),
+                " missing value(s) in newdata using stored training medians.",
+                call. = FALSE)
+      } else {
+        stop("krls: newdata has NA values but the fit has no stored medians",
+             " (training used na.action='omit'). Drop or impute the rows",
+             " yourself before calling predict().")
+      }
+    }
+    Xn_std <- scale(xnew, center = object$X_means, scale = object$X_sds)
+    attr(Xn_std, "scaled:center") <- NULL
+    attr(Xn_std, "scaled:scale")  <- NULL
+    Xn_std <- matrix(as.numeric(Xn_std), nrow(xnew), ncol(xnew))
+    yhat_std <- as.numeric(krls_nystrom_predict_cpp(
+      Xn_std, object$landmarks, as.numeric(object$coeffs), object$sigma
+    ))
+    yhat <- yhat_std * object$y_sd + object$y_mean
+    return(list(fit = matrix(yhat, ncol = 1L),
+                se.fit = NULL, vcov.fit = NULL,
+                newdata = Xn_std, newdataK = NULL))
   }
 
   if (is.null(newdata)) {
