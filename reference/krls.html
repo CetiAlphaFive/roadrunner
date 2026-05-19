@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9041</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9042</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -79,6 +79,7 @@ the original <code>(X, y)</code> scale.</p>
 <span>  cv.1se <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  autotune <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  autotune.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  autotune.nthreads <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  varmod <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"const"</span><span class="op">)</span>,</span>
 <span>  n.boot <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  na.action <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"impute"</span>, <span class="st">"omit"</span><span class="op">)</span>,</span>
@@ -241,6 +242,14 @@ where <code>sigma_anchor</code> is the geomean_p anchor
 (<code>sqrt(median(d2) * p)</code> on the standardised predictors).</p></dd>
 
 
+<dt id="arg-autotune-nthreads">autotune.nthreads<a class="anchor" aria-label="anchor" href="#arg-autotune-nthreads"></a></dt>
+<dd><p>Integer. Number of worker threads used to
+evaluate the autotune <code>sigma</code> grid in parallel. <code>NULL</code> (default)
+reads from <code>getOption("roadrunner.krls.autotune.nthreads")</code>, and
+falls back to <code>1L</code> if unset. Capped at <code>length(autotune.grid)</code>.
+Only used when <code>autotune = TRUE</code>.</p></dd>
+
+
 <dt id="arg-varmod">varmod<a class="anchor" aria-label="anchor" href="#arg-varmod"></a></dt>
 <dd><p>Residual variance model used to construct prediction
 intervals via <code>predict(..., interval = "pint")</code>. <code>"none"</code>
@@ -378,6 +387,14 @@ to the non-autotuned default.  This is the expected behaviour — it confirms
 that the default sigma is well-chosen for these DGPs — not a failure of
 autotune.  Autotune yields improvements when the optimal sigma departs from
 the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).</p>
+<p>Since v0.0.0.9042 the autotune inner loop is parallelised over sigma
+candidates using <code>RcppParallel</code> (TBB). The pairwise squared-distance
+matrix is computed once per CV fold and reused across every sigma in
+the grid (<code>exp(-D / sigma)</code> is then a cheap elementwise op).
+Determinism is preserved: each worker writes to a unique slot in the
+output vectors, so the result is byte-identical regardless of
+<code>autotune.nthreads</code>. Pass <code>autotune.nthreads = 1</code> to force strictly
+sequential execution.</p>
     </div>
     <div class="section level2">
     <h2 id="note">Note<a class="anchor" aria-label="anchor" href="#note"></a></h2>
@@ -391,6 +408,13 @@ old default explicitly: <code>sigma = ncol(X)</code>, <code>tol = 1e-3 * nrow(X)
 (<code>median(d2)</code>) to the geomean_p formula (<code>sqrt(median(d2) * p)</code>).  To
 restore the v0.0.0.9040 median anchor, pass
 <code>sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)</code>.</p>
+<p>Phase 1 speedup (v0.0.0.9042): parallel autotune assumes single-threaded
+BLAS for the small kernel operations inside the parallel region. If you
+have set a high process-global BLAS thread count (e.g. via
+<code>RhpcBLASctl::blas_set_num_threads(8)</code>), consider resetting to 1 around
+<code>krls(..., autotune = TRUE)</code> calls to avoid oversubscription. The
+BLAS-heavy distance computation runs OUTSIDE the parallel region and
+benefits from multi-threaded BLAS.</p>
     </div>
     <div class="section level2">
     <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a></h2>

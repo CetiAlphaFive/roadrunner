@@ -37,6 +37,7 @@ krls(
   cv.1se = FALSE,
   autotune = FALSE,
   autotune.grid = NULL,
+  autotune.nthreads = NULL,
   varmod = c("none", "const"),
   n.boot = 0L,
   na.action = c("impute", "omit"),
@@ -192,6 +193,14 @@ predict(
   `sigma_anchor * c(0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32)` where
   `sigma_anchor` is the geomean_p anchor (`sqrt(median(d2) * p)` on the
   standardised predictors).
+
+- autotune.nthreads:
+
+  Integer. Number of worker threads used to evaluate the autotune
+  `sigma` grid in parallel. `NULL` (default) reads from
+  `getOption("roadrunner.krls.autotune.nthreads")`, and falls back to
+  `1L` if unset. Capped at `length(autotune.grid)`. Only used when
+  `autotune = TRUE`.
 
 - varmod:
 
@@ -362,6 +371,14 @@ for these DGPs — not a failure of autotune. Autotune yields improvements
 when the optimal sigma departs from the anchor (e.g. sparse / linear
 DGPs where a much wider kernel is better).
 
+Since v0.0.0.9042 the autotune inner loop is parallelised over sigma
+candidates using `RcppParallel` (TBB). The pairwise squared-distance
+matrix is computed once per CV fold and reused across every sigma in the
+grid (`exp(-D / sigma)` is then a cheap elementwise op). Determinism is
+preserved: each worker writes to a unique slot in the output vectors, so
+the result is byte-identical regardless of `autotune.nthreads`. Pass
+`autotune.nthreads = 1` to force strictly sequential execution.
+
 ## Note
 
 At a fixed `(sigma, lambda)` fits remain byte-identical to all earlier
@@ -376,6 +393,14 @@ The sigma anchor formula was refined in v0.0.0.9041 from the raw median
 (`median(d2)`) to the geomean_p formula (`sqrt(median(d2) * p)`). To
 restore the v0.0.0.9040 median anchor, pass
 `sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)`.
+
+Phase 1 speedup (v0.0.0.9042): parallel autotune assumes single-threaded
+BLAS for the small kernel operations inside the parallel region. If you
+have set a high process-global BLAS thread count (e.g. via
+`RhpcBLASctl::blas_set_num_threads(8)`), consider resetting to 1 around
+`krls(..., autotune = TRUE)` calls to avoid oversubscription. The
+BLAS-heavy distance computation runs OUTSIDE the parallel region and
+benefits from multi-threaded BLAS.
 
 ## References
 
