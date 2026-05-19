@@ -273,3 +273,133 @@ arma::mat krls_pairwise_sqdist_cpp(const arma::mat& X_a, const arma::mat& X_b) {
   D.elem(arma::find(D < 0.0)).zeros();              // FP-noise floor
   return D;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1 (v0.0.0.9042): inner autotune loop in C++.
+//
+// For each sigma s in sigma_grid:
+//   K_tr = exp(-D_tr / s)
+//   K_te = exp(-D_te / s)
+//   (V, d) = eig_sym(K_tr)
+//   lambda = golden-section LOO search (tol=1e-6, log-step L)
+//   alpha  = V * ((Vty / (d + lambda)))    (closed-form ridge in eigenbasis)
+//   mse_s  = mean((y_te - K_te * alpha)^2)
+//
+// THIS TASK: sequential only (nthreads ignored). Task 4 adds parallelFor.
+// ---------------------------------------------------------------------------
+
+static double krls_loo_loss_inline(const arma::vec& d, const arma::mat& V,
+                                   const arma::mat& Vsq, const arma::vec& Vty,
+                                   double lambda) {
+  arma::vec inv = 1.0 / (d + lambda);
+  arma::vec c   = V * (Vty % inv);
+  arma::vec g   = Vsq * inv;
+  return arma::dot(c / g, c / g);
+}
+
+static void krls_one_sigma(const arma::mat& D_tr, const arma::mat& D_te,
+                           const arma::vec& y_tr, const arma::vec& y_te,
+                           double s,
+                           double lam_tol, double L0, double L_step,
+                           double& mse_out, double& lam_out) {
+  arma::mat K_tr = arma::exp(-D_tr / s);
+  arma::mat K_te = arma::exp(-D_te / s);
+
+  arma::vec d;
+  arma::mat V;
+  arma::eig_sym(d, V, K_tr);
+
+  arma::vec Vty = V.t() * y_tr;
+  arma::mat Vsq = V % V;
+
+  // q = which.min(|d - max(d)/1000|), as 1-based R index in the
+  // DESCENDING-ordered eigenvalue vector (matches krls_eig_cpp + R reference).
+  // arma::eig_sym returns ASCENDING, so an ascending 0-based index q_idx
+  // maps to descending 1-based position (n - q_idx).
+  double dmax  = d.max();
+  double target = dmax / 1000.0;
+  arma::uword q_idx = 0;
+  double mind = std::abs(d(0) - target);
+  for (arma::uword i = 1; i < d.n_elem; ++i) {
+    double dd = std::abs(d(i) - target);
+    if (dd < mind) { mind = dd; q_idx = i; }
+  }
+  double q_R = (double)(d.n_elem - q_idx);  // descending 1-based index
+
+  // Lower bracket: grow L until sum(d/(d+L)) <= q_R
+  double L = L0;
+  while (arma::sum(d / (d + L)) > q_R) {
+    L *= L_step;
+    if (L > 1e30) break;
+  }
+
+  // Upper bracket: shrink U from n until sum(d/(d+U)) >= 1
+  double U = (double) d.n_elem;
+  while (arma::sum(d / (d + U)) < 1.0) {
+    U -= 1.0;
+    if (U <= L) { U = L * 10.0; break; }
+  }
+
+  // Golden section
+  const double gr = (std::sqrt(5.0) - 1.0) / 2.0;
+  double X1 = L + (1.0 - gr) * (U - L);
+  double X2 = L + gr * (U - L);
+  double S1 = krls_loo_loss_inline(d, V, Vsq, Vty, X1);
+  double S2 = krls_loo_loss_inline(d, V, Vsq, Vty, X2);
+  int iter = 0;
+  while (std::abs(S1 - S2) > lam_tol && iter < 200) {
+    if (S1 < S2) {
+      U = X2; X2 = X1; X1 = L + (1.0 - gr) * (U - L);
+      S2 = S1; S1 = krls_loo_loss_inline(d, V, Vsq, Vty, X1);
+    } else {
+      L = X1; X1 = X2; X2 = L + gr * (U - L);
+      S1 = S2; S2 = krls_loo_loss_inline(d, V, Vsq, Vty, X2);
+    }
+    ++iter;
+  }
+  double lam = 0.5 * (X1 + X2);
+
+  // Closed-form ridge solution in eigenbasis: alpha = V * (Vty / (d + lam))
+  arma::vec alpha = V * (Vty / (d + lam));
+  arma::vec yhat  = K_te * alpha;
+  mse_out = arma::mean(arma::square(y_te - yhat));
+  lam_out = lam;
+}
+
+// [[Rcpp::export]]
+Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
+                                   const arma::vec& y_tr, const arma::vec& y_te,
+                                   const arma::vec& sigma_grid,
+                                   Rcpp::List lambda_args,
+                                   int nthreads) {
+  const arma::uword nsigma = sigma_grid.n_elem;
+  arma::vec mse(nsigma, arma::fill::zeros);
+  arma::vec lam(nsigma, arma::fill::zeros);
+
+  double lam_tol = Rcpp::as<double>(lambda_args["tol"]);
+  double L0      = Rcpp::as<double>(lambda_args["L0"]);
+  double L_step  = Rcpp::as<double>(lambda_args["L_step"]);
+
+  // Sequential loop. Task 4 swaps in parallelFor.
+  for (arma::uword i = 0; i < nsigma; ++i) {
+    double m = 0.0, l = 0.0;
+    krls_one_sigma(D_tr, D_te, y_tr, y_te, sigma_grid(i),
+                   lam_tol, L0, L_step, m, l);
+    mse(i) = m;
+    lam(i) = l;
+  }
+
+  // Wrap as plain NumericVector (no dim attribute) so tests comparing
+  // against R-side numeric vectors pass without dim mismatches.
+  Rcpp::NumericVector mse_out(nsigma), lam_out(nsigma);
+  for (arma::uword i = 0; i < nsigma; ++i) {
+    mse_out[i] = mse(i);
+    lam_out[i] = lam(i);
+  }
+
+  return Rcpp::List::create(
+    Rcpp::Named("mse_per_sigma")    = mse_out,
+    Rcpp::Named("lambda_per_sigma") = lam_out,
+    Rcpp::Named("nthreads_used")    = 1
+  );
+}

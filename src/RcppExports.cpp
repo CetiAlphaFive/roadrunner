@@ -197,6 +197,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_autotune_inner_cpp
+Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te, const arma::vec& y_tr, const arma::vec& y_te, const arma::vec& sigma_grid, Rcpp::List lambda_args, int nthreads);
+RcppExport SEXP _roadrunner_krls_autotune_inner_cpp(SEXP D_trSEXP, SEXP D_teSEXP, SEXP y_trSEXP, SEXP y_teSEXP, SEXP sigma_gridSEXP, SEXP lambda_argsSEXP, SEXP nthreadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type D_tr(D_trSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type D_te(D_teSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y_tr(y_trSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y_te(y_teSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type sigma_grid(sigma_gridSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type lambda_args(lambda_argsSEXP);
+    Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_autotune_inner_cpp(D_tr, D_te, y_tr, y_te, sigma_grid, lambda_args, nthreads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -211,6 +228,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_avg_deriv_var_cpp", (DL_FUNC) &_roadrunner_krls_avg_deriv_var_cpp, 7},
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},
     {"_roadrunner_krls_pairwise_sqdist_cpp", (DL_FUNC) &_roadrunner_krls_pairwise_sqdist_cpp, 2},
+    {"_roadrunner_krls_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_autotune_inner_cpp, 7},
     {NULL, NULL, 0}
 };
 

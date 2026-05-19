@@ -49,3 +49,7 @@ krls_pairwise_sqdist_cpp <- function(X_a, X_b) {
     .Call(`_roadrunner_krls_pairwise_sqdist_cpp`, X_a, X_b)
 }
 
+krls_autotune_inner_cpp <- function(D_tr, D_te, y_tr, y_te, sigma_grid, lambda_args, nthreads) {
+    .Call(`_roadrunner_krls_autotune_inner_cpp`, D_tr, D_te, y_tr, y_te, sigma_grid, lambda_args, nthreads)
+}
+

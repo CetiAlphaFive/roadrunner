@@ -27,3 +27,80 @@ test_that("DIST-3: no negative leakage on near-zero rows (FP rounding)", {
   expect_true(all(D >= 0))
   expect_true(all(diag(D) == 0 | diag(D) < 1e-20))
 })
+
+test_that("INNER-1: krls_autotune_inner_cpp matches sequential R reference", {
+  set.seed(3L)
+  n_tr <- 60L; n_te <- 20L; p <- 4L
+  X_tr <- matrix(rnorm(n_tr * p), n_tr, p)
+  X_te <- matrix(rnorm(n_te * p), n_te, p)
+  y_tr <- as.numeric(rowSums(X_tr) + 0.3 * rnorm(n_tr))
+  y_te <- as.numeric(rowSums(X_te) + 0.3 * rnorm(n_te))
+
+  D_tr <- roadrunner:::krls_pairwise_sqdist_cpp(X_tr, X_tr)
+  D_te <- roadrunner:::krls_pairwise_sqdist_cpp(X_te, X_tr)
+
+  sigma_grid <- c(2, 4, 8, 16)
+
+  ref_mse <- numeric(length(sigma_grid))
+  ref_lam <- numeric(length(sigma_grid))
+  for (i in seq_along(sigma_grid)) {
+    s <- sigma_grid[i]
+    K_tr <- exp(-D_tr / s)
+    K_te <- exp(-D_te / s)
+    e    <- roadrunner:::krls_eig_cpp(K_tr)
+    d    <- e$values
+    V    <- e$vectors
+    Vty  <- as.numeric(crossprod(V, y_tr))
+    Vsq  <- roadrunner:::krls_vsq_cpp(V)
+    L    <- .Machine$double.eps
+    q    <- which.min(abs(d - max(d) / 1000))
+    while (sum(d / (d + L)) > q) L <- L * 10
+    U    <- length(y_tr)
+    while (sum(d / (d + U)) < 1) U <- U - 1
+    gr   <- (sqrt(5) - 1) / 2
+    X1 <- L + (1 - gr) * (U - L); X2 <- L + gr * (U - L)
+    S1 <- roadrunner:::krls_loo_loss_cpp(d, V, Vsq, Vty, X1)
+    S2 <- roadrunner:::krls_loo_loss_cpp(d, V, Vsq, Vty, X2)
+    while (abs(S1 - S2) > 1e-6) {
+      if (S1 < S2) { U <- X2; X2 <- X1; X1 <- L + (1 - gr) * (U - L)
+                     S2 <- S1; S1 <- roadrunner:::krls_loo_loss_cpp(d, V, Vsq, Vty, X1)
+      } else      { L <- X1; X1 <- X2; X2 <- L + gr * (U - L)
+                     S1 <- S2; S2 <- roadrunner:::krls_loo_loss_cpp(d, V, Vsq, Vty, X2) }
+    }
+    lam <- (X1 + X2) / 2
+    sol <- roadrunner:::krls_solve_cpp(d, V, Vsq, Vty, lam)
+    alpha <- sol$coeffs
+    yhat  <- as.numeric(K_te %*% alpha)
+    ref_mse[i] <- mean((y_te - yhat)^2)
+    ref_lam[i] <- lam
+  }
+
+  out <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, sigma_grid,
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 1L
+  )
+  expect_equal(out$mse_per_sigma, ref_mse, tolerance = 1e-9)
+  expect_equal(out$lambda_per_sigma, ref_lam, tolerance = 1e-9)
+})
+
+test_that("INNER-2: sigma_grid length 1 degenerate path works", {
+  set.seed(4L)
+  n_tr <- 40L; n_te <- 10L; p <- 3L
+  X_tr <- matrix(rnorm(n_tr * p), n_tr, p)
+  X_te <- matrix(rnorm(n_te * p), n_te, p)
+  y_tr <- rnorm(n_tr); y_te <- rnorm(n_te)
+  D_tr <- roadrunner:::krls_pairwise_sqdist_cpp(X_tr, X_tr)
+  D_te <- roadrunner:::krls_pairwise_sqdist_cpp(X_te, X_tr)
+  out <- roadrunner:::krls_autotune_inner_cpp(
+    D_tr, D_te, y_tr, y_te, c(5.0),
+    list(tol = 1e-6, L0 = .Machine$double.eps, L_step = 10,
+         U_start_from_n = TRUE),
+    nthreads = 1L
+  )
+  expect_length(out$mse_per_sigma, 1L)
+  expect_length(out$lambda_per_sigma, 1L)
+  expect_true(is.finite(out$mse_per_sigma))
+  expect_true(out$lambda_per_sigma > 0)
+})
