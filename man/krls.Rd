@@ -287,6 +287,15 @@ to the non-autotuned default.  This is the expected behaviour — it confirms
 that the default sigma is well-chosen for these DGPs — not a failure of
 autotune.  Autotune yields improvements when the optimal sigma departs from
 the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).
+
+Since v0.0.0.9042 the autotune inner loop is parallelised over sigma
+candidates using \code{RcppParallel} (TBB). The pairwise squared-distance
+matrix is computed once per CV fold and reused across every sigma in
+the grid (\code{exp(-D / sigma)} is then a cheap elementwise op).
+Determinism is preserved: each worker writes to a unique slot in the
+output vectors, so the result is byte-identical regardless of
+\code{autotune.nthreads}. Pass \code{autotune.nthreads = 1} to force strictly
+sequential execution.
 }
 \note{
 At a fixed \verb{(sigma, lambda)} fits remain byte-identical to all earlier
@@ -300,6 +309,14 @@ The sigma anchor formula was refined in v0.0.0.9041 from the raw median
 (\code{median(d2)}) to the geomean_p formula (\code{sqrt(median(d2) * p)}).  To
 restore the v0.0.0.9040 median anchor, pass
 \code{sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)}.
+
+Phase 1 speedup (v0.0.0.9042): parallel autotune assumes single-threaded
+BLAS for the small kernel operations inside the parallel region. If you
+have set a high process-global BLAS thread count (e.g. via
+\code{RhpcBLASctl::blas_set_num_threads(8)}), consider resetting to 1 around
+\code{krls(..., autotune = TRUE)} calls to avoid oversubscription. The
+BLAS-heavy distance computation runs OUTSIDE the parallel region and
+benefits from multi-threaded BLAS.
 }
 \examples{
 set.seed(1)

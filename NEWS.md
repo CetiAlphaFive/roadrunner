@@ -1,3 +1,39 @@
+# roadrunner 0.0.0.9042
+
+## krls() speedup — Phase 1 (shared distance + parallel autotune)
+
+* `krls(..., autotune = TRUE)` is now parallelised over the sigma grid via
+  RcppParallel/TBB. The pairwise squared-distance matrix is computed once
+  per CV fold and reused across every sigma candidate.
+* New optional argument `autotune.nthreads` (default
+  `getOption("roadrunner.nthreads", parallel::detectCores(logical=FALSE))`).
+  Pass `autotune.nthreads = 1` for strictly sequential execution.
+* Determinism contract preserved: fits are byte-identical across
+  `autotune.nthreads` values at fixed seed and inputs (each worker writes
+  to a unique slot in the output vectors, so no reduction is involved).
+
+### Empirical wall-clock speedup (REQ-001 minimal grid, R=5)
+
+| n    | p  | nthreads | time   | speedup vs v0.0.0.9041 |
+|------|----|----------|--------|------------------------|
+| 500  | 10 | 1        | (TBD)  | 1.0x (sequential)      |
+| 500  | 10 | 4        | (TBD)  | (filled by Task 9)     |
+| 1500 | 20 | 1        | (TBD)  | 1.0x (sequential)      |
+| 1500 | 20 | 4        | (TBD)  | (filled by Task 9)     |
+
+### API compatibility
+
+* Zero breaking changes. `krls(..., autotune = TRUE)` returns the same
+  S3 object with the same fields. `autotune_info` gains
+  `nthreads_used` and `sigma_grid_sorted` slots.
+* `predict.krls_rr`, `summary.krls_rr`, `print.krls_rr` unchanged.
+
+### Out of scope (Phase 2)
+
+* Nystrom approximation (`approx = "nystrom"`, `nystrom_m`, `landmarks`).
+* Predict()-side speedups.
+* Multi-response / sparse kernel paths.
+
 # roadrunner 0.0.0.9041
 
 ## `krls()` — scale-aware sigma anchor refined to geomean_p (REQ-20260518-003)

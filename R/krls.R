@@ -201,6 +201,15 @@
 #' autotune.  Autotune yields improvements when the optimal sigma departs from
 #' the anchor (e.g. sparse / linear DGPs where a much wider kernel is better).
 #'
+#' Since v0.0.0.9042 the autotune inner loop is parallelised over sigma
+#' candidates using `RcppParallel` (TBB). The pairwise squared-distance
+#' matrix is computed once per CV fold and reused across every sigma in
+#' the grid (`exp(-D / sigma)` is then a cheap elementwise op).
+#' Determinism is preserved: each worker writes to a unique slot in the
+#' output vectors, so the result is byte-identical regardless of
+#' `autotune.nthreads`. Pass `autotune.nthreads = 1` to force strictly
+#' sequential execution.
+#'
 #' @note
 #' At a fixed `(sigma, lambda)` fits remain byte-identical to all earlier
 #' versions of roadrunner KRLS.  The four defaults changed in v0.0.0.9040
@@ -213,6 +222,14 @@
 #' (`median(d2)`) to the geomean_p formula (`sqrt(median(d2) * p)`).  To
 #' restore the v0.0.0.9040 median anchor, pass
 #' `sigma = stats::median(as.numeric(stats::dist(scale(X)))^2)`.
+#'
+#' Phase 1 speedup (v0.0.0.9042): parallel autotune assumes single-threaded
+#' BLAS for the small kernel operations inside the parallel region. If you
+#' have set a high process-global BLAS thread count (e.g. via
+#' `RhpcBLASctl::blas_set_num_threads(8)`), consider resetting to 1 around
+#' `krls(..., autotune = TRUE)` calls to avoid oversubscription. The
+#' BLAS-heavy distance computation runs OUTSIDE the parallel region and
+#' benefits from multi-threaded BLAS.
 #'
 #' @return An object of S3 class `c("krls_rr", "krls")` with components
 #'   mirroring `KRLS::krls()`: `K`, `coeffs`, `Looe`, `fitted`, `X`,
