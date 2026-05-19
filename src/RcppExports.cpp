@@ -185,6 +185,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_pairwise_sqdist_cpp
+arma::mat krls_pairwise_sqdist_cpp(const arma::mat& X_a, const arma::mat& X_b);
+RcppExport SEXP _roadrunner_krls_pairwise_sqdist_cpp(SEXP X_aSEXP, SEXP X_bSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X_a(X_aSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type X_b(X_bSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_pairwise_sqdist_cpp(X_a, X_b));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -198,6 +210,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_deriv_cpp", (DL_FUNC) &_roadrunner_krls_deriv_cpp, 4},
     {"_roadrunner_krls_avg_deriv_var_cpp", (DL_FUNC) &_roadrunner_krls_avg_deriv_var_cpp, 7},
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},
+    {"_roadrunner_krls_pairwise_sqdist_cpp", (DL_FUNC) &_roadrunner_krls_pairwise_sqdist_cpp, 2},
     {NULL, NULL, 0}
 };
 

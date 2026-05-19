@@ -45,3 +45,7 @@ krls_vsq_cpp <- function(V) {
     .Call(`_roadrunner_krls_vsq_cpp`, V)
 }
 
+krls_pairwise_sqdist_cpp <- function(X_a, X_b) {
+    .Call(`_roadrunner_krls_pairwise_sqdist_cpp`, X_a, X_b)
+}
+

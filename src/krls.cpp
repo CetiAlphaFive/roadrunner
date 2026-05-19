@@ -250,3 +250,26 @@ arma::vec krls_avg_deriv_var_cpp(const arma::mat& X, const arma::mat& K,
 arma::mat krls_vsq_cpp(const arma::mat& V) {
   return V % V;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1 (v0.0.0.9042): shared pairwise squared-distance matrix.
+//
+// D[i, j] = ||X_a[i, ] - X_b[j, ]||^2
+//
+// Identity: D = ||X_a||^2 (row sums) + ||X_b||^2^T - 2 X_a X_b^T
+// One dgemm dominates; tiny negatives clamped to 0 to absorb FP noise.
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+arma::mat krls_pairwise_sqdist_cpp(const arma::mat& X_a, const arma::mat& X_b) {
+  if (X_a.n_cols != X_b.n_cols) {
+    Rcpp::stop("krls_pairwise_sqdist_cpp: X_a and X_b must have same n_cols");
+  }
+  arma::vec ra = arma::sum(arma::square(X_a), 1);   // n_a x 1
+  arma::vec rb = arma::sum(arma::square(X_b), 1);   // n_b x 1
+  arma::mat D = -2.0 * (X_a * X_b.t());             // n_a x n_b
+  D.each_col() += ra;
+  D.each_row() += rb.t();
+  D.elem(arma::find(D < 0.0)).zeros();              // FP-noise floor
+  return D;
+}
