@@ -154,3 +154,76 @@ test_that("INNER-EQUIV: nthreads=1 vs nthreads=4 byte-identical on inner_cpp", {
   expect_identical(o1$mse_per_sigma, o4$mse_per_sigma)
   expect_identical(o1$lambda_per_sigma, o4$lambda_per_sigma)
 })
+
+test_that("EQUIV-1: byte-identical at nthreads=1 vs v0.0.0.9041 snapshot", {
+  baseline_path <- testthat::test_path("..", "..", "inst", "testdata",
+                                       "autotune-baseline-9041.rds")
+  skip_if_not(file.exists(baseline_path),
+              "autotune-baseline-9041.rds missing")
+  baseline <- readRDS(baseline_path)
+
+  set.seed(baseline$seed)
+  X <- matrix(rnorm(baseline$n * baseline$p), baseline$n, baseline$p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.5 * rnorm(baseline$n))
+
+  fit <- roadrunner::krls(
+    X = X, y = y, autotune = TRUE,
+    derivative = FALSE, vcov = FALSE,
+    autotune.nthreads = 1L
+  )
+
+  expect_identical(fit$sigma,  baseline$sigma)
+  expect_identical(fit$lambda, baseline$lambda)
+  expect_identical(fit$coeffs, baseline$coeffs)
+})
+
+test_that("EQUIV-2: nthreads=1 vs nthreads=4 byte-identical (determinism contract)", {
+  set.seed(7L)
+  n <- 150L; p <- 4L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.5 * rnorm(n))
+  # Pass seed.cv so fold construction is deterministic across calls.
+  fit1 <- roadrunner::krls(X, y, autotune = TRUE, derivative = FALSE,
+                           vcov = FALSE, autotune.nthreads = 1L,
+                           seed.cv = 7L)
+  fit4 <- roadrunner::krls(X, y, autotune = TRUE, derivative = FALSE,
+                           vcov = FALSE, autotune.nthreads = 4L,
+                           seed.cv = 7L)
+  expect_identical(fit1$sigma,  fit4$sigma)
+  expect_identical(fit1$lambda, fit4$lambda)
+  expect_identical(fit1$coeffs, fit4$coeffs)
+})
+
+test_that("EQUIV-3: shuffled autotune.grid input yields identical fit", {
+  set.seed(8L)
+  n <- 120L; p <- 4L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.5 * rnorm(n))
+  grid_sorted   <- c(0.5, 1, 2, 4, 8, 16)
+  grid_shuffled <- sample(grid_sorted)
+  fit_s <- roadrunner::krls(X, y, autotune = TRUE, derivative = FALSE,
+                            vcov = FALSE, autotune.grid = grid_sorted,
+                            seed.cv = 8L)
+  fit_h <- roadrunner::krls(X, y, autotune = TRUE, derivative = FALSE,
+                            vcov = FALSE, autotune.grid = grid_shuffled,
+                            seed.cv = 8L)
+  expect_identical(fit_s$sigma,  fit_h$sigma)
+  expect_identical(fit_s$lambda, fit_h$lambda)
+})
+
+test_that("EQUIV-4: (ncross x nfold) variations all stable across nthreads", {
+  set.seed(9L)
+  n <- 120L; p <- 3L
+  X <- matrix(rnorm(n * p), n, p)
+  y <- rnorm(n)
+  for (cfg in list(c(2, 2), c(2, 5), c(3, 10))) {
+    f1 <- roadrunner::krls(X, y, autotune = TRUE, ncross = cfg[1],
+                           nfold = cfg[2], derivative = FALSE, vcov = FALSE,
+                           autotune.nthreads = 1L, seed.cv = 9L)
+    f4 <- roadrunner::krls(X, y, autotune = TRUE, ncross = cfg[1],
+                           nfold = cfg[2], derivative = FALSE, vcov = FALSE,
+                           autotune.nthreads = 4L, seed.cv = 9L)
+    expect_identical(f1$sigma,  f4$sigma)
+    expect_identical(f1$lambda, f4$lambda)
+  }
+})
