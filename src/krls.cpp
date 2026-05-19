@@ -447,6 +447,191 @@ Rcpp::List krls_autotune_inner_cpp(const arma::mat& D_tr, const arma::mat& D_te,
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2 (v0.0.0.9043): Nystrom single-fit at fixed sigma.
+//
+// Builds C = K(X, Z), W = K(Z, Z), eig_sym(W) -> (U, D), regularizes via
+// nystrom_eps relative ridge, builds Phi = C @ U @ diag(D_reg^{-1/2}),
+// SVD of Phi for the LOO lambda objective, golden-section search,
+// recovers alpha = U @ (Dinvsqrt * beta).
+//
+// Reference: /tmp/krls-reference/R/nystrom.R::.fit_krls_nystrom
+//
+// Bracket scheme: LINEAR `L_lam += 0.05` step matches the reference R
+// `.nystrom_lambda_bounds`. Required so the parity test (NYS-FIT-1) can
+// hit `tol = 1e-7` on coeffs against the reference implementation; using a
+// log-scale step would bracket lambda from a different starting point and
+// drift the golden-section minimum by O(1e-5).
+// ---------------------------------------------------------------------------
+
+static double nystrom_loo_loss(const arma::mat& U_phi,
+                               const arma::vec& Sigma2,
+                               const arma::vec& y,
+                               double lambda) {
+  arma::vec w     = Sigma2 / (Sigma2 + lambda);
+  arma::vec Uty   = U_phi.t() * y;
+  arma::vec yfit  = U_phi * (w % Uty);
+  // diagS_i = sum_k U_phi(i,k)^2 * w_k
+  arma::mat Usq = arma::square(U_phi);
+  arma::vec diagS = Usq * w;
+  arma::vec denom = 1.0 - diagS;
+  if (arma::any(denom <= std::numeric_limits<double>::epsilon())) {
+    return std::numeric_limits<double>::max();
+  }
+  arma::vec resid = (y - yfit) / denom;
+  return arma::dot(resid, resid);
+}
+
+// [[Rcpp::export]]
+Rcpp::List krls_nystrom_fit_cpp(const arma::mat& X_tr, const arma::mat& Z,
+                                const arma::vec& y_tr, double sigma,
+                                Rcpp::List lambda_args, double eps,
+                                bool compute_vcov) {
+  const arma::uword n = X_tr.n_rows;
+  const arma::uword m = Z.n_rows;
+
+  // C = K(X_tr, Z), W = K(Z, Z)
+  arma::mat D_tr_Z = krls_pairwise_sqdist_cpp(X_tr, Z);
+  arma::mat D_Z_Z  = krls_pairwise_sqdist_cpp(Z,    Z);
+  arma::mat C = arma::exp(-D_tr_Z / sigma);
+  arma::mat W = arma::exp(-D_Z_Z  / sigma);
+
+  // eig_sym(W) -> (U, D); arma returns ASCENDING. Reference uses base::eigen
+  // (descending) but operations downstream are invariant to eigenvector
+  // ordering (we apply Dinvsqrt componentwise and combine via U * (...)),
+  // so leaving ASCENDING is numerically equivalent.
+  arma::vec D;
+  arma::mat U;
+  arma::eig_sym(D, U, W);
+  D = arma::clamp(D, 0.0, arma::datum::inf);
+  double Dmax = D.max();
+  if (Dmax <= 0.0) {
+    Rcpp::stop("krls_nystrom_fit_cpp: anchor W numerically zero; try larger sigma");
+  }
+  arma::vec D_reg   = arma::clamp(D, eps * Dmax, arma::datum::inf);
+  arma::vec Dinv2   = 1.0 / arma::sqrt(D_reg);
+  arma::uword floored_count = arma::sum(arma::conv_to<arma::uvec>::from(D < eps * Dmax));
+  double D_min_raw = D.min();
+
+  // Phi = C @ U @ diag(Dinv2)   (n x m)
+  arma::mat Phi = C * U;
+  Phi.each_row() %= Dinv2.t();
+
+  // SVD of Phi (economy form to match base::svd() in the reference: for
+  // Phi n x m with n >= m we want U n x m, V m x m, d length m).
+  arma::mat U_phi, V_phi;
+  arma::vec sigma_phi;
+  bool ok = arma::svd_econ(U_phi, sigma_phi, V_phi, Phi);
+  if (!ok) {
+    Rcpp::stop("krls_nystrom_fit_cpp: SVD of Phi failed");
+  }
+  arma::vec Sigma2 = arma::square(sigma_phi);
+  if (Sigma2.max() <= 0.0) {
+    Rcpp::stop("krls_nystrom_fit_cpp: Nystrom feature spectrum is zero; "
+               "increase sigma or change landmarks");
+  }
+
+  // Golden-section lambda search bounds (anchored at Sigma2)
+  double L0     = Rcpp::as<double>(lambda_args["L0"]);
+  double tol    = Rcpp::as<double>(lambda_args["tol"]);
+
+  double Smax = Sigma2.max();
+  double U_lam = Smax;
+  int iter = 0;
+  while (arma::sum(Sigma2 / (Sigma2 + U_lam)) >= 1.0 && iter < 200) {
+    U_lam *= 2.0;
+    ++iter;
+  }
+  // L: index q = which.min(|Sigma2 - Smax/1000|), 1-based equivalent.
+  // Matches the reference (which.min returns the 1-based position of the
+  // smallest |Sigma2 - target|; here we use 0-based q_idx then add 1).
+  double tgt = Smax / 1000.0;
+  arma::uword q_idx = 0;
+  double mind = std::abs(Sigma2(0) - tgt);
+  for (arma::uword i = 1; i < Sigma2.n_elem; ++i) {
+    double dd = std::abs(Sigma2(i) - tgt);
+    if (dd < mind) { mind = dd; q_idx = i; }
+  }
+  double q_R = (double)(q_idx + 1);
+  double L_lam = L0;
+  // LINEAR step matching reference R `.nystrom_lambda_bounds` (L + 0.05).
+  // Per the user/spec decision (Task 3 critical numerical detail), the
+  // C++ uses the same linear climb so NYS-FIT-1 reaches tol=1e-7 on coeffs.
+  while (arma::sum(Sigma2 / (Sigma2 + L_lam)) > q_R && L_lam < Smax) {
+    L_lam += 0.05;
+  }
+  if (!(L_lam < U_lam)) {
+    Rcpp::stop("krls_nystrom_fit_cpp: lambda bounds collapsed; "
+               "supply L and U explicitly");
+  }
+
+  // Golden-section search (mirrors reference: X1 = L + gr*(U-L),
+  // X2 = U - gr*(U-L), with gr = 0.381966 = (3 - sqrt(5)) / 2).
+  const double gr = (3.0 - std::sqrt(5.0)) / 2.0;
+  double X1 = L_lam + gr * (U_lam - L_lam);
+  double X2 = U_lam - gr * (U_lam - L_lam);
+  double S1 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X1);
+  double S2 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X2);
+  int it = 0;
+  while (std::abs(S1 - S2) > tol && it < 1000) {
+    if (S1 < S2) {
+      U_lam = X2; X2 = X1; X1 = L_lam + gr * (U_lam - L_lam);
+      S2 = S1; S1 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X1);
+    } else {
+      L_lam = X1; X1 = X2; X2 = U_lam - gr * (U_lam - L_lam);
+      S1 = S2; S2 = nystrom_loo_loss(U_phi, Sigma2, y_tr, X2);
+    }
+    ++it;
+  }
+  // Reference returns whichever of X1/X2 has the smaller objective; not
+  // the midpoint. Matching that to keep the parity test tight.
+  double lambda = (S1 < S2) ? X1 : X2;
+
+  // Solve beta + alpha
+  arma::vec Uty   = U_phi.t() * y_tr;
+  arma::vec w     = Sigma2 / (Sigma2 + lambda);
+  arma::vec yfit  = U_phi * (w % Uty);
+  arma::vec beta_coef = V_phi * ((sigma_phi % Uty) / (Sigma2 + lambda));
+  arma::vec alpha = U * (Dinv2 % beta_coef);
+
+  // Optional vcov
+  arma::mat vcov_alpha;
+  if (compute_vcov) {
+    double sigmasq = arma::dot(y_tr - yfit, y_tr - yfit) / (double) n;
+    arma::vec beta_weights = sigmasq * Sigma2 / arma::square(Sigma2 + lambda);
+    arma::mat Vw = V_phi;
+    Vw.each_row() %= beta_weights.t();
+    arma::mat vcov_beta = Vw * V_phi.t();
+    arma::mat alpha_map = U;
+    alpha_map.each_row() %= Dinv2.t();
+    vcov_alpha = alpha_map * vcov_beta * alpha_map.t();
+  }
+
+  Rcpp::List W_eigen = Rcpp::List::create(
+    Rcpp::Named("values")  = D,
+    Rcpp::Named("vectors") = U
+  );
+
+  // coeffs as length-m column matrix (matches reference shape)
+  arma::mat coeffs_mat(alpha.n_elem, 1);
+  coeffs_mat.col(0) = alpha;
+
+  return Rcpp::List::create(
+    Rcpp::Named("coeffs")           = coeffs_mat,
+    Rcpp::Named("fitted_std")       = yfit,
+    Rcpp::Named("lambda")           = lambda,
+    Rcpp::Named("landmarks")        = Z,
+    Rcpp::Named("W_eigen")          = W_eigen,
+    Rcpp::Named("Dinvsqrt")         = Dinv2,
+    Rcpp::Named("Sigma2")           = Sigma2,
+    Rcpp::Named("vcov_alpha")       = vcov_alpha,
+    Rcpp::Named("floored_count")    = (int) floored_count,
+    Rcpp::Named("D_min_raw")        = D_min_raw,
+    Rcpp::Named("D_max_raw")        = Dmax,
+    Rcpp::Named("nystrom_m")        = (int) m
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2 (v0.0.0.9043): Nystrom predict.
 //
 //   yhat = exp(-||X_new - Z||^2 / sigma) @ alpha

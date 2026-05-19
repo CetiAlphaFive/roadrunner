@@ -214,6 +214,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_nystrom_fit_cpp
+Rcpp::List krls_nystrom_fit_cpp(const arma::mat& X_tr, const arma::mat& Z, const arma::vec& y_tr, double sigma, Rcpp::List lambda_args, double eps, bool compute_vcov);
+RcppExport SEXP _roadrunner_krls_nystrom_fit_cpp(SEXP X_trSEXP, SEXP ZSEXP, SEXP y_trSEXP, SEXP sigmaSEXP, SEXP lambda_argsSEXP, SEXP epsSEXP, SEXP compute_vcovSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X_tr(X_trSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Z(ZSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y_tr(y_trSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma(sigmaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type lambda_args(lambda_argsSEXP);
+    Rcpp::traits::input_parameter< double >::type eps(epsSEXP);
+    Rcpp::traits::input_parameter< bool >::type compute_vcov(compute_vcovSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_nystrom_fit_cpp(X_tr, Z, y_tr, sigma, lambda_args, eps, compute_vcov));
+    return rcpp_result_gen;
+END_RCPP
+}
 // krls_nystrom_predict_cpp
 Rcpp::NumericVector krls_nystrom_predict_cpp(const arma::mat& X_new, const arma::mat& Z, const arma::vec& alpha, double sigma);
 RcppExport SEXP _roadrunner_krls_nystrom_predict_cpp(SEXP X_newSEXP, SEXP ZSEXP, SEXP alphaSEXP, SEXP sigmaSEXP) {
@@ -243,6 +260,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},
     {"_roadrunner_krls_pairwise_sqdist_cpp", (DL_FUNC) &_roadrunner_krls_pairwise_sqdist_cpp, 2},
     {"_roadrunner_krls_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_autotune_inner_cpp, 7},
+    {"_roadrunner_krls_nystrom_fit_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_fit_cpp, 7},
     {"_roadrunner_krls_nystrom_predict_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_predict_cpp, 4},
     {NULL, NULL, 0}
 };

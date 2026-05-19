@@ -106,6 +106,62 @@ test_that("NYS-XK-1: krls_nystrom_predict_cpp matches naive reference", {
   expect_equal(yhat_cpp, yhat_ref, tolerance = 1e-10)
 })
 
+test_that("NYS-FIT-1: krls_nystrom_fit_cpp matches reference R impl", {
+  # Reference impl lives at /tmp/krls-reference/R/nystrom.R
+  ref_path <- "/tmp/krls-reference/R/nystrom.R"
+  skip_if_not(file.exists(ref_path), "reference Nystrom impl missing")
+  ref_env <- new.env()
+  sys.source(ref_path, envir = ref_env)
+
+  set.seed(12L)
+  n <- 80L; d <- 4L; m <- 16L
+  X <- matrix(rnorm(n * d), n, d)
+  y <- as.numeric(rowSums(X[, 1:2]) + 0.3 * rnorm(n))
+  Z <- X[seq(1L, n, length.out = m), , drop = FALSE]
+  sigma <- 6.0; eps <- 1e-9
+
+  lambda_args <- list(tol = 1e-6,
+                      L0  = .Machine$double.eps,
+                      L_step = 10.0,
+                      U_start_from_n = TRUE)
+
+  out_cpp <- roadrunner:::krls_nystrom_fit_cpp(
+    X, Z, y, sigma, lambda_args, eps, compute_vcov = FALSE
+  )
+
+  # Reference
+  ref_resolved <- list(matrix = Z, indices = NULL, method_used = "user")
+  out_ref <- ref_env$.fit_krls_nystrom(
+    X, y, sigma, ref_resolved,
+    lambda = NULL, nystrom_eps = eps,
+    L = NULL, U = NULL, tol = 1e-6, noisy = FALSE,
+    compute_vcov = FALSE, lambda_method = "loo"
+  )
+
+  expect_equal(as.numeric(out_cpp$coeffs), as.numeric(out_ref$coeffs),
+               tolerance = 1e-7)
+  expect_equal(out_cpp$lambda, out_ref$lambda, tolerance = 1e-6)
+})
+
+test_that("NYS-FIT-2: byte-identical fits at fixed sigma+landmarks", {
+  set.seed(13L)
+  n <- 60L; d <- 3L; m <- 12L
+  X <- matrix(rnorm(n * d), n, d)
+  y <- rnorm(n)
+  Z <- X[1:m, , drop = FALSE]
+  sigma <- 4.0
+
+  lambda_args <- list(tol = 1e-6, L0 = .Machine$double.eps,
+                      L_step = 10.0, U_start_from_n = TRUE)
+
+  o1 <- roadrunner:::krls_nystrom_fit_cpp(X, Z, y, sigma, lambda_args,
+                                          1e-9, compute_vcov = FALSE)
+  o2 <- roadrunner:::krls_nystrom_fit_cpp(X, Z, y, sigma, lambda_args,
+                                          1e-9, compute_vcov = FALSE)
+  expect_identical(o1$coeffs, o2$coeffs)
+  expect_identical(o1$lambda, o2$lambda)
+})
+
 test_that("NYS-GETLM-1: get_landmarks returns landmarks in requested scale", {
   # Construct a minimal fake Nystrom fit
   set.seed(11L)
