@@ -24,7 +24,7 @@ krls(X, ...)
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  lambda.method = c("loo", "cv"),
+  lambda.method = c("loo", "gcv", "cv"),
   lambda.grid = NULL,
   nfold = 0L,
   ncross = NULL,
@@ -42,7 +42,7 @@ krls(X, ...)
   landmarks = NULL,
   landmark_method = c("random", "kmeans"),
   landmark_seed = NULL,
-  nystrom_eps = 0.000000001,
+  nystrom_eps = 1e-09,
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -114,7 +114,10 @@ the solve.  \code{NULL} (default) keeps all eigenvalues.}
 
 \item{lambda.method}{Lambda-selection rule. \code{"loo"} (default) uses
 the closed-form leave-one-out golden-section search; \code{"cv"}
-uses K-fold CV over a grid (\code{nfold > 0} required).}
+uses K-fold CV over a grid (\code{nfold > 0} required). \code{"gcv"} uses
+the closed-form generalised cross-validation criterion (Craven &
+Wahba 1979) using the same eigendecomposition; recommended when
+\code{n} is large or LOO behaves unstably.}
 
 \item{lambda.grid}{Optional numeric vector of lambda candidates for
 \code{lambda.method = "cv"}. \code{NULL} (default) auto-generates a

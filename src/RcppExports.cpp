@@ -143,6 +143,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_gcv_loss_cpp
+double krls_gcv_loss_cpp(const arma::vec& d, const arma::vec& Vty, double yty, int n_y, double lambda);
+RcppExport SEXP _roadrunner_krls_gcv_loss_cpp(SEXP dSEXP, SEXP VtySEXP, SEXP ytySEXP, SEXP n_ySEXP, SEXP lambdaSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type d(dSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type Vty(VtySEXP);
+    Rcpp::traits::input_parameter< double >::type yty(ytySEXP);
+    Rcpp::traits::input_parameter< int >::type n_y(n_ySEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_gcv_loss_cpp(d, Vty, yty, n_y, lambda));
+    return rcpp_result_gen;
+END_RCPP
+}
 // krls_deriv_cpp
 arma::mat krls_deriv_cpp(const arma::mat& X, const arma::mat& K, const arma::vec& c, double sigma);
 RcppExport SEXP _roadrunner_krls_deriv_cpp(SEXP XSEXP, SEXP KSEXP, SEXP cSEXP, SEXP sigmaSEXP) {
@@ -274,6 +289,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_eig_cpp", (DL_FUNC) &_roadrunner_krls_eig_cpp, 1},
     {"_roadrunner_krls_solve_cpp", (DL_FUNC) &_roadrunner_krls_solve_cpp, 5},
     {"_roadrunner_krls_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_loo_loss_cpp, 5},
+    {"_roadrunner_krls_gcv_loss_cpp", (DL_FUNC) &_roadrunner_krls_gcv_loss_cpp, 5},
     {"_roadrunner_krls_deriv_cpp", (DL_FUNC) &_roadrunner_krls_deriv_cpp, 4},
     {"_roadrunner_krls_avg_deriv_var_cpp", (DL_FUNC) &_roadrunner_krls_avg_deriv_var_cpp, 7},
     {"_roadrunner_krls_vsq_cpp", (DL_FUNC) &_roadrunner_krls_vsq_cpp, 1},

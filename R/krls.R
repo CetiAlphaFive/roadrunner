@@ -113,7 +113,10 @@
 #'   the solve.  `NULL` (default) keeps all eigenvalues.
 #' @param lambda.method Lambda-selection rule. `"loo"` (default) uses
 #'   the closed-form leave-one-out golden-section search; `"cv"`
-#'   uses K-fold CV over a grid (`nfold > 0` required).
+#'   uses K-fold CV over a grid (`nfold > 0` required). `"gcv"` uses
+#'   the closed-form generalised cross-validation criterion (Craven &
+#'   Wahba 1979) using the same eigendecomposition; recommended when
+#'   `n` is large or LOO behaves unstably.
 #' @param lambda.grid Optional numeric vector of lambda candidates for
 #'   `lambda.method = "cv"`. `NULL` (default) auto-generates a
 #'   log-spaced grid in `[L, U]`.
@@ -372,7 +375,7 @@ krls.default <- function(X, y,
                          derivative = TRUE, binary = TRUE, vcov = TRUE,
                          weights = NULL,
                          L = NULL, U = NULL, tol = NULL, eigtrunc = NULL,
-                         lambda.method = c("loo", "cv"),
+                         lambda.method = c("loo", "gcv", "cv"),
                          lambda.grid = NULL,
                          nfold = 0L, ncross = NULL, stratify = TRUE,
                          seed.cv = NULL, cv.1se = FALSE,
@@ -396,6 +399,10 @@ krls.default <- function(X, y,
   approx <- match.arg(approx)
   landmark_method <- match.arg(landmark_method)
   nystrom_eps <- .validate_nystrom_eps(nystrom_eps)
+
+  if (lambda.method == "gcv" && approx == "nystrom") {
+    stop("krls: lambda.method = 'gcv' is not supported with approx = 'nystrom'.")
+  }
 
   ## --- print.level / trace harmonisation ---------------------------
   # Phase 8: `trace` is the canonical name (matches ares).  `print.level`
@@ -1145,12 +1152,14 @@ krls.default <- function(X, y,
     Vsq   <- krls_vsq_cpp(V)
     ys_w  <- sqw * ys
     Vty   <- as.numeric(crossprod(V, ys_w))
+    yty   <- sum(ys_w^2)
   } else {
     eo <- krls_eig_cpp(K)
     dvals <- as.numeric(eo$values)
     V     <- eo$vectors
     Vsq   <- krls_vsq_cpp(V)
     Vty   <- as.numeric(crossprod(V, ys))
+    yty   <- sum(ys^2)
   }
 
   ## --- eigentruncation handling (optional) -------------------------
@@ -1166,20 +1175,25 @@ krls.default <- function(X, y,
   }
 
   ## --- lambda selection --------------------------------------------
-  # Phase 3: lambda.method = c('loo', 'cv'). LOO is the back-compat
-  # default and uses the closed-form Hainmueller-Hazlett identity. CV
-  # does K-fold (or repeated K-fold) over an explicit lambda.grid and
-  # picks argmin held-out MSE (or 1-SE), optionally seeded for
-  # reproducibility.
+  # Phase 3: lambda.method = c('loo', 'gcv', 'cv'). LOO is the
+  # back-compat default and uses the closed-form Hainmueller-Hazlett
+  # identity. GCV uses the closed-form Craven-Wahba criterion on the
+  # same eigenbasis. CV does K-fold (or repeated K-fold) over an
+  # explicit lambda.grid and picks argmin held-out MSE (or 1-SE),
+  # optionally seeded for reproducibility.
   cv_diag <- NULL
   if (is.null(lambda)) {
-    if (lambda.method == "loo") {
+    if (lambda.method %in% c("loo", "gcv")) {
       lambda <- .krls_lambdasearch(dvals = dvals, V = V, Vsq = Vsq,
                                    Vty = Vty, n_y = nrow(y),
+                                   yty = yty,
                                    L = L, U = U, tol = tol,
+                                   method = lambda.method,
                                    noisy = isTRUE(trace > 2))
       if (trace > 1) {
-        cat("Lambda that minimizes Loo-Loss is:", round(lambda, 5), "\n")
+        label <- if (lambda.method == "loo") "Loo-Loss" else "GCV"
+        cat("Lambda that minimizes ", label, " is:",
+            round(lambda, 5), "\n", sep = "")
       }
     } else {
       # CV path. Default nfold = 5 if user asked lambda.method='cv' but
@@ -1929,8 +1943,16 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
 ## robustness across a wide range of eigenvalue scales.
 .krls_lambdasearch <- function(dvals, V, Vsq, Vty, n_y,
                                L = NULL, U = NULL, tol = NULL,
+                               method = "loo", yty = NULL,
                                noisy = FALSE) {
+  stopifnot(method %in% c("loo", "gcv"))
+  if (method == "gcv") {
+    stopifnot(is.numeric(yty), length(yty) == 1L, yty >= 0)
+  }
   n <- n_y
+  loss_fn <- switch(method,
+    loo = function(lam) krls_loo_loss_cpp(dvals, V, Vsq, Vty, lam),
+    gcv = function(lam) krls_gcv_loss_cpp(dvals, Vty, yty, n, lam))
   if (is.null(tol)) {
     tol <- 1e-6              ## Fix 2a: was 1e-3 * n
   } else {
@@ -1952,8 +1974,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   gr <- 0.381966
   X1 <- L + gr * (U - L)
   X2 <- U - gr * (U - L)
-  S1 <- krls_loo_loss_cpp(dvals, V, Vsq, Vty, X1)
-  S2 <- krls_loo_loss_cpp(dvals, V, Vsq, Vty, X2)
+  S1 <- loss_fn(X1)
+  S2 <- loss_fn(X2)
   if (noisy) {
     cat("L:", L, "X1:", X1, "X2:", X2, "U:", U, "S1:", S1, "S2:", S2, "\n")
   }
@@ -1962,12 +1984,12 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
       U  <- X2; X2 <- X1
       X1 <- L + gr * (U - L)
       S2 <- S1
-      S1 <- krls_loo_loss_cpp(dvals, V, Vsq, Vty, X1)
+      S1 <- loss_fn(X1)
     } else {
       L  <- X1; X1 <- X2
       X2 <- U - gr * (U - L)
       S1 <- S2
-      S2 <- krls_loo_loss_cpp(dvals, V, Vsq, Vty, X2)
+      S2 <- loss_fn(X2)
     }
     if (noisy) {
       cat("L:", L, "X1:", X1, "X2:", X2, "U:", U,

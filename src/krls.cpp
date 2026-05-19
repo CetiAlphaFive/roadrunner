@@ -185,6 +185,28 @@ double krls_loo_loss_cpp(const arma::vec& d, const arma::mat& V,
   return arma::dot(r, r);
 }
 
+// GCV loss (Craven & Wahba 1979) on the SAME eigenbasis used by LOO.
+//
+//   trH(lam)   = sum d / (d + lam)
+//   num_kept   = sum( (lam / (d + lam))^2 * Vty^2 )
+//   resid_drop = yty - sum(Vty^2)
+//   GCV        = (num_kept + resid_drop) / n /
+//                pow( max(1.0 - trH/n, DEN_FLOOR), 2 )
+//
+// DEN_FLOOR clamps the denominator away from 0 in the interpolation
+// limit (lam -> 0). Picked as 1e-8.
+// [[Rcpp::export]]
+double krls_gcv_loss_cpp(const arma::vec& d, const arma::vec& Vty,
+                         double yty, int n_y, double lambda) {
+  const arma::vec invshrink = lambda / (d + lambda);
+  const double trH   = arma::sum(d / (d + lambda));
+  const double num_k = arma::dot(arma::square(invshrink), arma::square(Vty));
+  const double resid_drop = std::max(0.0, yty - arma::dot(Vty, Vty));
+  const double n     = static_cast<double>(n_y);
+  const double denom = std::max(1.0 - trH / n, 1.0e-8);
+  return (num_k + resid_drop) / n / (denom * denom);
+}
+
 // -------------------------------------------------------------------
 // Pointwise marginal effects.
 //

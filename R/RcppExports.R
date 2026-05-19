@@ -33,6 +33,10 @@ krls_loo_loss_cpp <- function(d, V, Vsq, Vty, lambda) {
     .Call(`_roadrunner_krls_loo_loss_cpp`, d, V, Vsq, Vty, lambda)
 }
 
+krls_gcv_loss_cpp <- function(d, Vty, yty, n_y, lambda) {
+    .Call(`_roadrunner_krls_gcv_loss_cpp`, d, Vty, yty, n_y, lambda)
+}
+
 krls_deriv_cpp <- function(X, K, c, sigma) {
     .Call(`_roadrunner_krls_deriv_cpp`, X, K, c, sigma)
 }
