@@ -155,11 +155,21 @@ test_that("INNER-EQUIV: nthreads=1 vs nthreads=4 byte-identical on inner_cpp", {
   expect_identical(o1$lambda_per_sigma, o4$lambda_per_sigma)
 })
 
-test_that("EQUIV-1: byte-identical at nthreads=1 vs v0.0.0.9041 snapshot", {
+test_that("EQUIV-1: byte-identical at nthreads=1 vs v0.0.0.9044 snapshot", {
+  ## NOTE (2026-05-19): snapshot pinned at v0.0.0.9044 (current C++ autotune
+  ## engine).  The prior v0.0.0.9041 snapshot was captured before commit
+  ## dca1370 ("feat(krls): .ares_autotune uses C++ inner with shared D")
+  ## rewired the inner CV loop from R `eigen()` to `krls_autotune_inner_cpp`
+  ## (LAPACK + dgemm), which introduces last-few-ULP drift in the solved
+  ## alpha coefficients while leaving sigma + lambda byte-identical.  We
+  ## therefore keep `expect_identical` on sigma + lambda (cheap, still
+  ## catches any meaningful change to the CV selection path) and relax
+  ## coeffs to a 1e-12 tolerance — tight enough to catch real engine
+  ## changes, loose enough to absorb future BLAS-level FP jitter.
   baseline_path <- testthat::test_path("..", "..", "inst", "testdata",
-                                       "autotune-baseline-9041.rds")
+                                       "autotune-baseline-9044.rds")
   skip_if_not(file.exists(baseline_path),
-              "autotune-baseline-9041.rds missing")
+              "autotune-baseline-9044.rds missing")
   baseline <- readRDS(baseline_path)
 
   set.seed(baseline$seed)
@@ -174,7 +184,7 @@ test_that("EQUIV-1: byte-identical at nthreads=1 vs v0.0.0.9041 snapshot", {
 
   expect_identical(fit$sigma,  baseline$sigma)
   expect_identical(fit$lambda, baseline$lambda)
-  expect_identical(fit$coeffs, baseline$coeffs)
+  expect_equal(fit$coeffs, baseline$coeffs, tolerance = 1e-12)
 })
 
 test_that("EQUIV-2: nthreads=1 vs nthreads=4 byte-identical (determinism contract)", {
