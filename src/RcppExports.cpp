@@ -305,6 +305,39 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// krls_irls_logistic_cpp
+Rcpp::List krls_irls_logistic_cpp(const arma::mat& K, const arma::vec& y, double lambda, Rcpp::Nullable<Rcpp::NumericVector> w_obs, double tol, int max_iter, int max_halve, int trace);
+RcppExport SEXP _roadrunner_krls_irls_logistic_cpp(SEXP KSEXP, SEXP ySEXP, SEXP lambdaSEXP, SEXP w_obsSEXP, SEXP tolSEXP, SEXP max_iterSEXP, SEXP max_halveSEXP, SEXP traceSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type K(KSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type w_obs(w_obsSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< int >::type max_halve(max_halveSEXP);
+    Rcpp::traits::input_parameter< int >::type trace(traceSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_irls_logistic_cpp(K, y, lambda, w_obs, tol, max_iter, max_halve, trace));
+    return rcpp_result_gen;
+END_RCPP
+}
+// krls_logistic_loo_loss_cpp
+double krls_logistic_loo_loss_cpp(const arma::vec& eta, const arma::vec& y, const arma::vec& p, const arma::vec& W, const arma::vec& H_diag);
+RcppExport SEXP _roadrunner_krls_logistic_loo_loss_cpp(SEXP etaSEXP, SEXP ySEXP, SEXP pSEXP, SEXP WSEXP, SEXP H_diagSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type eta(etaSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type W(WSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type H_diag(H_diagSEXP);
+    rcpp_result_gen = Rcpp::wrap(krls_logistic_loo_loss_cpp(eta, y, p, W, H_diag));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -325,6 +358,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_nystrom_fit_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_fit_cpp, 7},
     {"_roadrunner_krls_nystrom_predict_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_predict_cpp, 4},
     {"_roadrunner_krls_nystrom_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_autotune_inner_cpp, 9},
+    {"_roadrunner_krls_irls_logistic_cpp", (DL_FUNC) &_roadrunner_krls_irls_logistic_cpp, 8},
+    {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
     {NULL, NULL, 0}
 };
 

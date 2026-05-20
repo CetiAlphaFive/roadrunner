@@ -258,6 +258,13 @@
 #' @param ard.imp Importance source for the cheap-tier mapping. `"avgderiv"`
 #'   (default) uses `|avgderivatives[k]|`; `"vsq"` uses
 #'   `mean(derivatives[, k]^2)`, a slightly more robust signal.
+#' @param loss Loss function. `"ls"` (default) is kernel ridge least
+#'   squares (the path through v0.0.0.9049). `"logistic"` optimises
+#'   penalised binomial deviance via IRLS in coefficient space (since
+#'   v0.0.0.9050). Requires `y` strictly in `{0, 1}`. Incompatible with
+#'   `approx = "nystrom"`, `lambda.method` in `c("gcv", "mll")`,
+#'   `varmod != "none"`, and `predict(type = "variance")` — all error
+#'   at fit / predict time.
 #' @param ... Currently unused (caught for forward compatibility).
 #'
 #' @details
@@ -462,12 +469,15 @@ krls.default <- function(X, y,
                          whichkernel = c("gaussian", "linear",
                                           "poly1", "poly2", "poly3", "poly4"),
                          poly_c = 1.0,
+                         loss = c("ls", "logistic"),
                          trace = NULL, nthreads = 0L,
                          print.level = NULL, ...) {
   cl <- match.call()
   na.action <- match.arg(na.action)
   lambda.method <- match.arg(lambda.method)
   varmod <- match.arg(varmod)
+  loss <- match.arg(loss)
+  is_logistic <- identical(loss, "logistic")
   approx <- match.arg(approx)
   landmark_method <- match.arg(landmark_method)
   nystrom_eps <- .validate_nystrom_eps(nystrom_eps)
@@ -515,6 +525,32 @@ krls.default <- function(X, y,
   if (lambda.method == "mll" && identical(approx, "nystrom")) {
     stop("krls: lambda.method = 'mll' is not supported with approx = 'nystrom'.",
          call. = FALSE)
+  }
+
+  ## --- Phase Q5 (v0.0.0.9050): logistic-loss compose-rule gates -----
+  ## These fire ONLY when loss = "logistic" so the default loss = "ls"
+  ## path is byte-identical to v9049.
+  if (is_logistic) {
+    if (identical(approx, "nystrom")) {
+      stop("krls: loss = 'logistic' is not supported with approx = 'nystrom' ",
+           "(deferred to a future phase). Use approx = 'exact'.",
+           call. = FALSE)
+    }
+    if (identical(lambda.method, "gcv")) {
+      stop("krls: loss = 'logistic' + lambda.method = 'gcv' is not supported ",
+           "(Wahba 2-D extension deferred). Use 'loo' or 'cv'.",
+           call. = FALSE)
+    }
+    if (identical(lambda.method, "mll")) {
+      stop("krls: loss = 'logistic' + lambda.method = 'mll' is not supported ",
+           "(Laplace approximation deferred to Q9). Use 'loo' or 'cv'.",
+           call. = FALSE)
+    }
+    if (!identical(varmod, "none")) {
+      stop("krls: loss = 'logistic' + varmod != 'none' is not meaningful ",
+           "(residual variance model is LS-specific). Set varmod = 'none'.",
+           call. = FALSE)
+    }
   }
 
   ## --- Phase 2b/2.5: ARD composition guards (must run before pass 1) -
@@ -732,6 +768,21 @@ krls.default <- function(X, y,
   }
 
   if (var(as.vector(y)) == 0) stop("y is a constant (does not vary)")
+  ## Phase Q5: logistic loss requires y in {0, 1}.
+  if (is_logistic) {
+    yvec <- as.numeric(y)
+    uniq <- sort(unique(yvec))
+    is_binary01 <- length(uniq) == 2L &&
+      isTRUE(all.equal(uniq, c(0, 1), tolerance = 0)) &&
+      all(yvec %in% c(0, 1))
+    if (!isTRUE(is_binary01)) {
+      stop("krls: loss = 'logistic' requires y to be binary with values ",
+           "exactly in {0, 1}. Got values: ",
+           paste(utils::head(uniq, 5), collapse = ", "),
+           if (length(uniq) > 5L) ", ..." else "", ".",
+           call. = FALSE)
+    }
+  }
   stopifnot(is.logical(derivative), is.logical(vcov), is.logical(binary))
   if (derivative && !vcov) {
     stop("derivative = TRUE requires vcov = TRUE")
@@ -852,13 +903,24 @@ krls.default <- function(X, y,
     stop("at least one column in X is a constant, please remove the constant(s)")
   }
   y.init      <- y
-  y.init.sd   <- apply(y.init, 2L, sd)
-  y.init.mean <- mean(y.init)
+  ## Phase Q5: under logistic, y stays on {0, 1}. Set sentinel mean/sd
+  ## so existing predict / autotune plumbing doesn't have to special-case.
+  if (is_logistic) {
+    y.init.sd   <- 1.0
+    y.init.mean <- 0.0
+  } else {
+    y.init.sd   <- apply(y.init, 2L, sd)
+    y.init.mean <- mean(y.init)
+  }
   Xs <- scale(X.init, center = TRUE, scale = X.init.sd)
-  ys <- scale(y.init, center = y.init.mean, scale = y.init.sd)
+  if (is_logistic) {
+    ys <- as.numeric(y.init)
+  } else {
+    ys <- scale(y.init, center = y.init.mean, scale = y.init.sd)
+    ys <- as.numeric(ys)
+  }
   ## drop attributes for clean C++ handoff
   Xs <- matrix(Xs, n, d, dimnames = list(NULL, colnames(X)))
-  ys <- as.numeric(ys)
 
   ## --- scale-aware sigma anchor (Fix 1 + Fix 4) --------------------
   ## Compute sigma_anchor (median pairwise sq. dist on Xs) whenever
@@ -900,7 +962,8 @@ krls.default <- function(X, y,
       pass1_sig = pass1_sig,
       ard.alpha = ard.alpha, ard.cap = ard.cap, ard.imp = ard.imp,
       w_norm = w_norm,
-      na.action = na.action, trace = trace, nthreads = nthreads
+      na.action = na.action, trace = trace, nthreads = nthreads,
+      loss = loss
     )
     sigma <- cheap_res$sigma_vec
     sigma_user_null <- FALSE
@@ -1222,10 +1285,13 @@ krls.default <- function(X, y,
     ## Phase Q2: skip warmstart entirely for non-Gaussian kernels (the
     ## probe is ARD-specific). Force dispatch decision to NON-ARD scalar
     ## path so the autotune just sweeps poly_c (or no-op for linear).
+    ## Phase Q5: skip warmstart under loss = 'logistic' (the probe
+    ## assumes LS scoring; an IRLS-aware probe is future work).
     warmstart_lift <- NULL
     if (kernel_type == 0L &&
         isTRUE(autotune.warmstart) && n_at >= 200L &&
-        autotune_speed != "fast" && identical(ard, "none")) {
+        autotune_speed != "fast" && identical(ard, "none") &&
+        !is_logistic) {
       warmstart_lift <- .krls_autotune_warmstart_probe(
         Xs = Xs, ys = ys,
         sigma_anchor = if (!is.null(sigma_anchor)) sigma_anchor
@@ -1240,6 +1306,10 @@ krls.default <- function(X, y,
     if (kernel_type != 0L) {
       ## Force scalar (= poly_c sweep) path; ARD is meaningless here.
       dispatch <- list(dispatch = FALSE, reason = "non-gaussian")
+    } else if (is_logistic) {
+      ## Phase Q5: force scalar fallback path. ARD-dispatch path uses LS
+      ## .krls_minimal_fit; an IRLS-aware ARD inner is future work.
+      dispatch <- list(dispatch = FALSE, reason = "logistic")
     } else {
       dispatch <- .krls_decide_ard_dispatch(
         n = n_at, p = d, autotune_speed = autotune_speed,
@@ -1258,7 +1328,8 @@ krls.default <- function(X, y,
         w_norm = w_norm, sqw = sqw,
         L = L, U = U, tol = tol,
         n_at = n_at, d = d, trace = trace,
-        kernel_type = kernel_type, poly_c = poly_c
+        kernel_type = kernel_type, poly_c = poly_c,
+        is_logistic = is_logistic
       )
       if (kernel_type == 0L) {
         sigma         <- sc$sigma
@@ -1336,7 +1407,8 @@ krls.default <- function(X, y,
         pass1_sig = pass1_sig_final,
         ard.alpha = best_alpha, ard.cap = ard.cap, ard.imp = best_imp,
         w_norm = w_norm,
-        na.action = na.action, trace = trace, nthreads = nthreads
+        na.action = na.action, trace = trace, nthreads = nthreads,
+        loss = loss
       )
       ard_state    <- cheap_res$ard_state
       ard.alpha    <- best_alpha
@@ -1467,6 +1539,40 @@ krls.default <- function(X, y,
   ## fast path (constant-sigma or ARD per-feature divide); other types
   ## skip sigma_vec entirely and use the inner-product code path.
   K <- krls_kernel_cpp(Xs, sigma_vec, kernel_type, poly_c)
+  if (is_logistic) {
+    ## Phase Q5: logistic-loss IRLS branch. Eig of K is NOT needed for
+    ## IRLS (only for bracketing lambda in .krls_logistic_lambdasearch).
+    ## Plumbs through the post-solve assembly below via the `is_logistic`
+    ## flag (LS-only branches like vcov / sigma2 / varmod are skipped).
+    out <- .krls_logistic_fit_block(
+      K = K, ys = ys, y.init = y.init, X.init = X.init, Xs = Xs,
+      sigma_scalar = sigma_scalar, sigma_vec = sigma_vec,
+      sigma_kind = sigma_kind, whichkernel = whichkernel,
+      kernel_type = kernel_type, poly_c = poly_c,
+      lambda = lambda, lambda.method = lambda.method,
+      lambda.grid = lambda.grid,
+      nfold = nfold, ncross = ncross, stratify = stratify,
+      seed.cv = seed.cv, cv.1se = cv.1se,
+      vcov = vcov, derivative = derivative, binary = binary,
+      w_norm = w_norm, autotune_info = autotune_info,
+      ard_state = ard_state,
+      n = n, d = d, trace = trace, na.action = na.action,
+      na.medians = na_medians, factor_info = factor_info, cl = cl,
+      y = y
+    )
+    ## Bagging (logistic) below the main return path; reuse same loop.
+    n_boot <- as.integer(n.boot)
+    if (is.na(n_boot) || n_boot < 0L) n_boot <- 0L
+    if (n_boot > 0L) {
+      out <- .krls_bag_logistic(out, X = X, y = y, w_norm = w_norm,
+                                n_boot = n_boot,
+                                whichkernel = whichkernel, poly_c = poly_c,
+                                kernel_type = kernel_type,
+                                na.action = na.action, seed.cv = seed.cv,
+                                nthreads = nthreads)
+    }
+    return(out)
+  }
   if (!is.null(sqw)) {
     # Twist the kernel: K_w = D K D
     K_w <- K * tcrossprod(sqw)
@@ -1918,6 +2024,7 @@ krls.default <- function(X, y,
         na.action = na.action,
         whichkernel = whichkernel,
         poly_c = poly_c,
+        loss = loss,
         trace = 0L, nthreads = nthreads
       )
       # Strip heavy fields; keep what predict needs:
@@ -1983,13 +2090,32 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                               interval = c("none", "pint"),
                               level = 0.95,
                               type = c("response", "link", "prob",
-                                       "variance"),
+                                       "variance", "class"),
                               unscale = FALSE,
                               ...) {
   interval <- match.arg(interval)
   type     <- match.arg(type)
   if (!inherits(object, "krls")) {
     stop("object is not of class 'krls'")
+  }
+  is_logistic_obj <- identical(object$loss, "logistic")
+  ## Phase Q5: variance + logistic = deferred (Q6).
+  if (identical(type, "variance") && is_logistic_obj) {
+    stop("krls: type = 'variance' is not supported for loss = 'logistic' ",
+         "fits (deferred to a future phase). Refit with loss = 'ls'.",
+         call. = FALSE)
+  }
+  ## Phase Q5: class predictions need a binary fit (either logistic or
+  ## binary-y LS path).
+  if (identical(type, "class")) {
+    if (!isTRUE(object$binary_y) && !is_logistic_obj) {
+      stop("krls: type = 'class' requires a binary fit (loss = 'logistic' ",
+           "or LS with binary y).", call. = FALSE)
+    }
+    if (identical(interval, "pint")) {
+      stop("krls: type = 'class' is not compatible with interval = 'pint'.",
+           call. = FALSE)
+    }
   }
   ## Phase Q1 / A9: slimmed-fit guard.
   if (isTRUE(object$slimmed) && !isTRUE(object$slim_keep_predict)) {
@@ -2105,8 +2231,24 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                       upr = as.numeric(object$fitted) + half)
       return(pi_mat)
     }
+    ## Phase Q5: logistic returns prob ($fitted) for response/prob,
+    ## eta ($eta_fitted) for link, and {0,1} for class.
+    if (is_logistic_obj) {
+      if (identical(type, "link")) {
+        fit_out <- as.numeric(object$eta_fitted)
+      } else if (identical(type, "class")) {
+        fit_out <- as.integer(as.numeric(object$fitted) > 0.5)
+      } else {
+        ## "response" or "prob" both return fitted probabilities.
+        fit_out <- as.numeric(object$fitted)
+      }
+      return(list(fit = matrix(fit_out, ncol = 1L),
+                  se.fit = NULL, vcov.fit = NULL,
+                  newdata = NULL, newdataK = NULL))
+    }
     fit_out <- as.numeric(object$fitted)
     if (identical(type, "prob")) fit_out <- stats::plogis(fit_out)
+    if (identical(type, "class")) fit_out <- as.integer(stats::plogis(fit_out) > 0.5)
     return(list(fit = matrix(fit_out, ncol = 1L),
                 se.fit = NULL, vcov.fit = NULL,
                 newdata = NULL, newdataK = NULL))
@@ -2190,20 +2332,31 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
 
   vcov.fit <- se.fit.out <- NULL
   need_se <- isTRUE(se.fit) || interval == "pint"
-  if (need_se) {
+  if (need_se && !is_logistic_obj) {
     vcov.c.raw  <- object$vcov.c * as.vector(1 / var(as.vector(object$y)))
     vcov.fitted <- tcrossprod(Knew %*% vcov.c.raw, Knew)
     sd_y2       <- as.numeric(apply(object$y, 2L, sd))^2
     vcov.fit    <- sd_y2 * vcov.fitted
     se.fit.out  <- matrix(sqrt(diag(vcov.fit)), ncol = 1L)
+  } else if (need_se && is_logistic_obj) {
+    ## Logistic vcov.c is already the link-scale sandwich; no y-sd factor.
+    if (!is.null(object$vcov.c)) {
+      vcov.fit <- tcrossprod(Knew %*% object$vcov.c, Knew)
+      se.fit.out <- matrix(sqrt(pmax(diag(vcov.fit), 0)), ncol = 1L)
+    }
   }
-  sd_y_train <- as.numeric(apply(object$y, 2L, sd))
-  mean_y_train <- mean(object$y)
-  yhat <- (yhat * sd_y_train) + mean_y_train
+  ## Phase Q5: skip y-standardisation un-do under logistic (yhat IS eta).
+  if (!is_logistic_obj) {
+    sd_y_train <- as.numeric(apply(object$y, 2L, sd))
+    mean_y_train <- mean(object$y)
+    yhat <- (yhat * sd_y_train) + mean_y_train
+  }
 
   # --- Bagging mean (Phase 5) --------------------------------------
   # If the fit carries bootstrap replicates, average the central
   # prediction with the per-replicate predictions on the same newdata.
+  ## Phase Q5: under logistic, average on the LINK scale (Jensen),
+  ## sigmoid at the end if the caller wants probabilities.
   bag_sd <- NULL
   if (!is.null(object$boot) && !is.null(object$boot$replicates)) {
     reps <- object$boot$replicates
@@ -2213,6 +2366,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
       preds[, 1L] <- as.numeric(yhat)
       for (b in seq_along(reps)) {
         Rb <- reps[[b]]
+        if (is.null(Rb)) next
         Xmeans_b <- colMeans(Rb$X)
         Xsd_b    <- apply(Rb$X, 2L, sd)
         # Skip replicates with degenerate X (zero sd).
@@ -2229,8 +2383,13 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
         Kn_b <- krls_kernel_pred_cpp(Xn_b, Xs_b, sig_b_vec,
                                       obj_kernel_type, obj_poly_c)
         yhat_b <- as.numeric(Kn_b %*% Rb$coeffs)
-        sd_yb  <- as.numeric(apply(Rb$y, 2L, sd))
-        yhat_b <- yhat_b * sd_yb + mean(Rb$y)
+        if (!is_logistic_obj) {
+          sd_yb  <- as.numeric(apply(Rb$y, 2L, sd))
+          yhat_b <- yhat_b * sd_yb + mean(Rb$y)
+        } else {
+          ## Bag on the LINK scale; sigmoid later for prob/response.
+          yhat_b <- pmin(pmax(yhat_b, -30), 30)
+        }
         preds[, b + 1L] <- yhat_b
       }
       bag_mean <- rowMeans(preds, na.rm = TRUE)
@@ -2260,9 +2419,28 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                                        unscale = unscale)
     return(var_obj)
   }
-  ## Phase Q1 / A8: probability transform for binary fits.
+  ## Phase Q5: logistic predict transforms.
+  if (is_logistic_obj) {
+    eta_out <- pmin(pmax(as.numeric(yhat), -30), 30)
+    if (identical(type, "link")) {
+      yhat <- matrix(eta_out, ncol = 1L)
+    } else if (identical(type, "class")) {
+      yhat <- matrix(as.integer(stats::plogis(eta_out) > 0.5), ncol = 1L)
+    } else {
+      ## "response" or "prob": probabilities.
+      yhat <- matrix(stats::plogis(eta_out), ncol = 1L)
+    }
+    return(list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
+                newdata = Xn, newdataK = Knew,
+                bag_sd = bag_sd))
+  }
+  ## Phase Q1 / A8: probability transform for binary LS fits.
   if (identical(type, "prob")) {
     yhat <- matrix(stats::plogis(as.numeric(yhat)), ncol = 1L)
+  }
+  if (identical(type, "class")) {
+    ## Binary LS class predictions via plogis-on-LS shortcut.
+    yhat <- matrix(as.integer(stats::plogis(as.numeric(yhat)) > 0.5), ncol = 1L)
   }
   list(fit = yhat, se.fit = se.fit.out, vcov.fit = vcov.fit,
        newdata = Xn, newdataK = Knew,
@@ -2578,6 +2756,477 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   if (S1 < S2) X1 else X2
 }
 
+## Phase Q5 (v0.0.0.9050): logistic-loss lambda search.
+##
+## Wraps krls_irls_logistic_cpp at a grid of lambda candidates and picks
+## the lambda that minimises the CT-2008 closed-form LOO deviance. The
+## eigenvalues of K are used only to bracket the search range
+## (`L = max(d) * 1e-6`, `U = max(d) * 10`). IRLS is solved in
+## coefficient space; eig of K does NOT amortise IRLS (option ii in
+## spec).
+##
+## Returns list(lambda = winner, fit = IRLS fit at winner, grid, dev_grid).
+.krls_logistic_lambdasearch <- function(K, y, w_obs = NULL,
+                                        L = NULL, U = NULL,
+                                        n_grid = 12L,
+                                        tol = 1e-6, max_iter = 50L,
+                                        max_halve = 5L) {
+  n <- length(y)
+  if (is.null(L) || is.null(U)) {
+    dvals <- tryCatch({
+      eo <- krls_eig_cpp(K)
+      as.numeric(eo$values)
+    }, error = function(e) NULL)
+    if (is.null(dvals) || length(dvals) == 0L) {
+      dmax <- as.numeric(max(diag(K)))
+    } else {
+      dmax <- max(dvals)
+    }
+    if (!is.finite(dmax) || dmax <= 0) dmax <- 1.0
+    if (is.null(L)) L <- max(dmax * 1e-6, 1e-10)
+    if (is.null(U)) U <- max(dmax * 10, L * 100)
+  }
+  if (U <= L) U <- L * 10
+  grid <- exp(seq(log(L), log(U), length.out = as.integer(n_grid)))
+  dev_grid <- rep(NA_real_, length(grid))
+  fits <- vector("list", length(grid))
+  for (i in seq_along(grid)) {
+    fit_i <- tryCatch(
+      krls_irls_logistic_cpp(K, as.numeric(y), lambda = grid[i],
+                             w_obs = w_obs, tol = tol,
+                             max_iter = as.integer(max_iter),
+                             max_halve = as.integer(max_halve),
+                             trace = 0L),
+      error = function(e) NULL,
+      warning = function(w) {
+        ## still grab the fit on a warning (perfect separation), but
+        ## record a high deviance so this lambda is unlikely to win.
+        suppressWarnings(
+          krls_irls_logistic_cpp(K, as.numeric(y), lambda = grid[i],
+                                 w_obs = w_obs, tol = tol,
+                                 max_iter = as.integer(max_iter),
+                                 max_halve = as.integer(max_halve),
+                                 trace = 0L))
+      })
+    if (is.null(fit_i)) next
+    if (is.null(fit_i$H_diag) || any(!is.finite(fit_i$H_diag))) next
+    dev_i <- tryCatch(
+      krls_logistic_loo_loss_cpp(as.numeric(fit_i$eta), as.numeric(y),
+                                 as.numeric(fit_i$p), as.numeric(fit_i$W),
+                                 as.numeric(fit_i$H_diag)),
+      error = function(e) NA_real_)
+    if (!is.finite(dev_i)) next
+    dev_grid[i] <- dev_i
+    fits[[i]]   <- fit_i
+  }
+  if (all(is.na(dev_grid))) {
+    stop("krls(loss='logistic'): lambda search produced no finite LOO ",
+         "deviance. Try a different sigma or larger lambda grid.",
+         call. = FALSE)
+  }
+  best <- which.min(dev_grid)
+  list(lambda = grid[best], fit = fits[[best]], grid = grid,
+       dev_grid = dev_grid, best_idx = best)
+}
+
+## Phase Q5: logistic-loss main fit block. Owns lambda search (LOO or
+## CV), IRLS fit, and post-fit assembly. Returns a krls_rr fit object
+## ready to be returned (or fed into the bagging loop).
+.krls_logistic_fit_block <- function(K, ys, y.init, X.init, Xs,
+                                     sigma_scalar, sigma_vec, sigma_kind,
+                                     whichkernel, kernel_type, poly_c,
+                                     lambda, lambda.method, lambda.grid,
+                                     nfold, ncross, stratify, seed.cv,
+                                     cv.1se, vcov, derivative, binary,
+                                     w_norm, autotune_info, ard_state,
+                                     n, d, trace, na.action, na.medians,
+                                     factor_info, cl, y) {
+  yvec <- as.numeric(y.init)
+  w_obs_pass <- if (!is.null(w_norm)) as.numeric(w_norm) else NULL
+
+  cv_diag <- NULL
+  irls_fit <- NULL
+  if (is.null(lambda)) {
+    if (identical(lambda.method, "cv")) {
+      ## --- Fold-deviance CV for logistic --------------------------
+      nfold_int <- as.integer(nfold)
+      if (is.na(nfold_int) || nfold_int <= 0L) nfold_int <- 5L
+      if (nfold_int > n)
+        stop("krls: nfold (", nfold_int, ") exceeds nrow(X) (",
+             n, ").")
+      ncross_int <- if (is.null(ncross)) 1L else as.integer(ncross)
+      if (is.na(ncross_int) || ncross_int < 1L) ncross_int <- 1L
+
+      ## Default grid: 12 log-spaced from a kernel-driven bracket.
+      if (is.null(lambda.grid)) {
+        eo_tmp <- krls_eig_cpp(K)
+        dmax <- max(as.numeric(eo_tmp$values))
+        if (!is.finite(dmax) || dmax <= 0) dmax <- 1.0
+        lambda.grid <- exp(seq(log(max(dmax * 1e-6, 1e-10)),
+                                log(max(dmax * 10, 1e-6)),
+                                length.out = 12L))
+      } else {
+        stopifnot(is.numeric(lambda.grid),
+                  length(lambda.grid) >= 1L,
+                  all(lambda.grid > 0))
+        lambda.grid <- sort(unique(as.numeric(lambda.grid)))
+      }
+
+      ## RNG protection
+      if (!is.null(seed.cv)) {
+        if (exists(".Random.seed", envir = globalenv(),
+                   inherits = FALSE)) {
+          old_seed_l <- get(".Random.seed", envir = globalenv(),
+                             inherits = FALSE)
+          on.exit(assign(".Random.seed", old_seed_l,
+                          envir = globalenv()), add = TRUE)
+        } else {
+          on.exit(rm(list = ".Random.seed", envir = globalenv()),
+                  add = TRUE)
+        }
+        set.seed(as.integer(seed.cv))
+      }
+
+      ## Build folds. For binary y prefer per-class stratification.
+      build_folds_log <- function(n_pts, k, strat) {
+        if (isTRUE(strat) && n_pts >= 20L) {
+          fid <- integer(n_pts)
+          for (cls in c(0, 1)) {
+            idx_cls <- which(yvec == cls)
+            if (length(idx_cls) == 0L) next
+            idx_cls <- sample(idx_cls)
+            fid[idx_cls] <- rep_len(seq_len(k), length(idx_cls))
+          }
+          if (any(fid == 0L)) {
+            miss <- which(fid == 0L)
+            fid[miss] <- rep_len(seq_len(k), length(miss))
+          }
+          fid
+        } else {
+          rep_len(seq_len(k), n_pts)[sample.int(n_pts)]
+        }
+      }
+
+      dev_mat <- matrix(NA_real_, nrow = length(lambda.grid),
+                        ncol = nfold_int * ncross_int)
+      col_idx <- 1L
+      for (cc in seq_len(ncross_int)) {
+        fid <- build_folds_log(n, nfold_int, stratify)
+        for (kk in seq_len(nfold_int)) {
+          test_i  <- which(fid == kk)
+          train_i <- which(fid != kk)
+          if (length(test_i) == 0L || length(train_i) < 3L) {
+            col_idx <- col_idx + 1L; next
+          }
+          Xs_tr <- Xs[train_i, , drop = FALSE]
+          ys_tr <- yvec[train_i]
+          Xs_te <- Xs[test_i,  , drop = FALSE]
+          ys_te <- yvec[test_i]
+          K_tr <- krls_kernel_cpp(Xs_tr, sigma_vec, kernel_type, poly_c)
+          K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sigma_vec,
+                                        kernel_type, poly_c)
+          w_tr <- if (!is.null(w_norm)) {
+            ww <- w_norm[train_i]; m <- mean(ww); if (m > 0) ww / m else ww
+          } else NULL
+          for (li in seq_along(lambda.grid)) {
+            lam_l <- lambda.grid[li]
+            fit_l <- tryCatch(
+              suppressWarnings(
+                krls_irls_logistic_cpp(K_tr, ys_tr, lambda = lam_l,
+                                       w_obs = w_tr)),
+              error = function(e) NULL)
+            if (is.null(fit_l)) next
+            eta_te <- as.numeric(K_te %*% as.numeric(fit_l$coeffs))
+            eta_te <- pmin(pmax(eta_te, -30), 30)
+            p_te   <- stats::plogis(eta_te)
+            eps    <- 1e-15
+            p_te   <- pmin(pmax(p_te, eps), 1 - eps)
+            if (!is.null(w_norm)) {
+              w_te <- w_norm[test_i]
+              dev_l <- -2 * sum(w_te * (ys_te * log(p_te) +
+                                         (1 - ys_te) * log(1 - p_te))) /
+                       max(sum(w_te), .Machine$double.eps)
+            } else {
+              dev_l <- -2 * mean(ys_te * log(p_te) +
+                                  (1 - ys_te) * log(1 - p_te))
+            }
+            dev_mat[li, col_idx] <- dev_l
+          }
+          col_idx <- col_idx + 1L
+        }
+      }
+      mean_dev <- rowMeans(dev_mat, na.rm = TRUE)
+      if (all(is.na(mean_dev)))
+        stop("krls(loss='logistic'): CV produced no usable folds.")
+      best_i <- which.min(mean_dev)
+      lambda <- lambda.grid[best_i]
+      if (isTRUE(cv.1se)) {
+        sd_dev <- apply(dev_mat, 1L, function(z) sd(z, na.rm = TRUE))
+        nfok   <- rowSums(!is.na(dev_mat))
+        se_dev <- sd_dev / sqrt(pmax(nfok, 1L))
+        thresh <- mean_dev[best_i] + se_dev[best_i]
+        cand <- which(mean_dev <= thresh)
+        if (length(cand)) lambda <- max(lambda.grid[cand])
+      }
+      cv_diag <- list(
+        method = "cv", nfold = nfold_int, ncross = ncross_int,
+        stratify = isTRUE(stratify), seed.cv = seed.cv,
+        lambda.grid = lambda.grid, mean_mse = mean_dev,
+        mean_dev = mean_dev, mse_per_fold = dev_mat,
+        best_idx = best_i, cv.1se = isTRUE(cv.1se)
+      )
+      if (trace > 1) {
+        cat("CV lambda (", nfold_int, "-fold x ", ncross_int, " cross):",
+            round(lambda, 6), "  dev=", round(mean_dev[best_i], 4),
+            "\n", sep = "")
+      }
+      ## Final IRLS at chosen lambda on the full data
+      irls_fit <- suppressWarnings(
+        krls_irls_logistic_cpp(K, yvec, lambda = lambda,
+                               w_obs = w_obs_pass))
+    } else {
+      ## lambda.method = "loo": CT-2008 closed-form via .krls_logistic_lambdasearch
+      lam_res <- .krls_logistic_lambdasearch(K, yvec, w_obs = w_obs_pass)
+      lambda  <- lam_res$lambda
+      irls_fit <- lam_res$fit
+      if (trace > 1) {
+        cat("Lambda that minimizes Logistic LOO dev is:",
+            round(lambda, 6), "\n", sep = "")
+      }
+    }
+  } else {
+    stopifnot(is.numeric(lambda), length(lambda) == 1, lambda > 0)
+    irls_fit <- suppressWarnings(
+      krls_irls_logistic_cpp(K, yvec, lambda = lambda,
+                             w_obs = w_obs_pass))
+  }
+
+  coeffs   <- as.numeric(irls_fit$coeffs)
+  eta_full <- as.numeric(irls_fit$eta)
+  p_full   <- as.numeric(irls_fit$p)
+  W_full   <- as.numeric(irls_fit$W)
+  H_diag   <- as.numeric(irls_fit$H_diag)
+  dev_full <- as.numeric(irls_fit$deviance)
+  iter_done<- as.integer(irls_fit$iter)
+  converged<- isTRUE(irls_fit$converged)
+
+  ## CT-2008 LOO deviance
+  loo_dev <- if (all(is.finite(H_diag))) {
+    krls_logistic_loo_loss_cpp(eta_full, yvec, p_full, W_full, H_diag)
+  } else NA_real_
+
+  ## Null model deviance: probability = mean(y) constant; use weighted
+  ## mean when weights supplied.
+  if (!is.null(w_norm)) {
+    pbar <- sum(w_norm * yvec) / max(sum(w_norm), .Machine$double.eps)
+    pbar <- min(max(pbar, 1e-15), 1 - 1e-15)
+    dev_null <- -2 * sum(w_norm * (yvec * log(pbar) +
+                                    (1 - yvec) * log(1 - pbar)))
+  } else {
+    pbar <- mean(yvec)
+    pbar <- min(max(pbar, 1e-15), 1 - 1e-15)
+    dev_null <- -2 * sum(yvec * log(pbar) + (1 - yvec) * log(1 - pbar))
+  }
+  dev_full_unpen <- {
+    eps <- 1e-15
+    pf <- pmin(pmax(p_full, eps), 1 - eps)
+    if (!is.null(w_norm)) {
+      -2 * sum(w_norm * (yvec * log(pf) + (1 - yvec) * log(1 - pf)))
+    } else {
+      -2 * sum(yvec * log(pf) + (1 - yvec) * log(1 - pf))
+    }
+  }
+  R2_mcfadden <- if (dev_null > 0) 1 - dev_full_unpen / dev_null
+                  else NA_real_
+
+  ## vcov.c sandwich (only when vcov = TRUE)
+  vcov.c <- NULL
+  vcov.fitted <- NULL
+  if (isTRUE(vcov)) {
+    ## (K W K + lambda I)^{-1} K W K (K W K + lambda I)^{-1}
+    KW  <- K * matrix(W_full, n, n, byrow = TRUE)
+    A   <- KW %*% K + lambda * diag(n)
+    KWK <- KW %*% K
+    Ainv_K <- tryCatch(solve(A, K), error = function(e) NULL)
+    if (is.null(Ainv_K)) {
+      vcov.c <- matrix(NA_real_, n, n)
+    } else {
+      sandwich <- tryCatch({
+        A_inv <- solve(A)
+        A_inv %*% KWK %*% A_inv
+      }, error = function(e) matrix(NA_real_, n, n))
+      vcov.c <- sandwich
+      ## vcov of yhat (link-scale): K vcov(c) K
+      vcov.fitted <- K %*% vcov.c %*% K
+    }
+  }
+
+  ## Derivatives on the LINK scale by default. (R5 spec.)
+  derivmat <- avgderiv <- varavgderivmat <- NULL
+  if (isTRUE(derivative)) {
+    derivmat_s <- krls_deriv_cpp(Xs, K, coeffs, sigma_vec,
+                                  kernel_type, poly_c)
+    colnames(derivmat_s) <- colnames(X.init)
+    ## Un-standardise X scale: divide by sd(X) since y is on link scale
+    ## (no y.init.sd factor under logistic).
+    X.init.sd <- apply(X.init, 2L, sd)
+    scale_vec <- 1.0 / X.init.sd
+    derivmat <- sweep(derivmat_s, 2L, scale_vec, "*")
+    avgderiv <- matrix(colMeans(derivmat), nrow = 1L,
+                       dimnames = list(NULL, colnames(X.init)))
+    ## var.avgderivatives: deferred to Q6 (one-shot warning).
+    varavgderivmat <- matrix(NA_real_, nrow = 1L, ncol = d,
+                             dimnames = list(NULL, colnames(X.init)))
+    warning("krls(loss='logistic'): var.avgderivatives is deferred to ",
+            "a future phase (returned NA). Use n.boot > 0 for ",
+            "bagged uncertainty on link-scale marginal effects.",
+            call. = FALSE)
+  }
+
+  binaryindicator <- matrix(FALSE, 1L, d,
+                            dimnames = list(NULL, colnames(X.init)))
+
+  ## Fitted = probabilities (response scale, documented as different
+  ## from LS which is the y-scale prediction).
+  yfitted <- p_full
+
+  out <- list(K = K, coeffs = coeffs,
+              fitted = yfitted,
+              eta_fitted = eta_full,
+              X = X.init, y = y.init,
+              sigma = sigma_scalar, lambda = lambda,
+              R2 = R2_mcfadden,
+              Neffective = sum(H_diag),   # tr(H) under IRLS
+              sigma_vec  = sigma_vec,
+              sigma_kind = sigma_kind,
+              whichkernel = whichkernel,
+              kernel_type = kernel_type,
+              poly_c      = poly_c,
+              derivatives = derivmat,
+              avgderivatives = avgderiv,
+              var.avgderivatives = varavgderivmat,
+              vcov.c = vcov.c, vcov.fitted = vcov.fitted,
+              binaryindicator = binaryindicator,
+              binary_y = TRUE,
+              loss = "logistic",
+              deviance = dev_full_unpen,
+              converged = converged,
+              iter = iter_done,
+              H_diag = H_diag,
+              loo_dev = loo_dev)
+  ## Replace LS Looe with CT-2008 loo_dev for downstream printers.
+  out$Looe <- loo_dev
+  ## Phase Q2: stash dvals + V + Vty for legacy posterior-variance
+  ## predict; under logistic posterior variance is deferred, but
+  ## predict guards on type = "variance" already error out.
+  out$dvals <- NULL
+  out$V     <- NULL
+  out$Vty   <- NULL
+
+  out$call <- cl
+  out$na.action <- na.action
+  out$na.medians <- na.medians
+  out$factor_info <- factor_info
+  out$weights <- if (!is.null(w_norm)) w_norm else NULL
+  if (!is.null(cv_diag)) out$cv <- cv_diag
+  if (!is.null(autotune_info)) out$autotune <- autotune_info
+
+  out$ard_kind         <- ard_state$kind
+  out$ard_alpha        <- ard_state$alpha
+  out$ard_cap          <- ard_state$cap
+  out$ard_imp          <- ard_state$imp
+  out$pass1_sigma      <- ard_state$pass1_sigma
+  out$pass1_importance <- ard_state$pass1_importance
+
+  class(out) <- c("krls_rr", "krls")
+  out
+}
+
+## Phase Q5: bagging loop for logistic fits. Mirrors the LS bag loop
+## but forces loss = "logistic" on each replicate refit. Averaging
+## on the link scale happens in predict; we just store replicate fits.
+.krls_bag_logistic <- function(out, X, y, w_norm, n_boot,
+                               whichkernel, poly_c, kernel_type,
+                               na.action, seed.cv, nthreads) {
+  sig_b <- out$sigma_vec
+  lam_b <- out$lambda
+  n_full <- nrow(X)
+  if (!is.null(seed.cv)) {
+    if (exists(".Random.seed", envir = globalenv(),
+               inherits = FALSE)) {
+      old_seed_b <- get(".Random.seed", envir = globalenv(),
+                         inherits = FALSE)
+      on.exit(assign(".Random.seed", old_seed_b,
+                     envir = globalenv()), add = TRUE)
+    } else {
+      on.exit(rm(list = ".Random.seed", envir = globalenv()),
+              add = TRUE)
+    }
+    set.seed(as.integer(seed.cv) + 31337L)
+  }
+  boot_reps <- vector("list", n_boot)
+  idx_list  <- vector("list", n_boot)
+  for (b in seq_len(n_boot)) {
+    idx <- sample.int(n_full, n_full, replace = TRUE)
+    idx_list[[b]] <- idx
+    X_b <- X[idx, , drop = FALSE]
+    y_b <- as.numeric(y)[idx]
+    ## Reject replicate if y_b lost a class (all 0 or all 1).
+    if (length(unique(y_b)) < 2L) next
+    w_b <- if (!is.null(w_norm)) {
+      wb <- w_norm[idx]; wb / mean(wb)
+    } else NULL
+    f_b <- tryCatch(
+      krls.default(
+        X = X_b, y = y_b,
+        sigma = if (kernel_type == 0L) sig_b else NULL,
+        lambda = lam_b,
+        derivative = FALSE, binary = FALSE, vcov = FALSE,
+        weights = w_b,
+        lambda.method = "loo",
+        autotune = FALSE,
+        varmod = "none",
+        n.boot = 0L,
+        na.action = na.action,
+        whichkernel = whichkernel,
+        poly_c = poly_c,
+        loss = "logistic",
+        trace = 0L, nthreads = nthreads
+      ),
+      error = function(e) NULL,
+      warning = function(w) suppressWarnings(
+        krls.default(
+          X = X_b, y = y_b,
+          sigma = if (kernel_type == 0L) sig_b else NULL,
+          lambda = lam_b,
+          derivative = FALSE, binary = FALSE, vcov = FALSE,
+          weights = w_b,
+          lambda.method = "loo",
+          autotune = FALSE,
+          varmod = "none",
+          n.boot = 0L,
+          na.action = na.action,
+          whichkernel = whichkernel,
+          poly_c = poly_c,
+          loss = "logistic",
+          trace = 0L, nthreads = nthreads
+        )))
+    if (is.null(f_b)) next
+    boot_reps[[b]] <- list(
+      X         = f_b$X,
+      y         = f_b$y,
+      coeffs    = f_b$coeffs,
+      sigma     = f_b$sigma,
+      sigma_vec = f_b$sigma_vec,
+      lambda    = f_b$lambda,
+      loss      = "logistic"
+    )
+  }
+  out$boot <- list(replicates = boot_reps, n.boot = n_boot,
+                   idx = idx_list)
+  out
+}
+
 .krls_fd_binary <- function(object) {
   d <- ncol(object$X); n <- nrow(object$X)
   lu <- function(x) length(unique(x))
@@ -2643,7 +3292,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
 .krls_run_cheap_ard <- function(X.init, y.init, pass1_sig,
                                 ard.alpha, ard.cap, ard.imp,
                                 w_norm = NULL, na.action,
-                                trace = 0L, nthreads = 0L) {
+                                trace = 0L, nthreads = 0L,
+                                loss = "ls") {
   fit_iso <- tryCatch(
     krls.default(
       X = X.init, y = y.init,
@@ -2657,6 +3307,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
       na.action = na.action,
       approx = "exact",
       ard = "none",
+      loss = loss,
       trace = max(trace - 1L, 0L),
       nthreads = nthreads
     ),
@@ -2841,12 +3492,16 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                                   w_norm, sqw,
                                   L, U, tol,
                                   n_at, d, trace,
-                                  kernel_type = 0L, poly_c = 1.0) {
+                                  kernel_type = 0L, poly_c = 1.0,
+                                  is_logistic = FALSE) {
   ## Phase Q2: when kernel_type != 0 (non-Gaussian), the autotune.grid is
   ## a poly_c sweep (or single-cell for linear), NOT a sigma sweep. The
   ## C++ `krls_autotune_inner_cpp` is Gaussian-specialised; force the R
   ## fallback for non-Gaussian. Performance: ~5-10x slower than Gaussian
   ## C++ inner; acceptable for Q2 scope. Q6 may add a poly-aware inner.
+  ## Phase Q5: under loss = "logistic", the C++ inner is also unavailable
+  ## (LS-specialised); force R fallback and replace per-fold LS solve
+  ## with IRLS, scoring on fold deviance instead of MSE.
   is_gaussian <- (kernel_type == 0L)
   if (!is.null(seed.cv)) {
     if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
@@ -2887,7 +3542,7 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   lam_mat_at <- matrix(NA_real_, nrow = n_sig,
                        ncol = nfold_at * ncross_at)
   use_inner_cpp <- is_gaussian && is.null(sqw) && is.null(L) &&
-                     is.null(U) && is.null(tol)
+                     is.null(U) && is.null(tol) && !isTRUE(is_logistic)
   lambda_args <- list(
     tol            = 1e-6,
     L0             = .Machine$double.eps,
@@ -2935,38 +3590,70 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
           K_tr <- krls_kernel_cpp(Xs_tr, sig_s_vec, kernel_type, poly_c_cell)
           K_te <- krls_kernel_pred_cpp(Xs_te, Xs_tr, sig_s_vec,
                                         kernel_type, poly_c_cell)
-          if (!is.null(sqw)) {
-            sqw_tr <- sqrt(w_norm[train_i])
-            K_tr_use  <- K_tr * tcrossprod(sqw_tr)
-            ys_tr_use <- sqw_tr * ys_tr
+          if (isTRUE(is_logistic)) {
+            ## Phase Q5: IRLS fit per cell; lambda from inner LOO bracket
+            ## via .krls_logistic_lambdasearch; score on fold deviance.
+            w_tr_fold <- if (!is.null(w_norm)) {
+              ww <- w_norm[train_i]; m <- mean(ww); if (m > 0) ww / m else ww
+            } else NULL
+            lam_res <- tryCatch(
+              .krls_logistic_lambdasearch(K_tr, as.numeric(ys_tr),
+                                          w_obs = w_tr_fold),
+              error = function(e) NULL)
+            if (is.null(lam_res)) next
+            lam_k <- lam_res$lambda
+            irls_k <- lam_res$fit
+            c_fold <- as.numeric(irls_k$coeffs)
+            eta_te <- as.numeric(K_te %*% c_fold)
+            eta_te <- pmin(pmax(eta_te, -30), 30)
+            p_te   <- stats::plogis(eta_te)
+            eps    <- 1e-15
+            p_te   <- pmin(pmax(p_te, eps), 1 - eps)
+            if (!is.null(w_norm)) {
+              w_te <- w_norm[test_i]
+              dev_v <- -2 * sum(w_te * (ys_te * log(p_te) +
+                                         (1 - ys_te) * log(1 - p_te))) /
+                       max(sum(w_te), .Machine$double.eps)
+            } else {
+              dev_v <- -2 * mean(ys_te * log(p_te) +
+                                  (1 - ys_te) * log(1 - p_te))
+            }
+            mse_mat_at[si, col_at] <- dev_v
+            lam_mat_at[si, col_at] <- lam_k
           } else {
-            sqw_tr <- NULL
-            K_tr_use  <- K_tr
-            ys_tr_use <- ys_tr
+            if (!is.null(sqw)) {
+              sqw_tr <- sqrt(w_norm[train_i])
+              K_tr_use  <- K_tr * tcrossprod(sqw_tr)
+              ys_tr_use <- sqw_tr * ys_tr
+            } else {
+              sqw_tr <- NULL
+              K_tr_use  <- K_tr
+              ys_tr_use <- ys_tr
+            }
+            eo_k    <- krls_eig_cpp(K_tr_use)
+            dvals_k <- as.numeric(eo_k$values)
+            V_k     <- eo_k$vectors
+            Vsq_k   <- krls_vsq_cpp(V_k)
+            Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
+            lam_k <- tryCatch(
+              .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
+                                 n_y = length(train_i),
+                                 L = L, U = U, tol = tol, noisy = FALSE),
+              error = function(e) NA_real_)
+            if (is.na(lam_k)) next
+            sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
+            c_solve <- as.numeric(sol_k$coeffs)
+            c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
+            yhat_te <- as.numeric(K_te %*% c_fold)
+            if (!is.null(sqw)) {
+              w_te <- w_norm[test_i]
+              mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
+                max(sum(w_te), .Machine$double.eps)
+            } else {
+              mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
+            }
+            lam_mat_at[si, col_at] <- lam_k
           }
-          eo_k    <- krls_eig_cpp(K_tr_use)
-          dvals_k <- as.numeric(eo_k$values)
-          V_k     <- eo_k$vectors
-          Vsq_k   <- krls_vsq_cpp(V_k)
-          Vty_k   <- as.numeric(crossprod(V_k, ys_tr_use))
-          lam_k <- tryCatch(
-            .krls_lambdasearch(dvals_k, V_k, Vsq_k, Vty_k,
-                               n_y = length(train_i),
-                               L = L, U = U, tol = tol, noisy = FALSE),
-            error = function(e) NA_real_)
-          if (is.na(lam_k)) next
-          sol_k   <- krls_solve_cpp(dvals_k, V_k, Vsq_k, Vty_k, lam_k)
-          c_solve <- as.numeric(sol_k$coeffs)
-          c_fold  <- if (!is.null(sqw_tr)) sqw_tr * c_solve else c_solve
-          yhat_te <- as.numeric(K_te %*% c_fold)
-          if (!is.null(sqw)) {
-            w_te <- w_norm[test_i]
-            mse_mat_at[si, col_at] <- sum(w_te * (ys_te - yhat_te)^2) /
-              max(sum(w_te), .Machine$double.eps)
-          } else {
-            mse_mat_at[si, col_at] <- mean((ys_te - yhat_te)^2)
-          }
-          lam_mat_at[si, col_at] <- lam_k
         }
       }
       col_at <- col_at + 1L
@@ -3127,6 +3814,13 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
 print.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
   cat("  n =", nrow(x$X), "  p =", ncol(x$X), "\n")
+  ## Phase Q5: logistic-loss indicator.
+  if (identical(x$loss, "logistic")) {
+    cat("  loss: logistic (IRLS, ", as.integer(x$iter),
+        " iter, ",
+        if (isTRUE(x$converged)) "converged" else "NOT converged",
+        ")\n", sep = "")
+  }
   if (identical(x$sigma_kind, "ard") && !is.null(x$sigma_vec)) {
     sv <- as.numeric(x$sigma_vec)
     cat("  sigma_vec: median=", signif(stats::median(sv), 4),
@@ -3143,9 +3837,10 @@ print.krls_rr <- function(x, ...) {
           "\n", sep = "")
     }
   } else {
+    r2_label <- if (identical(x$loss, "logistic")) "McFadden R^2" else "R^2"
     cat("  sigma =", signif(x$sigma, 4),
         "  lambda =", signif(x$lambda, 4),
-        "  R^2 =", signif(x$R2, 4), "\n")
+        "  ", r2_label, " =", signif(x$R2, 4), "\n")
   }
   if (!is.null(x$weights)) {
     cat("  weighted: yes (mean(w)=1 normalisation)\n")
@@ -3181,7 +3876,8 @@ print.krls_rr <- function(x, ...) {
         sep = "")
   }
   if (!is.null(x$avgderivatives)) {
-    cat("\nAverage Marginal Effects:\n")
+    suff <- if (identical(x$loss, "logistic")) " (link scale)" else ""
+    cat("\nAverage Marginal Effects", suff, ":\n", sep = "")
     print(setNames(as.vector(x$avgderivatives),
                    colnames(x$avgderivatives)))
   }
@@ -3210,6 +3906,11 @@ summary.krls_rr <- function(object, ...) {
   out$ard_cap     <- object$ard_cap
   out$ard_imp     <- object$ard_imp
   out$pass1_sigma <- object$pass1_sigma
+  ## Phase Q5: pass logistic-aware fields through to the summary printer.
+  out$loss      <- object$loss
+  out$iter      <- object$iter
+  out$converged <- object$converged
+  out$deviance  <- object$deviance
   if (!is.null(object$avgderivatives)) {
     se <- sqrt(as.numeric(object$var.avgderivatives))
     avg <- as.numeric(object$avgderivatives)
@@ -3232,7 +3933,14 @@ summary.krls_rr <- function(object, ...) {
 #' @export
 print.summary.krls_rr <- function(x, ...) {
   cat("Kernel Regularized Least Squares (KRLS)\n")
+  if (identical(x$loss, "logistic")) {
+    cat("  loss: logistic (IRLS, ", as.integer(x$iter),
+        " iter, ",
+        if (isTRUE(x$converged)) "converged" else "NOT converged",
+        ")\n", sep = "")
+  }
   ci <- x$call_info
+  r2_label <- if (identical(x$loss, "logistic")) "McFadden R^2" else "R^2"
   if (identical(x$sigma_kind, "ard") && !is.null(x$sigma_vec)) {
     sv <- as.numeric(x$sigma_vec)
     cat(sprintf("  n = %d  p = %d  lambda = %s  R^2 = %s\n",
@@ -3580,7 +4288,9 @@ slim_krls <- function(fit, keep_predict = TRUE) {
   ## missing — but $K is also stripped, so variance predict will fail
   ## on a slimmed fit (refit required). Document this in the man page.
   always_strip <- c("K", "V", "Vsq", "Vty", "vcov.c", "vcov.fitted",
-                    "dvals")
+                    "dvals",
+                    ## Phase Q5: heavy logistic state (length-n vectors).
+                    "eta_fitted", "H_diag")
   for (nm in always_strip) fit[[nm]] <- NULL
 
   ## When keep_predict = FALSE, also strip predict-only state.
@@ -3593,7 +4303,10 @@ slim_krls <- function(fit, keep_predict = TRUE) {
                       "binary_y", "binaryindicator",
                       "ard_kind", "ard_alpha", "ard_cap", "ard_imp",
                       "whichkernel", "kernel_type", "poly_c",
-                      "call", "approx")
+                      "call", "approx",
+                      ## Phase Q5: logistic-aware summary fields.
+                      "loss", "deviance", "converged", "iter",
+                      "loo_dev")
     cls <- class(fit)
     new_fit <- fit[intersect(names(fit), summary_keep)]
     class(new_fit) <- cls

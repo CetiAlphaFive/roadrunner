@@ -1242,3 +1242,277 @@ Rcpp::List krls_nystrom_autotune_inner_cpp(
     Rcpp::Named("nthreads_used")    = n_workers
   );
 }
+
+// ---------------------------------------------------------------------------
+// Phase Q5 (v0.0.0.9050): logistic-loss IRLS path.
+//
+// Optimises penalised binomial deviance for KRLS in coefficient space:
+//   minimise    -2 * sum( y * log(p) + (1-y) * log(1-p) ) + lambda * c' K c
+// where p = 1 / (1 + exp(-K c)) and lambda is the ridge penalty.
+//
+// Per-iteration Newton step (option ii in spec): solve
+//   (K W K + lambda I) c = K W z
+// with weights W = p*(1-p) and working response z = eta + (y - p) / W.
+// Direct Cholesky-backed solve via Armadillo `solve_opts::likely_sympd`.
+//
+// Numerical safety:
+//   - W floored at 1e-8 (prevents singular step under saturation).
+//   - eta clipped to [-30, 30] (prevents `exp` overflow).
+//   - Step-halving on deviance increase, up to 5 halvings per iter.
+//   - Perfect-separation detection: warn + return last finite iterate
+//     when ||c||_inf > 1e6 OR penalised dev < 1e-10.
+//   - 50 outer iteration cap.
+// ---------------------------------------------------------------------------
+
+static inline arma::vec krls_clamp_eta(const arma::vec& eta, double lo, double hi) {
+  arma::vec out = eta;
+  out.elem(arma::find(out > hi)).fill(hi);
+  out.elem(arma::find(out < lo)).fill(lo);
+  return out;
+}
+
+static inline arma::vec krls_sigmoid_safe(const arma::vec& eta) {
+  arma::vec e = krls_clamp_eta(eta, -30.0, 30.0);
+  return 1.0 / (1.0 + arma::exp(-e));
+}
+
+// Penalised binomial deviance (the IRLS objective):
+//   -2 * sum( w_i [ y_i log(p_i) + (1-y_i) log(1-p_i) ] ) + lambda * c' K c.
+static double krls_pen_binomial_dev(const arma::vec& y, const arma::vec& p,
+                                    const arma::vec& Kc, const arma::vec& c,
+                                    const arma::vec& w_vec,
+                                    double lambda, bool weighted) {
+  const arma::uword n = y.n_elem;
+  const double eps = 1e-15;
+  double dev = 0.0;
+  for (arma::uword i = 0; i < n; ++i) {
+    const double pi = std::min(std::max(p(i), eps), 1.0 - eps);
+    const double term = y(i) * std::log(pi) + (1.0 - y(i)) * std::log(1.0 - pi);
+    const double wi = weighted ? w_vec(i) : 1.0;
+    dev += wi * term;
+  }
+  const double pen = lambda * arma::dot(c, Kc);   // c' K c
+  return -2.0 * dev + pen;
+}
+
+// [[Rcpp::export]]
+Rcpp::List krls_irls_logistic_cpp(const arma::mat& K, const arma::vec& y,
+                                  double lambda,
+                                  Rcpp::Nullable<Rcpp::NumericVector> w_obs = R_NilValue,
+                                  double tol = 1e-6, int max_iter = 50,
+                                  int max_halve = 5, int trace = 0) {
+  const arma::uword n = K.n_rows;
+  if (K.n_cols != n) Rcpp::stop("krls_irls_logistic_cpp: K must be square");
+  if (y.n_elem != n) Rcpp::stop("krls_irls_logistic_cpp: length(y) must equal nrow(K)");
+  if (!(lambda > 0)) Rcpp::stop("krls_irls_logistic_cpp: lambda must be positive");
+
+  const bool weighted = w_obs.isNotNull();
+  arma::vec w_vec(n, arma::fill::ones);
+  if (weighted) {
+    Rcpp::NumericVector ww(w_obs);
+    if ((arma::uword) ww.size() != n)
+      Rcpp::stop("krls_irls_logistic_cpp: length(w_obs) must equal n");
+    for (arma::uword i = 0; i < n; ++i) w_vec(i) = ww[i];
+  }
+
+  arma::vec c(n, arma::fill::zeros);
+  arma::vec eta(n, arma::fill::zeros);
+  arma::vec p = krls_sigmoid_safe(eta);
+  arma::vec Kc = K * c;                             // == 0 initially
+  double dev = krls_pen_binomial_dev(y, p, Kc, c, w_vec, lambda, weighted);
+
+  arma::vec c_last_finite = c;
+  arma::vec eta_last_finite = eta;
+  arma::vec p_last_finite = p;
+  double dev_last_finite = dev;
+  int iter_last_finite = 0;
+
+  const arma::mat I_n = arma::eye<arma::mat>(n, n);
+  bool converged = false;
+  bool separated = false;
+  int iter_done = 0;
+
+  for (int it = 1; it <= max_iter; ++it) {
+    // W = p*(1-p) (with case weights baked in for the LHS), floored.
+    arma::vec W = p % (1.0 - p);
+    if (weighted) W = W % w_vec;
+    W.transform([](double v) { return v < 1e-8 ? 1e-8 : v; });
+
+    // z = eta + (y - p) / (p (1-p))  (unweighted denom; weights enter W).
+    arma::vec denom = p % (1.0 - p);
+    denom.transform([](double v) { return v < 1e-8 ? 1e-8 : v; });
+    arma::vec z = eta + (y - p) / denom;
+
+    // Solve (K W K + lambda I) c_new = K W z
+    arma::mat KW = K.each_row() % W.t();           // K * diag(W); n x n
+    arma::mat A  = KW * K + lambda * I_n;
+    arma::vec b  = KW * z;
+
+    arma::vec c_new;
+    bool solved = arma::solve(c_new, A, b, arma::solve_opts::likely_sympd);
+    if (!solved) {
+      solved = arma::solve(c_new, A, b);
+      if (!solved) { separated = true; break; }
+    }
+
+    // Step-halving on penalised deviance increase.
+    arma::vec c_try = c_new;
+    arma::vec eta_try, p_try, Kc_try;
+    double dev_try = std::numeric_limits<double>::infinity();
+    bool any_finite = false;
+    bool accepted = false;
+    arma::vec c_best = c;
+    arma::vec eta_best = eta;
+    arma::vec p_best = p;
+    arma::vec Kc_best = Kc;
+    double dev_best = dev;
+    for (int h = 0; h <= max_halve; ++h) {
+      Kc_try  = K * c_try;
+      eta_try = krls_clamp_eta(Kc_try, -30.0, 30.0);
+      p_try   = krls_sigmoid_safe(Kc_try);
+      dev_try = krls_pen_binomial_dev(y, p_try, Kc_try, c_try, w_vec, lambda, weighted);
+      if (std::isfinite(dev_try)) {
+        any_finite = true;
+        // Track the best (lowest dev) finite candidate seen so far.
+        if (dev_try < dev_best) {
+          c_best = c_try; eta_best = eta_try; p_best = p_try;
+          Kc_best = Kc_try; dev_best = dev_try;
+        }
+        if (dev_try <= dev + 1e-12) { accepted = true; break; }
+      }
+      c_try = 0.5 * (c_try + c);
+    }
+    if (!any_finite) { separated = true; break; }
+    // If no halve achieved descent, fall back to the best candidate seen.
+    // If even that is no better than current dev, we've stalled — declare
+    // convergence at the current iterate.
+    if (!accepted) {
+      if (dev_best >= dev) {
+        converged = true;
+        iter_done = it - 1;
+        break;
+      }
+      c_try = c_best; eta_try = eta_best; p_try = p_best;
+      Kc_try = Kc_best; dev_try = dev_best;
+    }
+
+    // Perfect-separation detection
+    const double cn = arma::norm(c_try, "inf");
+    if (cn > 1e6 || dev_try < 1e-10) {
+      c   = c_try;
+      eta = eta_try;
+      p   = p_try;
+      dev = dev_try;
+      iter_done = it;
+      separated = true;
+      break;
+    }
+
+    // Convergence checks (pre-commit)
+    const double c_norm_old = std::max(arma::norm(c, 2),
+                                       std::numeric_limits<double>::epsilon());
+    const double c_change   = arma::norm(c_try - c, 2) / c_norm_old;
+    const double dev_change_rel = std::abs(dev_try - dev) /
+                                    std::max(std::abs(dev), 1.0);
+
+    // commit
+    c   = c_try;
+    eta = eta_try;
+    p   = p_try;
+    Kc  = Kc_try;
+    dev = dev_try;
+
+    // last-finite snapshot
+    c_last_finite   = c;
+    eta_last_finite = eta;
+    p_last_finite   = p;
+    dev_last_finite = dev;
+    iter_last_finite = it;
+    iter_done = it;
+
+    if (trace > 0) {
+      Rcpp::Rcout << "[IRLS] iter " << it
+                  << "  dev=" << dev
+                  << "  d_dev=" << dev_change_rel
+                  << "  d_c="   << c_change << std::endl;
+    }
+    if (c_change < tol || dev_change_rel < tol) {
+      converged = true;
+      break;
+    }
+  }
+
+  if (separated) {
+    Rcpp::warning(
+      "krls(loss='logistic'): possible perfect separation detected; "
+      "returning last finite iterate. Try larger lambda or fewer features.");
+    c   = c_last_finite;
+    eta = eta_last_finite;
+    p   = p_last_finite;
+    dev = dev_last_finite;
+    iter_done = iter_last_finite;
+  }
+
+  // Final W (for downstream LOO / vcov)
+  arma::vec W_final = p % (1.0 - p);
+  if (weighted) W_final = W_final % w_vec;
+  W_final.transform([](double v) { return v < 1e-8 ? 1e-8 : v; });
+
+  // H_diag = diag( K (K W K + lambda I)^{-1} K )
+  arma::mat KW_f = K.each_row() % W_final.t();
+  arma::mat A_f  = KW_f * K + lambda * I_n;
+  arma::mat Ainv_K;
+  bool ok_h = arma::solve(Ainv_K, A_f, K, arma::solve_opts::likely_sympd);
+  if (!ok_h) ok_h = arma::solve(Ainv_K, A_f, K);
+  arma::vec H_diag(n, arma::fill::zeros);
+  if (ok_h) {
+    arma::mat H = K * Ainv_K;
+    H_diag = arma::diagvec(H);
+  } else {
+    H_diag.fill(NA_REAL);
+  }
+
+  return Rcpp::List::create(
+    Rcpp::Named("coeffs")    = c,
+    Rcpp::Named("eta")       = eta,
+    Rcpp::Named("p")         = p,
+    Rcpp::Named("W")         = W_final,
+    Rcpp::Named("deviance")  = dev,
+    Rcpp::Named("iter")      = iter_done,
+    Rcpp::Named("converged") = converged,
+    Rcpp::Named("separated") = separated,
+    Rcpp::Named("H_diag")    = H_diag
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CT-2008 closed-form LOO deviance under logistic.
+//
+//   eta_loo[i] = eta[i] - (y[i] - p[i]) * H_diag[i] / (1 - W[i] * H_diag[i])
+//   p_loo[i]   = plogis(eta_loo[i])
+//   loo_dev    = -2 * sum( y * log(p_loo) + (1-y) * log(1-p_loo) )
+// W = p*(1-p) (with floor); H_diag = diag( K (K W K + lambda I)^{-1} K ).
+// ---------------------------------------------------------------------------
+
+// [[Rcpp::export]]
+double krls_logistic_loo_loss_cpp(const arma::vec& eta, const arma::vec& y,
+                                  const arma::vec& p, const arma::vec& W,
+                                  const arma::vec& H_diag) {
+  const arma::uword n = eta.n_elem;
+  if (y.n_elem != n || p.n_elem != n || W.n_elem != n || H_diag.n_elem != n)
+    Rcpp::stop("krls_logistic_loo_loss_cpp: all inputs must have equal length");
+  const double eps = 1e-15;
+  double dev = 0.0;
+  for (arma::uword i = 0; i < n; ++i) {
+    double denom = 1.0 - W(i) * H_diag(i);
+    if (denom < 1e-8) denom = 1e-8;
+    const double eta_loo = eta(i) - (y(i) - p(i)) * H_diag(i) / denom;
+    double e = eta_loo;
+    if (e >  30.0) e =  30.0;
+    if (e < -30.0) e = -30.0;
+    const double p_loo = 1.0 / (1.0 + std::exp(-e));
+    const double pi    = std::min(std::max(p_loo, eps), 1.0 - eps);
+    dev += y(i) * std::log(pi) + (1.0 - y(i)) * std::log(1.0 - pi);
+  }
+  return -2.0 * dev;
+}

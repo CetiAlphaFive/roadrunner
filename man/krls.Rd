@@ -52,6 +52,7 @@ krls(X, ...)
   ard.imp = c("avgderiv", "vsq"),
   whichkernel = c("gaussian", "linear", "poly1", "poly2", "poly3", "poly4"),
   poly_c = 1,
+  loss = c("ls", "logistic"),
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -64,7 +65,7 @@ krls(X, ...)
   se.fit = FALSE,
   interval = c("none", "pint"),
   level = 0.95,
-  type = c("response", "link", "prob", "variance"),
+  type = c("response", "link", "prob", "variance", "class"),
   unscale = FALSE,
   ...
 )
@@ -290,6 +291,14 @@ with a one-shot warning).}
 
 \item{poly_c}{Polynomial kernel offset constant. Default \code{1.0}.
 Used only when \code{whichkernel} starts with \code{"poly"}.}
+
+\item{loss}{Loss function. \code{"ls"} (default) is kernel ridge least
+squares (the path through v0.0.0.9049). \code{"logistic"} optimises
+penalised binomial deviance via IRLS in coefficient space (since
+v0.0.0.9050). Requires \code{y} strictly in \verb{\{0, 1\}}. Incompatible with
+\code{approx = "nystrom"}, \code{lambda.method} in \code{c("gcv", "mll")},
+\code{varmod != "none"}, and \code{predict(type = "variance")} — all error
+at fit / predict time.}
 
 \item{trace}{Integer. \code{0} is silent, \verb{> 0} enables progress
 diagnostics (currently: prints chosen lambda when \verb{> 1},

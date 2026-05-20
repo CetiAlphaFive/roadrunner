@@ -1,3 +1,93 @@
+# roadrunner 0.0.0.9050
+
+## krls() — Phase Q5: true logistic-loss IRLS path (B1)
+
+Closes the biggest functional gap vs `lukesonnet/krls2`: real logistic
+ridge regression in the kernel basis, optimised via IRLS on penalised
+binomial deviance. Default `loss = "ls"` remains byte-identical to
+v0.0.0.9049 (back-compat snapshot in `test-krls-ard-kernel.R` continues
+to pass to ULP tolerance, and `loss = "ls"` fits are byte-equal to
+v9049 to `tolerance = 0`).
+
+* **`loss = c("ls", "logistic")`** new argument on `krls.default()`.
+  Default `"ls"` is the existing kernel ridge LS path. `"logistic"`
+  optimises
+  `minimise -2 sum(y log p + (1-y) log(1-p)) + lambda c' K c`
+  where `p = plogis(K c)`, via a Cholesky-backed Newton step in
+  coefficient space (option ii in the spec): each iter solves
+  `(K W K + lambda I) c = K W z` with `W = p(1-p)` and working
+  response `z = eta + (y - p) / W`. ~5-10 iters typical at default
+  tolerance `1e-6`; cap 50. Step-halving (up to 5 per iter) on
+  penalised-deviance increase. Numerical guards: W floored at `1e-8`,
+  eta clipped to `[-30, 30]`, perfect-separation detection
+  (`||c||_inf > 1e6` OR penalised dev `< 1e-10`) warns and returns
+  the last finite iterate.
+
+* **Compose rules.** `loss = "logistic"` requires binary y in `{0, 1}`.
+  Combinations that don't make sense (or are deferred) error early:
+  - `+ approx = "nystrom"` — deferred (large-n use case).
+  - `+ lambda.method = "gcv"` — Wahba 2-D extension; deferred.
+  - `+ lambda.method = "mll"` — Laplace approx; deferred to Q9.
+  - `+ varmod != "none"` — residual variance model is LS-specific.
+  - `predict(type = "variance")` — Q6 will derive the IRLS-aware
+    posterior variance; current Q5 errors.
+
+  Composes fine with: `whichkernel = "linear"`/`"poly*"`, `ard = "cheap"`,
+  `autotune = TRUE` (deviance scoring; force R fallback because the
+  Gaussian-specialised C++ inner is LS-specific), `n.boot > 0`
+  (bagged averaging on the LINK scale, sigmoid at end for Jensen),
+  `lambda.method = "loo"` (closed-form CT-2008), and
+  `lambda.method = "cv"` (fold-deviance scoring), `derivative = TRUE`
+  (link-scale marginal effects by default), `weights` (case weights
+  baked into IRLS `W = w * p(1-p)`).
+
+* **CT-2008 closed-form LOO under logistic.** Cawley & Talbot 2008
+  leave-one-out approximation, computed in coefficient space from a
+  single `H = K (K W K + lambda I)^{-1} K` solve. The diagonal
+  `H_diag` is stashed on the fit (one extra n x n solve per converged
+  IRLS). `cv_loo_dev` replaces `Looe` under logistic.
+
+* **Predict gains `type = "class"`** (hard 0/1 prediction). For
+  logistic fits: `type = "link"` returns eta; `type = "response"` and
+  `type = "prob"` return calibrated probabilities; `type = "class"`
+  returns `as.integer(p > 0.5)`. For binary LS fits, `type = "class"`
+  uses the existing plogis-on-LS shortcut.
+
+* **Print / summary.** Logistic fits print a
+  `"loss: logistic (IRLS, k iter, converged)"` line, use McFadden
+  pseudo-R-squared in place of LS R-squared, and append a
+  `"(link scale)"` suffix on the average marginal effects header.
+
+## Internal
+
+* New C++ exports: `krls_irls_logistic_cpp` (IRLS solver returning
+  coeffs, eta, p, W, deviance, iter, converged, H_diag),
+  `krls_logistic_loo_loss_cpp` (CT-2008 closed-form LOO deviance).
+* New R helpers: `.krls_logistic_lambdasearch`,
+  `.krls_logistic_fit_block`, `.krls_bag_logistic`.
+* `.krls_autotune_scalar()` accepts `is_logistic = FALSE`; when TRUE,
+  per-cell IRLS fits + deviance scoring replace the LS solve.
+* `.krls_run_cheap_ard()` accepts `loss` and forwards through the
+  pass-1 isotropic fit so ARD under logistic works end-to-end.
+* `slim_krls()` strips `eta_fitted` and `H_diag` along with the
+  existing heavy intermediates. `slim_krls(keep_predict = FALSE)`
+  retains `loss`, `deviance`, `converged`, `iter`, `cv_loo_dev` for
+  the inspection-grade summary.
+* `var.avgderivatives` under logistic is `NA` (full IRLS-aware
+  derivation deferred to Q6) with a one-shot warning.
+
+## Tests
+
+* `test-krls-logistic.R` (~250 LoC, 13 tests): binary-y validation;
+  IRLS convergence (< 20 iter); glmnet deviance match
+  (`skip_if_not_installed("glmnet")`); Brier improvement vs LS+plogis;
+  CT-2008 LOO matches explicit refit (n = 20 toy, tol 5e-3); CV under
+  logistic; autotune + logistic; bagging + logistic; predict type
+  consistency; link-scale marginal effects; compose rejections
+  (Nystrom, GCV, MLL, varmod); ARD cheap + logistic on sparse signal
+  lifts AUC; back-compat — `loss = "ls"` is byte-identical to v9049
+  to `tolerance = 0`.
+
 # roadrunner 0.0.0.9049
 
 ## krls() — Phase Q2: polynomial kernels + GP variance + MLL

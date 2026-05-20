@@ -73,3 +73,11 @@ krls_nystrom_autotune_inner_cpp <- function(X_tr, Z, X_te, y_tr, y_te, sigma_gri
     .Call(`_roadrunner_krls_nystrom_autotune_inner_cpp`, X_tr, Z, X_te, y_tr, y_te, sigma_grid, lambda_args, eps, nthreads)
 }
 
+krls_irls_logistic_cpp <- function(K, y, lambda, w_obs = NULL, tol = 1e-6, max_iter = 50L, max_halve = 5L, trace = 0L) {
+    .Call(`_roadrunner_krls_irls_logistic_cpp`, K, y, lambda, w_obs, tol, max_iter, max_halve, trace)
+}
+
+krls_logistic_loo_loss_cpp <- function(eta, y, p, W, H_diag) {
+    .Call(`_roadrunner_krls_logistic_loo_loss_cpp`, eta, y, p, W, H_diag)
+}
+
