@@ -1,3 +1,45 @@
+# roadrunner 0.0.0.9051
+
+## meep() — Phase Q-DML: cross-fitted causal ensemble
+
+New user-facing function `meep()`: a pure-R orchestration layer over the
+package's `ares()` (MARS) and `krls()` (Kernel Regularized Least Squares)
+fitters that produces honest, cross-fitted (out-of-fold) nuisance
+estimates for Double Machine Learning and causal-forest workflows.
+`meep()` does not estimate a treatment effect itself — it returns the
+cross-fitted predictions and residuals, which are meant to be handed
+downstream to `grf::causal_forest()` (via `Y.hat` / `W.hat`) or to a DML
+estimator.
+
+* **`meep(X, y, treatment = NULL, ...)`** — a grf-style matrix/vector
+  interface. Returns an S3 object of class `"meep"` carrying
+  `y_hat_oof`, `d_hat_oof`, `mu0_hat_oof`/`mu1_hat_oof`, `y_resid`,
+  `d_resid`, the `folds` vector, the per-nuisance OOF prediction
+  matrices, the ensemble weights, and per learner-by-nuisance OOF
+  performance.
+* **Stacking ensemble** — `ensemble = "stack"` fits non-negative least
+  squares on the honest OOF prediction matrix (leakage is already purged
+  column-wise, so no second nesting layer is needed). `"average"` and
+  `"best"` are cheaper fallbacks. The NNLS solver is hand-rolled
+  (Lawson–Hanson active-set) — no new package dependencies.
+* **`tune = c("once", "per_fold", "none")`** — `"once"` (default)
+  autotunes each learner on the full data, freezes the hyperparameters,
+  and refits per fold; `"per_fold"` autotunes inside every fold;
+  `"none"` is the fast path that calls `ares()` / `krls()` with their
+  own defaults and never invokes autotune.
+* **Family auto-detection** — a binary outcome routes to
+  `ares(family = "binomial")` + `krls(loss = "logistic")`; a binary
+  treatment is modelled as a propensity score. Multi-valued treatments
+  are rejected with a clear error.
+* **Cluster-robust folds** — the `cluster` argument keeps whole clusters
+  within a fold.
+* **Graceful degradation** — a learner that errors on a fold is dropped
+  for those rows, the ensemble weights are renormalized over the
+  survivors per row, and the event is logged in `$fold_failures`.
+* `predict.meep()`, `print.meep()`, and `summary.meep()` (with an
+  overlap diagnostic for binary treatments) S3 methods.
+* `grf` added to `Suggests` for the gated integration test.
+
 # roadrunner 0.0.0.9050
 
 ## krls() — Phase Q5: true logistic-loss IRLS path (B1)
