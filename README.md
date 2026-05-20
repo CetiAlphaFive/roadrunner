@@ -14,6 +14,9 @@ with thin, base-R-style interfaces. Two algorithms today:
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
 
+Plus **`meep()`** -- a cross-fitted ensemble of the above, built for
+Double Machine Learning and causal-forest nuisance estimation.
+
 ## Package design
 
 - **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`
@@ -82,6 +85,46 @@ head(pr$fit); head(pr$se.fit)
 `krls()` mirrors `KRLS::krls()` numerically (fits agree to ~1e-13 at
 matched `sigma` and `lambda`) and is 6-10x faster on benchmarks at
 `n >= 500`.
+
+### Causal ensembles via `meep()`
+
+`meep()` cross-fits an ensemble of `ares()` and `krls()` and returns
+out-of-fold predictions ready to drop into Double Machine Learning or
+causal forests. It estimates the nuisance functions only -- the
+treatment effect is yours to compute (or hand to `grf`).
+
+```r
+set.seed(1)
+n <- 800
+X <- matrix(runif(n * 4, -2, 2), n, 4)
+D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 0.3)
+Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 0.3)
+
+m  <- meep(X, Y, treatment = D, folds = 5, seed = 42)
+m$y_hat_oof   # cross-fitted E[Y | X]
+m$d_hat_oof   # cross-fitted E[D | X]
+
+# hand the cross-fitted nuisances to a causal forest
+# grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)
+```
+
+On smooth, structured signal the spline + kernel ensemble fits the
+nuisances more tightly than `grf`'s built-in regression forests
+(out-of-bag vs out-of-fold R-squared on the toy above):
+
+```r
+cf <- grf::causal_forest(X, Y, D, seed = 42)
+r2 <- function(p, a) 1 - sum((a - p)^2) / sum((a - mean(a))^2)
+
+data.frame(
+  nuisance    = c("E[Y|X]", "E[D|X]"),
+  grf_oob_r2  = c(r2(cf$Y.hat, Y),     r2(cf$W.hat, D)),
+  meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
+)
+#>  nuisance grf_oob_r2 meep_oof_r2
+#>    E[Y|X]      0.854       0.900
+#>    E[D|X]      0.865       0.916
+```
 
 ## References
 
