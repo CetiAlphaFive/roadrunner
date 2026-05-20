@@ -17,7 +17,14 @@ reference:
   contents:
   - krls
   - plot.krls_rr
+  - slim_krls
+  - unslim_krls
   - get_landmarks
+- title: "Causal ensemble: meep()"
+  desc: "Cross-fitted ensemble of ares() and krls() for DML and causal-forest nuisance estimation."
+  contents:
+  - meep
+  - predict.meep
 - title: "Package"
   contents:
   - roadrunner-package
