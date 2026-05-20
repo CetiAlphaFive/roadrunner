@@ -3007,8 +3007,8 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   W_full   <- as.numeric(irls_fit$W)
   H_diag   <- as.numeric(irls_fit$H_diag)
   dev_full <- as.numeric(irls_fit$deviance)
-  iter_done<- as.integer(irls_fit$iter)
-  converged<- isTRUE(irls_fit$converged)
+  iter_done <- as.integer(irls_fit$iter)
+  converged <- isTRUE(irls_fit$converged)
 
   ## CT-2008 LOO deviance
   loo_dev <- if (all(is.finite(H_diag))) {
