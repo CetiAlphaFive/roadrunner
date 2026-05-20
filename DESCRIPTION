@@ -1,6 +1,6 @@
 Package: roadrunner
 Title: Fast, Low-Dependency Machine Learning Algorithms
-Version: 0.0.0.9051
+Version: 0.0.0.9052
 Authors@R:
     person(c("Jack", "T."), "Rametta", , "jtrametta@gmail.com",
            role = c("aut", "cre"),
@@ -34,6 +34,7 @@ Suggests:
     grf,
     KRLS,
     knitr,
+    penalizedLDA,
     rmarkdown,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
