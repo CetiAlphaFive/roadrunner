@@ -6,7 +6,7 @@
 [![Codecov test coverage](https://codecov.io/gh/CetiAlphaFive/roadrunner/graph/badge.svg)](https://app.codecov.io/gh/CetiAlphaFive/roadrunner)
 <!-- badges: end -->
 
-Fast, low-dependency machine learning algorithms in R.
+Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
 with thin, base-R-style interfaces. Two algorithms today:
@@ -20,7 +20,7 @@ Double Machine Learning and causal-forest nuisance estimation.
 ## Package design
 
 - **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`
-  at runtime. No tidyverse, no rlang, no S4.
+  at runtime. 
 - **Fast.** C++ engines via `Rcpp` with multi-core scoring via
   `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread
@@ -89,9 +89,8 @@ matched `sigma` and `lambda`) and is 6-10x faster on benchmarks at
 ### Causal ensembles via `meep()`
 
 `meep()` cross-fits an ensemble of `ares()` and `krls()` and returns
-out-of-fold predictions ready to drop into Double Machine Learning or
-causal forests. It estimates the nuisance functions only -- the
-treatment effect is yours to compute (or hand to `grf`).
+out-of-fold predictions designed to drop into Double Machine Learning `DoubleML` or
+causal forest `grf` implementations. 
 
 ```r
 set.seed(1)
