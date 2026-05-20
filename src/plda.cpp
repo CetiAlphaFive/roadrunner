@@ -3,9 +3,8 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 using namespace Rcpp;
 
-// Within-class standard deviation per feature, divisor n (matches penalizedLDA::wcsd.matrix).
-// [[Rcpp::export]]
-Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G) {
+// Within-class standard deviation per feature, divisor n. C++-internal (returns arma::vec).
+static arma::vec wcsd_impl(const arma::mat& x, const arma::ivec& y, int G) {
   const arma::uword n = x.n_rows, p = x.n_cols;
   arma::vec ss(p, arma::fill::zeros);
   for (int g = 1; g <= G; ++g) {
@@ -16,6 +15,11 @@ Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G
     xg.each_row() -= mg;
     ss += arma::sum(arma::square(xg), 0).t();
   }
-  arma::vec result = arma::sqrt(ss / (double) n);
-  return Rcpp::NumericVector(result.begin(), result.end());
+  return arma::sqrt(ss / (double) n);
+}
+
+// [[Rcpp::export]]
+Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G) {
+  arma::vec v = wcsd_impl(x, y, G);
+  return Rcpp::NumericVector(v.begin(), v.end());
 }
