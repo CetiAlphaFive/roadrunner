@@ -81,3 +81,7 @@ krls_logistic_loo_loss_cpp <- function(eta, y, p, W, H_diag) {
     .Call(`_roadrunner_krls_logistic_loo_loss_cpp`, eta, y, p, W, H_diag)
 }
 
+plda_wcsd_cpp <- function(x, y, G) {
+    .Call(`_roadrunner_plda_wcsd_cpp`, x, y, G)
+}
+

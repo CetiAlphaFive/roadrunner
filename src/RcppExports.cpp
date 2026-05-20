@@ -338,6 +338,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_wcsd_cpp
+Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G);
+RcppExport SEXP _roadrunner_plda_wcsd_cpp(SEXP xSEXP, SEXP ySEXP, SEXP GSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::ivec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< int >::type G(GSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_wcsd_cpp(x, y, G));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -360,6 +373,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_nystrom_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_autotune_inner_cpp, 9},
     {"_roadrunner_krls_irls_logistic_cpp", (DL_FUNC) &_roadrunner_krls_irls_logistic_cpp, 8},
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
+    {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
     {NULL, NULL, 0}
 };
 
