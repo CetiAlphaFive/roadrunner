@@ -24,11 +24,12 @@ krls(
   binary = TRUE,
   vcov = TRUE,
   weights = NULL,
+  subset = NULL,
   L = NULL,
   U = NULL,
   tol = NULL,
   eigtrunc = NULL,
-  lambda.method = c("loo", "gcv", "cv"),
+  lambda.method = c("loo", "gcv", "cv", "mll"),
   lambda.grid = NULL,
   nfold = 0L,
   ncross = NULL,
@@ -53,6 +54,9 @@ krls(
   ard.alpha = 1,
   ard.cap = 100,
   ard.imp = c("avgderiv", "vsq"),
+  whichkernel = c("gaussian", "linear", "poly1", "poly2", "poly3", "poly4"),
+  poly_c = 1,
+  loss = c("ls", "logistic"),
   trace = NULL,
   nthreads = 0L,
   print.level = NULL,
@@ -66,6 +70,8 @@ predict(
   se.fit = FALSE,
   interval = c("none", "pint"),
   level = 0.95,
+  type = c("response", "link", "prob", "variance", "class"),
+  unscale = FALSE,
   ...
 )
 ```
@@ -90,8 +96,11 @@ predict(
 
 - subset:
 
-  Used only by the formula method. An optional integer or logical vector
-  restricting rows of `data` used for the fit.
+  Optional integer or logical vector restricting which rows of `data` /
+  `X` are used for the fit. Mirrors the formula-method behaviour. When
+  `X` is supplied directly (matrix or data frame), `subset` slices `X`,
+  `y`, and `weights` immediately after input validation; `NULL`
+  (default) is a no-op and back-compatible.
 
 - y:
 
@@ -166,7 +175,9 @@ predict(
   (`nfold > 0` required). `"gcv"` uses the closed-form generalised
   cross-validation criterion (Craven & Wahba 1979) using the same
   eigendecomposition; recommended when `n` is large or LOO behaves
-  unstably.
+  unstably. `"mll"` (since v0.0.0.9049) selects lambda by minimising the
+  negative Type-II marginal log- likelihood in the same eigenbasis.
+  Incompatible with `approx = "nystrom"`.
 
 - lambda.grid:
 
@@ -345,6 +356,31 @@ predict(
   uses `|avgderivatives[k]|`; `"vsq"` uses `mean(derivatives[, k]^2)`, a
   slightly more robust signal.
 
+- whichkernel:
+
+  Kernel choice. `"gaussian"` (default) preserves the full
+  back-compatible Gaussian RBF kernel. `"linear"` uses the inner-product
+  kernel `K_ij = x_i' x_j`. `"poly1"`, `"poly2"`, `"poly3"`, `"poly4"`
+  use `K_ij = (x_i' x_j + poly_c)^d` with `d = 1..4`. Non-Gaussian
+  kernels are incompatible with `approx = "nystrom"`, with
+  `ard != "none"`, and with vector `sigma`; all error at fit time.
+  `var.avgderivatives` is not defined for non-Gaussian kernels in this
+  version (returns `NA` with a one-shot warning).
+
+- poly_c:
+
+  Polynomial kernel offset constant. Default `1.0`. Used only when
+  `whichkernel` starts with `"poly"`.
+
+- loss:
+
+  Loss function. `"ls"` (default) is kernel ridge least squares (the
+  path through v0.0.0.9049). `"logistic"` optimises penalised binomial
+  deviance via IRLS in coefficient space (since v0.0.0.9050). Requires
+  `y` strictly in `{0, 1}`. Incompatible with `approx = "nystrom"`,
+  `lambda.method` in `c("gcv", "mll")`, `varmod != "none"`, and
+  `predict(type = "variance")` — all error at fit / predict time.
+
 - trace:
 
   Integer. `0` is silent, `> 0` enables progress diagnostics (currently:
@@ -386,6 +422,25 @@ predict(
 - level:
 
   Confidence level for `interval = "pint"`. Default `0.95`.
+
+- type:
+
+  Prediction type. `"response"` (default) returns predictions on the
+  original `y` scale. `"link"` is currently a synonym for `"response"`
+  (KRLS has no GLM link; reserved for future logistic-loss extension).
+  `"prob"` is valid only for binary fits (`y` has exactly two unique
+  values) and returns `plogis(yhat)`. This is a calibration shortcut:
+  the underlying fit is still least-squares loss, not logistic loss;
+  values are clamped to `[0, 1]` but are not true posterior
+  probabilities. `"variance"` (since v0.0.0.9049) returns the GP
+  posterior variance `K** - K* (K + lambda I)^{-1} K*'` per row of
+  `newdata`. Not supported for `approx = "nystrom"`.
+
+- unscale:
+
+  Logical. Only used when `type = "variance"`. If `TRUE`, multiplies the
+  returned variance by `var(y_train)` so it sits on the original y
+  scale; if `FALSE` (default), returns the standardised-scale variance.
 
 ## Value
 
@@ -562,7 +617,7 @@ fit <- krls(X, y)
 fit
 #> Kernel Regularized Least Squares (KRLS)
 #>   n = 100   p = 3 
-#>   sigma = 3.813   lambda = 0.222   R^2 = 0.9563 
+#>   sigma = 3.813   lambda = 0.222    R^2  = 0.9563 
 #> 
 #> Average Marginal Effects:
 #>        age     income      score 
@@ -573,6 +628,7 @@ fit$avgderivatives           # average marginal effect per variable
 summary(fit)
 #> Kernel Regularized Least Squares (KRLS)
 #>   n = 100  p = 3  sigma = 3.813  lambda = 0.222  R^2 = 0.9563
+#>   Effective df: 24.71
 #> 
 #> Average Marginal Effects:
 #>         Estimate  Std. Err  t value  Pr(>|t|)    

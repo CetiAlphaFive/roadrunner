@@ -27,7 +27,7 @@
 
     <a class="navbar-brand me-2" href="index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9047</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9051</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -57,7 +57,7 @@
 </h1></div>
 <!-- badges: start -->
 
-<p>Fast, low-dependency machine learning algorithms in R.</p>
+<p>Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications.</p>
 <p><code>roadrunner</code> ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Two algorithms today:</p>
 <ul>
 <li>
@@ -65,12 +65,13 @@
 <li>
 <strong><code><a href="reference/krls.html">krls()</a></code></strong> – Kernel Regularized Least Squares (KRLS).</li>
 </ul>
+<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of the above, built for Double Machine Learning and causal-forest nuisance estimation.</p>
 <div class="section level2">
 <h2 id="package-design">Package design<a class="anchor" aria-label="anchor" href="#package-design"></a>
 </h2>
 <ul>
 <li>
-<strong>Low dependency.</strong> Only <code>Rcpp</code>, <code>RcppArmadillo</code>, and <code>RcppParallel</code> at runtime. No tidyverse, no rlang, no S4.</li>
+<strong>Low dependency.</strong> Only <code>Rcpp</code>, <code>RcppArmadillo</code>, and <code>RcppParallel</code> at runtime.</li>
 <li>
 <strong>Fast.</strong> C++ engines via <code>Rcpp</code> with multi-core scoring via <code>RcppParallel</code>.</li>
 <li>
@@ -131,6 +132,38 @@
 <span><span class="va">pr</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="va">Xnew</span>, se.fit <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">fit</span><span class="op">)</span>; <span class="fu"><a href="https://rdrr.io/r/utils/head.html" class="external-link">head</a></span><span class="op">(</span><span class="va">pr</span><span class="op">$</span><span class="va">se.fit</span><span class="op">)</span></span></code></pre></div>
 <p><code><a href="reference/krls.html">krls()</a></code> mirrors <code><a href="https://rdrr.io/pkg/KRLS/man/krls.html" class="external-link">KRLS::krls()</a></code> numerically (fits agree to ~1e-13 at matched <code>sigma</code> and <code>lambda</code>) and is 6-10x faster on benchmarks at <code>n &gt;= 500</code>.</p>
+</div>
+<div class="section level3">
+<h3 id="causal-ensembles-via-meep">Causal ensembles via <code>meep()</code>
+<a class="anchor" aria-label="anchor" href="#causal-ensembles-via-meep"></a>
+</h3>
+<p><code><a href="reference/meep.html">meep()</a></code> cross-fits an ensemble of <code><a href="reference/ares.html">ares()</a></code> and <code><a href="reference/krls.html">krls()</a></code> and returns out-of-fold predictions designed to drop into Double Machine Learning <code>DoubleML</code> or causal forest <code>grf</code> implementations.</p>
+<div class="sourceCode" id="cb4"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span></span>
+<span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">800</span></span>
+<span><span class="va">X</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">matrix</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/stats/Uniform.html" class="external-link">runif</a></span><span class="op">(</span><span class="va">n</span> <span class="op">*</span> <span class="fl">4</span>, <span class="op">-</span><span class="fl">2</span>, <span class="fl">2</span><span class="op">)</span>, <span class="va">n</span>, <span class="fl">4</span><span class="op">)</span></span>
+<span><span class="va">D</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/Trig.html" class="external-link">sin</a></span><span class="op">(</span><span class="va">X</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span><span class="op">)</span> <span class="op">+</span> <span class="fl">0.5</span> <span class="op">*</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span> <span class="op">+</span> <span class="fl">0.3</span> <span class="op">*</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">3</span><span class="op">]</span><span class="op">^</span><span class="fl">2</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="va">n</span>, sd <span class="op">=</span> <span class="fl">0.3</span><span class="op">)</span></span>
+<span><span class="va">Y</span> <span class="op">&lt;-</span> <span class="va">D</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/base/Trig.html" class="external-link">cos</a></span><span class="op">(</span><span class="va">X</span><span class="op">[</span>, <span class="fl">1</span><span class="op">]</span><span class="op">)</span> <span class="op">+</span> <span class="fl">0.4</span> <span class="op">*</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">2</span><span class="op">]</span><span class="op">^</span><span class="fl">2</span> <span class="op">+</span> <span class="fl">0.5</span> <span class="op">*</span> <span class="va">X</span><span class="op">[</span>, <span class="fl">3</span><span class="op">]</span> <span class="op">+</span> <span class="fu"><a href="https://rdrr.io/r/stats/Normal.html" class="external-link">rnorm</a></span><span class="op">(</span><span class="va">n</span>, sd <span class="op">=</span> <span class="fl">0.3</span><span class="op">)</span></span>
+<span></span>
+<span><span class="va">m</span>  <span class="op">&lt;-</span> <span class="fu"><a href="reference/meep.html">meep</a></span><span class="op">(</span><span class="va">X</span>, <span class="va">Y</span>, treatment <span class="op">=</span> <span class="va">D</span>, folds <span class="op">=</span> <span class="fl">5</span>, seed <span class="op">=</span> <span class="fl">42</span><span class="op">)</span></span>
+<span><span class="va">m</span><span class="op">$</span><span class="va">y_hat_oof</span>   <span class="co"># cross-fitted E[Y | X]</span></span>
+<span><span class="va">m</span><span class="op">$</span><span class="va">d_hat_oof</span>   <span class="co"># cross-fitted E[D | X]</span></span>
+<span></span>
+<span><span class="co"># hand the cross-fitted nuisances to a causal forest</span></span>
+<span><span class="co"># grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)</span></span></code></pre></div>
+<p>On smooth, structured signal the spline + kernel ensemble fits the nuisances more tightly than <code>grf</code>’s built-in regression forests (out-of-bag vs out-of-fold R-squared on the toy above):</p>
+<div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">cf</span> <span class="op">&lt;-</span> <span class="fu">grf</span><span class="fu">::</span><span class="fu"><a href="https://rdrr.io/pkg/grf/man/causal_forest.html" class="external-link">causal_forest</a></span><span class="op">(</span><span class="va">X</span>, <span class="va">Y</span>, <span class="va">D</span>, seed <span class="op">=</span> <span class="fl">42</span><span class="op">)</span></span>
+<span><span class="va">r2</span> <span class="op">&lt;-</span> <span class="kw">function</span><span class="op">(</span><span class="va">p</span>, <span class="va">a</span><span class="op">)</span> <span class="fl">1</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="op">(</span><span class="va">a</span> <span class="op">-</span> <span class="va">p</span><span class="op">)</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span> <span class="op">/</span> <span class="fu"><a href="https://rdrr.io/r/base/sum.html" class="external-link">sum</a></span><span class="op">(</span><span class="op">(</span><span class="va">a</span> <span class="op">-</span> <span class="fu"><a href="https://rdrr.io/r/base/mean.html" class="external-link">mean</a></span><span class="op">(</span><span class="va">a</span><span class="op">)</span><span class="op">)</span><span class="op">^</span><span class="fl">2</span><span class="op">)</span></span>
+<span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/base/data.frame.html" class="external-link">data.frame</a></span><span class="op">(</span></span>
+<span>  nuisance    <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"E[Y|X]"</span>, <span class="st">"E[D|X]"</span><span class="op">)</span>,</span>
+<span>  grf_oob_r2  <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fu">r2</span><span class="op">(</span><span class="va">cf</span><span class="op">$</span><span class="va">Y.hat</span>, <span class="va">Y</span><span class="op">)</span>,     <span class="fu">r2</span><span class="op">(</span><span class="va">cf</span><span class="op">$</span><span class="va">W.hat</span>, <span class="va">D</span><span class="op">)</span><span class="op">)</span>,</span>
+<span>  meep_oof_r2 <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fu">r2</span><span class="op">(</span><span class="va">m</span><span class="op">$</span><span class="va">y_hat_oof</span>, <span class="va">Y</span><span class="op">)</span>,  <span class="fu">r2</span><span class="op">(</span><span class="va">m</span><span class="op">$</span><span class="va">d_hat_oof</span>, <span class="va">D</span><span class="op">)</span><span class="op">)</span></span>
+<span><span class="op">)</span></span>
+<span><span class="co">#&gt;  nuisance grf_oob_r2 meep_oof_r2</span></span>
+<span><span class="co">#&gt;    E[Y|X]      0.854       0.900</span></span>
+<span><span class="co">#&gt;    E[D|X]      0.865       0.916</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">

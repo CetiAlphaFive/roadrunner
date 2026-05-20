@@ -1,6 +1,7 @@
 # roadrunner [![roadrunner hex sticker](reference/figures/roadrunner_hex.png)](https://github.com/CetiAlphaFive/roadrunner/blob/main/man/figures/roadrunner_hex.png)
 
-Fast, low-dependency machine learning algorithms in R.
+Fast, low-dependency machine learning algorithms in R. Useful for causal
+plug-ins (e.g., nuisance fits in DML) or simple predictive applications.
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
 with thin, base-R-style interfaces. Two algorithms today:
@@ -10,10 +11,15 @@ with thin, base-R-style interfaces. Two algorithms today:
 - **[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)**
   – Kernel Regularized Least Squares (KRLS).
 
+Plus
+**[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)**
+– a cross-fitted ensemble of the above, built for Double Machine
+Learning and causal-forest nuisance estimation.
+
 ## Package design
 
 - **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`
-  at runtime. No tidyverse, no rlang, no S4.
+  at runtime.
 - **Fast.** C++ engines via `Rcpp` with multi-core scoring via
   `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread counts
@@ -84,6 +90,51 @@ mirrors [`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html)
 numerically (fits agree to ~1e-13 at matched `sigma` and `lambda`) and
 is 6-10x faster on benchmarks at `n >= 500`.
 
+### Causal ensembles via `meep()`
+
+[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+cross-fits an ensemble of
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+and
+[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+and returns out-of-fold predictions designed to drop into Double Machine
+Learning `DoubleML` or causal forest `grf` implementations.
+
+``` r
+
+set.seed(1)
+n <- 800
+X <- matrix(runif(n * 4, -2, 2), n, 4)
+D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 0.3)
+Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 0.3)
+
+m  <- meep(X, Y, treatment = D, folds = 5, seed = 42)
+m$y_hat_oof   # cross-fitted E[Y | X]
+m$d_hat_oof   # cross-fitted E[D | X]
+
+# hand the cross-fitted nuisances to a causal forest
+# grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)
+```
+
+On smooth, structured signal the spline + kernel ensemble fits the
+nuisances more tightly than `grf`’s built-in regression forests
+(out-of-bag vs out-of-fold R-squared on the toy above):
+
+``` r
+
+cf <- grf::causal_forest(X, Y, D, seed = 42)
+r2 <- function(p, a) 1 - sum((a - p)^2) / sum((a - mean(a))^2)
+
+data.frame(
+  nuisance    = c("E[Y|X]", "E[D|X]"),
+  grf_oob_r2  = c(r2(cf$Y.hat, Y),     r2(cf$W.hat, D)),
+  meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
+)
+#>  nuisance grf_oob_r2 meep_oof_r2
+#>    E[Y|X]      0.854       0.900
+#>    E[D|X]      0.865       0.916
+```
+
 ## References
 
 - Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
@@ -136,10 +187,40 @@ and marginal effects.
 - [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   [`predict(`*`<krls_rr>`*`)`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   : Kernel Regularized Least Squares
+
 - [`plot(`*`<krls_rr>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.krls_rr.md)
   : Diagnostic plot for KRLS fits
+
+- [`slim_krls()`](https://cetialphafive.github.io/roadrunner/reference/slim_krls.md)
+  : Strip heavy fields off a KRLS fit
+
+- [`unslim_krls()`](https://cetialphafive.github.io/roadrunner/reference/unslim_krls.md)
+  :
+
+  Undo
+  [`slim_krls()`](https://cetialphafive.github.io/roadrunner/reference/slim_krls.md)
+  (placeholder)
+
 - [`get_landmarks()`](https://cetialphafive.github.io/roadrunner/reference/get_landmarks.md)
   : Extract landmark coordinates from a Nystrom krls fit
+
+## Causal ensemble: meep()
+
+Cross-fitted ensemble of ares() and krls() for DML and causal-forest
+nuisance estimation.
+
+- [`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+  :
+
+  Cross-fitted causal ensemble of
+  [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+  and
+  [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+
+- [`predict(`*`<meep>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.meep.md)
+  :
+
+  Predict from a fitted `meep` object
 
 ## Package
 

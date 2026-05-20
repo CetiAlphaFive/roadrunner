@@ -15,7 +15,7 @@ the original (X, y) scale."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9047</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9051</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -66,11 +66,12 @@ the original <code>(X, y)</code> scale.</p>
 <span>  binary <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  vcov <span class="op">=</span> <span class="cn">TRUE</span>,</span>
 <span>  weights <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  subset <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  L <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  U <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  tol <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  eigtrunc <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"gcv"</span>, <span class="st">"cv"</span><span class="op">)</span>,</span>
+<span>  lambda.method <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"loo"</span>, <span class="st">"gcv"</span>, <span class="st">"cv"</span>, <span class="st">"mll"</span><span class="op">)</span>,</span>
 <span>  lambda.grid <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nfold <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  ncross <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -95,6 +96,9 @@ the original <code>(X, y)</code> scale.</p>
 <span>  ard.alpha <span class="op">=</span> <span class="fl">1</span>,</span>
 <span>  ard.cap <span class="op">=</span> <span class="fl">100</span>,</span>
 <span>  ard.imp <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"avgderiv"</span>, <span class="st">"vsq"</span><span class="op">)</span>,</span>
+<span>  whichkernel <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"gaussian"</span>, <span class="st">"linear"</span>, <span class="st">"poly1"</span>, <span class="st">"poly2"</span>, <span class="st">"poly3"</span>, <span class="st">"poly4"</span><span class="op">)</span>,</span>
+<span>  poly_c <span class="op">=</span> <span class="fl">1</span>,</span>
+<span>  loss <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"ls"</span>, <span class="st">"logistic"</span><span class="op">)</span>,</span>
 <span>  trace <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  nthreads <span class="op">=</span> <span class="fl">0L</span>,</span>
 <span>  print.level <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -108,6 +112,8 @@ the original <code>(X, y)</code> scale.</p>
 <span>  se.fit <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  interval <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"pint"</span><span class="op">)</span>,</span>
 <span>  level <span class="op">=</span> <span class="fl">0.95</span>,</span>
+<span>  type <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"response"</span>, <span class="st">"link"</span>, <span class="st">"prob"</span>, <span class="st">"variance"</span>, <span class="st">"class"</span><span class="op">)</span>,</span>
+<span>  unscale <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -134,8 +140,12 @@ the variables referenced by the formula.</p></dd>
 
 
 <dt id="arg-subset">subset<a class="anchor" aria-label="anchor" href="#arg-subset"></a></dt>
-<dd><p>Used only by the formula method. An optional integer
-or logical vector restricting rows of <code>data</code> used for the fit.</p></dd>
+<dd><p>Optional integer or logical vector restricting which
+rows of <code>data</code> / <code>X</code> are used for the fit. Mirrors the
+formula-method behaviour. When <code>X</code> is supplied directly
+(matrix or data frame), <code>subset</code> slices <code>X</code>, <code>y</code>, and <code>weights</code>
+immediately after input validation; <code>NULL</code> (default) is a no-op
+and back-compatible.</p></dd>
 
 
 <dt id="arg-y">y<a class="anchor" aria-label="anchor" href="#arg-y"></a></dt>
@@ -211,7 +221,10 @@ the closed-form leave-one-out golden-section search; <code>"cv"</code>
 uses K-fold CV over a grid (<code>nfold &gt; 0</code> required). <code>"gcv"</code> uses
 the closed-form generalised cross-validation criterion (Craven &amp;
 Wahba 1979) using the same eigendecomposition; recommended when
-<code>n</code> is large or LOO behaves unstably.</p></dd>
+<code>n</code> is large or LOO behaves unstably. <code>"mll"</code> (since v0.0.0.9049)
+selects lambda by minimising the negative Type-II marginal log-
+likelihood in the same eigenbasis. Incompatible with
+<code>approx = "nystrom"</code>.</p></dd>
 
 
 <dt id="arg-lambda-grid">lambda.grid<a class="anchor" aria-label="anchor" href="#arg-lambda-grid"></a></dt>
@@ -393,6 +406,33 @@ importance features. Default <code>100</code>.</p></dd>
 <code>mean(derivatives[, k]^2)</code>, a slightly more robust signal.</p></dd>
 
 
+<dt id="arg-whichkernel">whichkernel<a class="anchor" aria-label="anchor" href="#arg-whichkernel"></a></dt>
+<dd><p>Kernel choice. <code>"gaussian"</code> (default) preserves
+the full back-compatible Gaussian RBF kernel. <code>"linear"</code> uses the
+inner-product kernel <code>K_ij = x_i' x_j</code>. <code>"poly1"</code>, <code>"poly2"</code>,
+<code>"poly3"</code>, <code>"poly4"</code> use <code>K_ij = (x_i' x_j + poly_c)^d</code> with
+<code>d = 1..4</code>. Non-Gaussian kernels are incompatible with
+<code>approx = "nystrom"</code>, with <code>ard != "none"</code>, and with vector
+<code>sigma</code>; all error at fit time. <code>var.avgderivatives</code> is not
+defined for non-Gaussian kernels in this version (returns <code>NA</code>
+with a one-shot warning).</p></dd>
+
+
+<dt id="arg-poly-c">poly_c<a class="anchor" aria-label="anchor" href="#arg-poly-c"></a></dt>
+<dd><p>Polynomial kernel offset constant. Default <code>1.0</code>.
+Used only when <code>whichkernel</code> starts with <code>"poly"</code>.</p></dd>
+
+
+<dt id="arg-loss">loss<a class="anchor" aria-label="anchor" href="#arg-loss"></a></dt>
+<dd><p>Loss function. <code>"ls"</code> (default) is kernel ridge least
+squares (the path through v0.0.0.9049). <code>"logistic"</code> optimises
+penalised binomial deviance via IRLS in coefficient space (since
+v0.0.0.9050). Requires <code>y</code> strictly in <code>{0, 1}</code>. Incompatible with
+<code>approx = "nystrom"</code>, <code>lambda.method</code> in <code>c("gcv", "mll")</code>,
+<code>varmod != "none"</code>, and <code>predict(type = "variance")</code> — all error
+at fit / predict time.</p></dd>
+
+
 <dt id="arg-trace">trace<a class="anchor" aria-label="anchor" href="#arg-trace"></a></dt>
 <dd><p>Integer. <code>0</code> is silent, <code>&gt; 0</code> enables progress
 diagnostics (currently: prints chosen lambda when <code>&gt; 1</code>,
@@ -436,6 +476,27 @@ created with <code>varmod = "const"</code> (or other non-<code>"none"</code>
 <dt id="arg-level">level<a class="anchor" aria-label="anchor" href="#arg-level"></a></dt>
 <dd><p>Confidence level for <code>interval = "pint"</code>. Default
 <code>0.95</code>.</p></dd>
+
+
+<dt id="arg-type">type<a class="anchor" aria-label="anchor" href="#arg-type"></a></dt>
+<dd><p>Prediction type. <code>"response"</code> (default) returns
+predictions on the original <code>y</code> scale. <code>"link"</code> is currently a
+synonym for <code>"response"</code> (KRLS has no GLM link; reserved for
+future logistic-loss extension). <code>"prob"</code> is valid only for
+binary fits (<code>y</code> has exactly two unique values) and returns
+<code>plogis(yhat)</code>. This is a calibration shortcut: the underlying
+fit is still least-squares loss, not logistic loss; values are
+clamped to <code>[0, 1]</code> but are not true posterior probabilities.
+<code>"variance"</code> (since v0.0.0.9049) returns the GP posterior
+variance <code>K** - K* (K + lambda I)^{-1} K*'</code> per row of <code>newdata</code>.
+Not supported for <code>approx = "nystrom"</code>.</p></dd>
+
+
+<dt id="arg-unscale">unscale<a class="anchor" aria-label="anchor" href="#arg-unscale"></a></dt>
+<dd><p>Logical. Only used when <code>type = "variance"</code>. If
+<code>TRUE</code>, multiplies the returned variance by <code>var(y_train)</code> so it
+sits on the original y scale; if <code>FALSE</code> (default), returns the
+standardised-scale variance.</p></dd>
 
 </dl></div>
     <div class="section level2">
@@ -574,7 +635,7 @@ Analysis</em> 22(2):143–168.</p>
 <span class="r-in"><span><span class="va">fit</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Kernel Regularized Least Squares (KRLS)</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   n = 100   p = 3 </span>
-<span class="r-out co"><span class="r-pr">#&gt;</span>   sigma = 3.813   lambda = 0.222   R^2 = 0.9563 </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   sigma = 3.813   lambda = 0.222    R^2  = 0.9563 </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Average Marginal Effects:</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>        age     income      score </span>
@@ -585,6 +646,7 @@ Analysis</em> 22(2):143–168.</p>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">fit</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Kernel Regularized Least Squares (KRLS)</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>   n = 100  p = 3  sigma = 3.813  lambda = 0.222  R^2 = 0.9563</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span>   Effective df: 24.71</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> Average Marginal Effects:</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span>         Estimate  Std. Err  t value  Pr(&gt;|t|)    </span>

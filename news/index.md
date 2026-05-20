@@ -1,5 +1,283 @@
 # Changelog
 
+## roadrunner 0.0.0.9051
+
+### meep() — Phase Q-DML: cross-fitted causal ensemble
+
+New user-facing function
+[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md):
+a pure-R orchestration layer over the package’s
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+(MARS) and
+[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+(Kernel Regularized Least Squares) fitters that produces honest,
+cross-fitted (out-of-fold) nuisance estimates for Double Machine
+Learning and causal-forest workflows.
+[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+does not estimate a treatment effect itself — it returns the
+cross-fitted predictions and residuals, which are meant to be handed
+downstream to
+[`grf::causal_forest()`](https://rdrr.io/pkg/grf/man/causal_forest.html)
+(via `Y.hat` / `W.hat`) or to a DML estimator.
+
+- **`meep(X, y, treatment = NULL, ...)`** — a grf-style matrix/vector
+  interface. Returns an S3 object of class `"meep"` carrying
+  `y_hat_oof`, `d_hat_oof`, `mu0_hat_oof`/`mu1_hat_oof`, `y_resid`,
+  `d_resid`, the `folds` vector, the per-nuisance OOF prediction
+  matrices, the ensemble weights, and per learner-by-nuisance OOF
+  performance.
+- **Stacking ensemble** — `ensemble = "stack"` fits non-negative least
+  squares on the honest OOF prediction matrix (leakage is already purged
+  column-wise, so no second nesting layer is needed). `"average"` and
+  `"best"` are cheaper fallbacks. The NNLS solver is hand-rolled
+  (Lawson–Hanson active-set) — no new package dependencies.
+- **`tune = c("once", "per_fold", "none")`** — `"once"` (default)
+  autotunes each learner on the full data, freezes the hyperparameters,
+  and refits per fold; `"per_fold"` autotunes inside every fold;
+  `"none"` is the fast path that calls
+  [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+  /
+  [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+  with their own defaults and never invokes autotune.
+- **Family auto-detection** — a binary outcome routes to
+  `ares(family = "binomial")` + `krls(loss = "logistic")`; a binary
+  treatment is modelled as a propensity score. Multi-valued treatments
+  are rejected with a clear error.
+- **Cluster-robust folds** — the `cluster` argument keeps whole clusters
+  within a fold.
+- **Graceful degradation** — a learner that errors on a fold is dropped
+  for those rows, the ensemble weights are renormalized over the
+  survivors per row, and the event is logged in `$fold_failures`.
+- [`predict.meep()`](https://cetialphafive.github.io/roadrunner/reference/predict.meep.md),
+  `print.meep()`, and `summary.meep()` (with an overlap diagnostic for
+  binary treatments) S3 methods.
+- `grf` added to `Suggests` for the gated integration test.
+
+## roadrunner 0.0.0.9050
+
+### krls() — Phase Q5: true logistic-loss IRLS path (B1)
+
+Closes the biggest functional gap vs `lukesonnet/krls2`: real logistic
+ridge regression in the kernel basis, optimised via IRLS on penalised
+binomial deviance. Default `loss = "ls"` remains byte-identical to
+v0.0.0.9049 (back-compat snapshot in `test-krls-ard-kernel.R` continues
+to pass to ULP tolerance, and `loss = "ls"` fits are byte-equal to v9049
+to `tolerance = 0`).
+
+- **`loss = c("ls", "logistic")`** new argument on
+  [`krls.default()`](https://cetialphafive.github.io/roadrunner/reference/krls.md).
+  Default `"ls"` is the existing kernel ridge LS path. `"logistic"`
+  optimises `minimise -2 sum(y log p + (1-y) log(1-p)) + lambda c' K c`
+  where `p = plogis(K c)`, via a Cholesky-backed Newton step in
+  coefficient space (option ii in the spec): each iter solves
+  `(K W K + lambda I) c = K W z` with `W = p(1-p)` and working response
+  `z = eta + (y - p) / W`. ~5-10 iters typical at default tolerance
+  `1e-6`; cap 50. Step-halving (up to 5 per iter) on penalised-deviance
+  increase. Numerical guards: W floored at `1e-8`, eta clipped to
+  `[-30, 30]`, perfect-separation detection (`||c||_inf > 1e6` OR
+  penalised dev `< 1e-10`) warns and returns the last finite iterate.
+
+- **Compose rules.** `loss = "logistic"` requires binary y in `{0, 1}`.
+  Combinations that don’t make sense (or are deferred) error early:
+
+  - `+ approx = "nystrom"` — deferred (large-n use case).
+  - `+ lambda.method = "gcv"` — Wahba 2-D extension; deferred.
+  - `+ lambda.method = "mll"` — Laplace approx; deferred to Q9.
+  - `+ varmod != "none"` — residual variance model is LS-specific.
+  - `predict(type = "variance")` — Q6 will derive the IRLS-aware
+    posterior variance; current Q5 errors.
+
+  Composes fine with: `whichkernel = "linear"`/`"poly*"`,
+  `ard = "cheap"`, `autotune = TRUE` (deviance scoring; force R fallback
+  because the Gaussian-specialised C++ inner is LS-specific),
+  `n.boot > 0` (bagged averaging on the LINK scale, sigmoid at end for
+  Jensen), `lambda.method = "loo"` (closed-form CT-2008), and
+  `lambda.method = "cv"` (fold-deviance scoring), `derivative = TRUE`
+  (link-scale marginal effects by default), `weights` (case weights
+  baked into IRLS `W = w * p(1-p)`).
+
+- **CT-2008 closed-form LOO under logistic.** Cawley & Talbot 2008
+  leave-one-out approximation, computed in coefficient space from a
+  single `H = K (K W K + lambda I)^{-1} K` solve. The diagonal `H_diag`
+  is stashed on the fit (one extra n x n solve per converged IRLS).
+  `cv_loo_dev` replaces `Looe` under logistic.
+
+- **Predict gains `type = "class"`** (hard 0/1 prediction). For logistic
+  fits: `type = "link"` returns eta; `type = "response"` and
+  `type = "prob"` return calibrated probabilities; `type = "class"`
+  returns `as.integer(p > 0.5)`. For binary LS fits, `type = "class"`
+  uses the existing plogis-on-LS shortcut.
+
+- **Print / summary.** Logistic fits print a
+  `"loss: logistic (IRLS, k iter, converged)"` line, use McFadden
+  pseudo-R-squared in place of LS R-squared, and append a
+  `"(link scale)"` suffix on the average marginal effects header.
+
+### Internal
+
+- New C++ exports: `krls_irls_logistic_cpp` (IRLS solver returning
+  coeffs, eta, p, W, deviance, iter, converged, H_diag),
+  `krls_logistic_loo_loss_cpp` (CT-2008 closed-form LOO deviance).
+- New R helpers: `.krls_logistic_lambdasearch`,
+  `.krls_logistic_fit_block`, `.krls_bag_logistic`.
+- `.krls_autotune_scalar()` accepts `is_logistic = FALSE`; when TRUE,
+  per-cell IRLS fits + deviance scoring replace the LS solve.
+- `.krls_run_cheap_ard()` accepts `loss` and forwards through the pass-1
+  isotropic fit so ARD under logistic works end-to-end.
+- [`slim_krls()`](https://cetialphafive.github.io/roadrunner/reference/slim_krls.md)
+  strips `eta_fitted` and `H_diag` along with the existing heavy
+  intermediates. `slim_krls(keep_predict = FALSE)` retains `loss`,
+  `deviance`, `converged`, `iter`, `cv_loo_dev` for the inspection-grade
+  summary.
+- `var.avgderivatives` under logistic is `NA` (full IRLS-aware
+  derivation deferred to Q6) with a one-shot warning.
+
+### Tests
+
+- `test-krls-logistic.R` (~250 LoC, 13 tests): binary-y validation; IRLS
+  convergence (\< 20 iter); glmnet deviance match
+  (`skip_if_not_installed("glmnet")`); Brier improvement vs LS+plogis;
+  CT-2008 LOO matches explicit refit (n = 20 toy, tol 5e-3); CV under
+  logistic; autotune + logistic; bagging + logistic; predict type
+  consistency; link-scale marginal effects; compose rejections (Nystrom,
+  GCV, MLL, varmod); ARD cheap + logistic on sparse signal lifts AUC;
+  back-compat — `loss = "ls"` is byte-identical to v9049 to
+  `tolerance = 0`.
+
+## roadrunner 0.0.0.9049
+
+### krls() — Phase Q2: polynomial kernels + GP variance + MLL
+
+Three bundled feature items implemented behind a single polymorphic C++
+kernel dispatch. Gaussian default fits are byte-identical to
+v0.0.0.9048; non-Gaussian kernels open up `K_ij = x_i' x_j` (linear) and
+`K_ij = (x_i' x_j + poly_c)^d` for `d` in 1..4 (polynomial).
+
+- **A1 — `whichkernel = c("gaussian", "linear", "poly1..4")` +
+  `poly_c`.** Default `"gaussian"` is unchanged. `"linear"` is the
+  inner-product kernel; `"poly1..4"` are inhomogeneous polynomial
+  kernels with offset `poly_c` (default `1.0`). Non-Gaussian kernels are
+  incompatible with `approx = "nystrom"`, `ard != "none"`, and vector
+  `sigma` — all error at fit time with clear messages. Marginal effects
+  are computed via a closed-form dgemm route (`D = d * H * X` with
+  `H = (X X' + c)^(d-1)` for poly, constant per column for linear).
+  `var.avgderivatives` is currently `NA` for non-Gaussian kernels (full
+  derivation deferred to Phase Q6); a one-shot warning surfaces this at
+  fit time. Autotune dispatches: Gaussian sweeps `sigma` (9-pt anchor,
+  existing); poly sweeps `poly_c` (default
+  `c(0, 0.25, 0.5, 1, 2, 4, 8)`); linear collapses to lambda-only
+  (errors if user supplies `autotune.grid`). Non- Gaussian autotune runs
+  through the R fallback at the scalar autotune helper rather than the
+  Gaussian-specialised `krls_autotune_inner_cpp` — expect a 5-10x
+  wall-clock regression vs Gaussian autotune at matching grid sizes;
+  this is acceptable for Q2 scope. The fit list gains `$whichkernel`,
+  `$kernel_type`, `$poly_c`.
+
+- **A6 — `predict(..., type = "variance")`.** New `type` value returns
+  the GP posterior variance `K** - K* (K + lambda I)^{-1} K*'` per row
+  of `newdata` via the new `krls_posterior_var_cpp` helper. Closed-form
+  computation in the eigen-basis of the fit’s kernel: reuses cached
+  `dvals` + `V` (now stashed on the fit at v9049). New `unscale` arg
+  (default `FALSE`): when `TRUE`, multiplies the returned variance by
+  `var(y_train)` so it sits on the raw y scale. Incompatible with
+  `approx = "nystrom"` (would require the m-length Phi spectrum —
+  deferred). Bagged fits average per- replicate posterior variances.
+  Matches a brute-force `Kss - diag(K* (K + lI)^{-1} K*')` reference to
+  `tol = 1e-8` on n=50. FP-floored at 0.
+
+- **A11 — `lambda.method = "mll"`.** Closed-form Type-II marginal
+  log-likelihood as the lambda-selection objective. Pure-R loss
+  `.krls_mll_loss(dvals, Vty, lambda, n)` reuses the same eigen- basis
+  cache as LOO/GCV. Incompatible with `approx = "nystrom"`. Composes
+  with autotune over sigma (Gaussian) and with non-Gaussian
+  `whichkernel`. Sigma-by-MLL selection is deferred to Q8.
+
+### Internal
+
+- New C++ exports: `krls_posterior_var_cpp` (closed-form GP variance in
+  eigen-basis). Existing kernel exports (`krls_kernel_cpp`,
+  `krls_kernel_pred_cpp`, `krls_deriv_cpp`, `krls_avg_deriv_var_cpp`)
+  gain optional `kernel_type` + `kernel_c` arguments with default
+  `(0, 1.0)` (Gaussian, back-compat).
+- New R helpers: `.krls_mll_loss()`, `.krls_predict_variance()`.
+- `.krls_autotune_scalar()` accepts `kernel_type` + `poly_c`; when
+  non-Gaussian, forces the R-side per-cell fallback (the
+  Gaussian-specialised C++ inner is preserved untouched).
+- [`slim_krls()`](https://cetialphafive.github.io/roadrunner/reference/slim_krls.md)
+  strips the new `dvals` field along with the existing heavy
+  intermediates. `slim_krls(keep_predict=FALSE)` retains `$whichkernel`,
+  `$kernel_type`, `$poly_c` for the inspection-grade summary.
+- [`predict.krls_rr()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+  accepts new `type = "variance"` and `unscale` arguments; legacy fits
+  (no `kernel_type`/`poly_c` field) default to Gaussian via fallback at
+  predict time.
+
+### Tests
+
+- `test-krls-kernels-poly.R` (~150 LoC, 17 tests + 2 slow): linear
+  kernel byte-equal vs hand-built `XX'`; poly2 byte-equal vs
+  `(XX'+c)^2`; linear deriv constant per column; poly2 deriv matches
+  finite difference to `tol = 1e-4`; validation gates; autotune poly_c
+  sweep; bagging + linear; Gaussian back-compat seal.
+- `test-krls-posterior-var.R` (~120 LoC, 8 tests + 1 slow): closed- form
+  matches brute force to `tol = 1e-8`; training-point var =
+  `1 - diag(H)`; monotonic increase with distance from training (1D
+  toy); `unscale` arg; Nystrom errors; bagged averages; poly2 posterior
+  var diagonal; FP floor at 0.
+- `test-krls-mll.R` (~95 LoC, 6 tests + 1 slow): closed-form matches
+  hand-computed grid argmin; MLL ≠ LOO chosen lambda on real data;
+  Nystrom + MLL errors; composes with autotune; composes with poly2.
+
+### krls() — Phase Q1 parity batch
+
+Four small parity items, all R-side (no C++ changes), batched together
+to avoid four trivial release cycles.
+
+- **A3 — `Neffective` (effective df).** Fits now carry `$Neffective`,
+  the trace of the smoother hat matrix `H = K (K + lambda I)^{-1}`.
+  Computed in the eigen-basis as `sum(d / (d + lambda))`, where `d` are
+  the kernel eigenvalues used for the solve. The Nystrom path uses the
+  m-length `Phi' Phi` spectrum so the formula generalises to
+  `sum(Sigma2 / (Sigma2 + lambda))`. `summary(fit)` prints an
+  `"Effective df: <value>"` line near the existing `R^2` line.
+  `Neffective -> 0` as `lambda -> Inf` and `-> n` (or the rank of `K`)
+  as `lambda -> 0`.
+- **A7 — `subset` on
+  [`krls.default()`](https://cetialphafive.github.io/roadrunner/reference/krls.md).**
+  The matrix / data-frame default method now accepts `subset = NULL` (a
+  no-op, back-compatible) or a logical / integer vector selecting rows
+  of `X`. `y` and `weights` are sliced in lockstep before any downstream
+  processing. Mirrors the formula method’s `subset` semantics.
+- **A8 — `predict(..., type = "prob")` for binary fits.**
+  [`predict.krls_rr()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+  gains a `type = c("response", "link", "prob")` argument. `"response"`
+  (default) preserves the prior behaviour byte-for-byte. `"prob"` is
+  valid only when the fit is binary (`y` has exactly two unique values,
+  tracked on the fit via the new `$binary_y` field) and returns
+  `plogis(yhat)`. The docstring is explicit: this is a calibration
+  shortcut, **not** a true posterior probability; the underlying fit
+  remains least-squares loss. `"link"` is a synonym for `"response"`
+  reserved for the future logistic-loss extension.
+- **A9 —
+  [`slim_krls()`](https://cetialphafive.github.io/roadrunner/reference/slim_krls.md)
+  /
+  [`unslim_krls()`](https://cetialphafive.github.io/roadrunner/reference/unslim_krls.md).**
+  New exported helpers for cheap serialisation.
+  `slim_krls(fit, keep_predict = TRUE)` (default) strips the heavy `K`,
+  `V`, `Vsq`, `Vty`, `vcov.c`, `vcov.fitted` intermediates while
+  preserving everything
+  [`predict()`](https://rdrr.io/r/stats/predict.html) needs; saved size
+  typically drops by \>50% at `n >= 200`.
+  `slim_krls(fit, keep_predict = FALSE)` strips further to an
+  inspection-grade summary (`coeffs`, `R2`, `Looe`, marginal effects,
+  sigma, lambda, `Neffective`);
+  [`predict()`](https://rdrr.io/r/stats/predict.html) then errors with a
+  clear message.
+  [`unslim_krls()`](https://cetialphafive.github.io/roadrunner/reference/unslim_krls.md)
+  is a no-op placeholder — refit
+  [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+  with the stored `$call` to rebuild the dropped fields.
+
 ## roadrunner 0.0.0.9047
 
 ### krls() — autotune unification + auto-ARD dispatch
