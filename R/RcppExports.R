@@ -89,3 +89,7 @@ plda_softthresh_cpp <- function(u, lam) {
     .Call(`_roadrunner_plda_softthresh_cpp`, u, lam)
 }
 
+plda_fit_cpp <- function(x, y, G, K, lambda, lambda2, penalty, maxit, tol) {
+    .Call(`_roadrunner_plda_fit_cpp`, x, y, G, K, lambda, lambda2, penalty, maxit, tol)
+}
+

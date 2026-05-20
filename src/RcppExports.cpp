@@ -363,6 +363,25 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_fit_cpp
+List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K, double lambda, double lambda2, int penalty, int maxit, double tol);
+RcppExport SEXP _roadrunner_plda_fit_cpp(SEXP xSEXP, SEXP ySEXP, SEXP GSEXP, SEXP KSEXP, SEXP lambdaSEXP, SEXP lambda2SEXP, SEXP penaltySEXP, SEXP maxitSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::ivec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< int >::type G(GSEXP);
+    Rcpp::traits::input_parameter< int >::type K(KSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda2(lambda2SEXP);
+    Rcpp::traits::input_parameter< int >::type penalty(penaltySEXP);
+    Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_fit_cpp(x, y, G, K, lambda, lambda2, penalty, maxit, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -387,6 +406,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
     {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
     {"_roadrunner_plda_softthresh_cpp", (DL_FUNC) &_roadrunner_plda_softthresh_cpp, 2},
+    {"_roadrunner_plda_fit_cpp", (DL_FUNC) &_roadrunner_plda_fit_cpp, 9},
     {NULL, NULL, 0}
 };
 
