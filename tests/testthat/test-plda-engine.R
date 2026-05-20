@@ -10,3 +10,8 @@ test_that("plda_wcsd_cpp returns within-class sd with divisor n", {
   }, numeric(1))
   expect_equal(got, ref, tolerance = 1e-10)
 })
+
+test_that("plda_softthresh_cpp soft-thresholds and is exported for testing", {
+  expect_equal(roadrunner:::plda_softthresh_cpp(c(-3, -0.5, 0.5, 3), 1),
+               c(-2, 0, 0, 2), tolerance = 1e-12)
+})

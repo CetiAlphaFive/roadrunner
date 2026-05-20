@@ -85,3 +85,7 @@ plda_wcsd_cpp <- function(x, y, G) {
     .Call(`_roadrunner_plda_wcsd_cpp`, x, y, G)
 }
 
+plda_softthresh_cpp <- function(u, lam) {
+    .Call(`_roadrunner_plda_softthresh_cpp`, u, lam)
+}
+

@@ -351,6 +351,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_softthresh_cpp
+Rcpp::NumericVector plda_softthresh_cpp(const arma::vec& u, double lam);
+RcppExport SEXP _roadrunner_plda_softthresh_cpp(SEXP uSEXP, SEXP lamSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type u(uSEXP);
+    Rcpp::traits::input_parameter< double >::type lam(lamSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_softthresh_cpp(u, lam));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -374,6 +386,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_irls_logistic_cpp", (DL_FUNC) &_roadrunner_krls_irls_logistic_cpp, 8},
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
     {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
+    {"_roadrunner_plda_softthresh_cpp", (DL_FUNC) &_roadrunner_plda_softthresh_cpp, 2},
     {NULL, NULL, 0}
 };
 

@@ -23,3 +23,20 @@ Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G
   arma::vec v = wcsd_impl(x, y, G);
   return Rcpp::NumericVector(v.begin(), v.end());
 }
+
+// Element-wise soft-threshold: sign(u) * max(|u| - lam, 0).
+static inline arma::vec soft_threshold(const arma::vec& u, double lam) {
+  return arma::sign(u) % arma::clamp(arma::abs(u) - lam, 0.0, arma::datum::inf);
+}
+
+// L2-normalize; returns the zero vector unchanged.
+static inline arma::vec normalize_l2(const arma::vec& v) {
+  double nv = arma::norm(v, 2);
+  return (nv > 0.0) ? arma::vec(v / nv) : v;
+}
+
+// [[Rcpp::export]]
+Rcpp::NumericVector plda_softthresh_cpp(const arma::vec& u, double lam) {
+  arma::vec v = soft_threshold(u, lam);
+  return Rcpp::NumericVector(v.begin(), v.end());
+}
