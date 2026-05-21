@@ -6,6 +6,18 @@ test_that("plda_tv1d_cpp solves the 1-D fused-lasso signal approximator", {
   expect_equal(big, rep(mean(u), 6), tolerance = 1e-6)
 })
 
+test_that("plda_tv1d_cpp handles partial smoothing and N=1", {
+  # two-block optimum of 0.5*sum(x-u)^2 + lam*sum|diff(x)| for u=c(0,0,4,4), lam=1
+  expect_equal(roadrunner:::plda_tv1d_cpp(c(0, 0, 4, 4), 1.0),
+               c(0.5, 0.5, 3.5, 3.5), tolerance = 1e-10)
+  # single element: no adjacent pairs, identity for any lam
+  expect_equal(roadrunner:::plda_tv1d_cpp(c(7.5), 2.0), c(7.5), tolerance = 1e-12)
+  # monotone ramp, mild lambda: result stays sorted and is not the identity
+  r <- roadrunner:::plda_tv1d_cpp(c(0, 1, 2, 10, 11, 12), 0.5)
+  expect_false(isTRUE(all.equal(r, c(0, 1, 2, 10, 11, 12))))
+  expect_equal(r, sort(r), tolerance = 1e-12)
+})
+
 test_that("plda fused penalty matches penalizedLDA type='ordered'", {
   skip_if_not_installed("penalizedLDA")
   set.seed(99)

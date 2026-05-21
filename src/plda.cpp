@@ -49,10 +49,19 @@ static arma::vec tv1d(const arma::vec& u, double lam) {
   const int N = (int) u.n_elem;
   arma::vec x(N);
   if (N == 0) return x;
-  if (lam <= 0.0) { x = u; return x; }
+  if (lam <= 0.0) { x = u; return x; } // lam=0: no fusion penalty, the prox is the identity.
   int k = 0, k0 = 0, kplus = 0, kminus = 0;
   double vmin = u[0] - lam, vmax = u[0] + lam;
   double umin = lam, umax = -lam;
+  // Algorithm state invariants (Condat's notation):
+  //   [k0, k]  - current unresolved segment; x[k0..k] not yet written.
+  //   vmin/vmax - current lower/upper bound on the pending output level.
+  //   umin = sum_{j=k0..k}(u[j] - vmin) + lam   (cumulative min-side slack)
+  //   umax = sum_{j=k0..k}(u[j] - vmax) - lam   (cumulative max-side slack)
+  //   kminus = last k at which vmin was adjusted upward (umin clamped to lam).
+  //   kplus  = last k at which vmax was adjusted downward (umax clamped to -lam).
+  // Two terminal checks: one at the top of the loop (reset-to-last-element) and
+  // one at the bottom (end-of-segment after ++k).
   while (true) {
     if (k == N - 1) {
       x[k] = vmin + umin;
