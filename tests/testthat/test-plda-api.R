@@ -81,3 +81,19 @@ test_that("predict.plda returns class / posterior / projection", {
   pr <- predict(fit, x, type = "projection")
   expect_equal(dim(pr), c(150L, 2L))
 })
+
+test_that("plda handles edge cases", {
+  set.seed(12)
+  # p >> n
+  x <- matrix(rnorm(20 * 200), 20, 200); y <- factor(rep(1:2, each = 10))
+  expect_s3_class(plda(x, y, K = 1, lambda = 0.2, autotune = FALSE), "plda")
+  # huge lambda -> all-zero discriminant
+  f0 <- plda(x, y, K = 1, lambda = 1e6, autotune = FALSE)
+  expect_true(all(f0$discrim[, 1] == 0))
+  # constant feature does not crash
+  xc <- x; xc[, 1] <- 3
+  expect_s3_class(plda(xc, y, K = 1, lambda = 0.2, autotune = FALSE), "plda")
+  # OOV / missing predictor column in predict errors clearly
+  fit <- plda(Species ~ ., data = iris, K = 2, lambda = 0.1, autotune = FALSE)
+  expect_error(predict(fit, iris[1:5, 1:3]))
+})
