@@ -1,5 +1,32 @@
 # Changelog
 
+## roadrunner 0.0.0.9052
+
+### plda() — Penalized Linear Discriminant Analysis
+
+New user-facing function
+[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md):
+penalized Fisher’s linear discriminant analysis (Witten & Tibshirani
+2011) with L1 and fused-lasso penalties, multi-class support, built-in
+CV autotune, and parallel CV fold execution.
+
+- **`plda(x, y, K, lambda, penalty, autotune, ...)`** — matrix and
+  formula interfaces. Returns an S3 object of class `"plda"` carrying
+  the discriminant matrix, class means, within-class standard
+  deviations, and (when `autotune = TRUE`) the full CV result.
+- **Penalties** — `penalty = "L1"` (default) applies coordinate-wise
+  soft thresholding; `penalty = "fused"` adds a fused-lasso difference
+  penalty (Condat 2013 total-variation prox) controlled by `lambda2`.
+- **Multi-class** — supports `G >= 2` classes; `K` discriminant vectors
+  up to `G - 1`.
+- **Autotune** — `autotune = TRUE` (default) cross-validates `lambda`
+  and `K` over a log-spaced grid; parallel CV fold loop via TBB with the
+  roadrunner determinism invariant (byte-identical results for any
+  `nthreads`).
+- **S3 methods** — `predict.plda` (class, posterior, projection),
+  `print.plda`, `summary.plda`, `plot.plda` (2-D discriminant
+  projection).
+
 ## roadrunner 0.0.0.9051
 
 ### meep() — Phase Q-DML: cross-fitted causal ensemble

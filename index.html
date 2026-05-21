@@ -27,7 +27,7 @@
 
     <a class="navbar-brand me-2" href="index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9051</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9052</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -58,14 +58,16 @@
 <!-- badges: start -->
 
 <p>Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications.</p>
-<p><code>roadrunner</code> ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Two algorithms today:</p>
+<p><code>roadrunner</code> ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Three core fitters today:</p>
 <ul>
 <li>
 <strong><code><a href="reference/ares.html">ares()</a></code></strong> – Multivariate Adaptive Regression Splines (MARS).</li>
 <li>
 <strong><code><a href="reference/krls.html">krls()</a></code></strong> – Kernel Regularized Least Squares (KRLS).</li>
+<li>
+<strong><code><a href="reference/plda.html">plda()</a></code></strong> – Penalized Linear Discriminant Analysis (L1 / fused-lasso).</li>
 </ul>
-<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of the above, built for Double Machine Learning and causal-forest nuisance estimation.</p>
+<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of <code><a href="reference/ares.html">ares()</a></code> and <code><a href="reference/krls.html">krls()</a></code>, built for Double Machine Learning and causal-forest nuisance estimation.</p>
 <div class="section level2">
 <h2 id="package-design">Package design<a class="anchor" aria-label="anchor" href="#package-design"></a>
 </h2>
@@ -165,6 +167,15 @@
 <span><span class="co">#&gt;    E[Y|X]      0.854       0.900</span></span>
 <span><span class="co">#&gt;    E[D|X]      0.865       0.916</span></span></code></pre></div>
 </div>
+<div class="section level3">
+<h3 id="penalized-lda-via-plda">Penalized LDA via <code>plda()</code>
+<a class="anchor" aria-label="anchor" href="#penalized-lda-via-plda"></a>
+</h3>
+<p><code><a href="reference/plda.html">plda()</a></code> fits penalized Fisher’s linear discriminant analysis (Witten &amp; Tibshirani 2011) with L1 or fused-lasso penalties, multi-class support, and built-in cross-validation autotune.</p>
+<div class="sourceCode" id="cb6"><pre class="downlit sourceCode r">
+<code class="sourceCode R"><span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/plda.html">plda</a></span><span class="op">(</span><span class="va">Species</span> <span class="op">~</span> <span class="va">.</span>, data <span class="op">=</span> <span class="va">iris</span><span class="op">)</span></span>
+<span><span class="fu"><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict</a></span><span class="op">(</span><span class="va">fit</span>, <span class="va">iris</span><span class="op">)</span>        <span class="co"># factor of predicted Species</span></span></code></pre></div>
+</div>
 </div>
 <div class="section level2">
 <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a>
@@ -172,6 +183,7 @@
 <ul>
 <li>Friedman, J. H. (1991). Multivariate Adaptive Regression Splines. <em>Annals of Statistics</em>, 19(1):1-67.</li>
 <li>Hainmueller, J. and Hazlett, C. (2014). Kernel Regularized Least Squares: Reducing Misspecification Bias with a Flexible and Interpretable Machine Learning Approach. <em>Political Analysis</em>, 22(2):143-168.</li>
+<li>Witten, D. M. and Tibshirani, R. (2011). Penalized classification using Fisher’s linear discriminant. <em>Journal of the Royal Statistical Society, Series B</em>, 73(5):753-772.</li>
 </ul>
 </div>
 <div class="section level2">

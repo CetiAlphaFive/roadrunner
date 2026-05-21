@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9051</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9052</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,23 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9052" id="roadrunner-0009052">roadrunner 0.0.0.9052<a class="anchor" aria-label="anchor" href="#roadrunner-0009052"></a></h2>
+<div class="section level3">
+<h3 id="plda--penalized-linear-discriminant-analysis-0-0-0-9052">plda() — Penalized Linear Discriminant Analysis<a class="anchor" aria-label="anchor" href="#plda--penalized-linear-discriminant-analysis-0-0-0-9052"></a></h3>
+<p>New user-facing function <code><a href="../reference/plda.html">plda()</a></code>: penalized Fisher’s linear discriminant analysis (Witten &amp; Tibshirani 2011) with L1 and fused-lasso penalties, multi-class support, built-in CV autotune, and parallel CV fold execution.</p>
+<ul><li>
+<strong><code>plda(x, y, K, lambda, penalty, autotune, ...)</code></strong> — matrix and formula interfaces. Returns an S3 object of class <code>"plda"</code> carrying the discriminant matrix, class means, within-class standard deviations, and (when <code>autotune = TRUE</code>) the full CV result.</li>
+<li>
+<strong>Penalties</strong> — <code>penalty = "L1"</code> (default) applies coordinate-wise soft thresholding; <code>penalty = "fused"</code> adds a fused-lasso difference penalty (Condat 2013 total-variation prox) controlled by <code>lambda2</code>.</li>
+<li>
+<strong>Multi-class</strong> — supports <code>G &gt;= 2</code> classes; <code>K</code> discriminant vectors up to <code>G - 1</code>.</li>
+<li>
+<strong>Autotune</strong> — <code>autotune = TRUE</code> (default) cross-validates <code>lambda</code> and <code>K</code> over a log-spaced grid; parallel CV fold loop via TBB with the roadrunner determinism invariant (byte-identical results for any <code>nthreads</code>).</li>
+<li>
+<strong>S3 methods</strong> — <code>predict.plda</code> (class, posterior, projection), <code>print.plda</code>, <code>summary.plda</code>, <code>plot.plda</code> (2-D discriminant projection).</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9051" id="roadrunner-0009051">roadrunner 0.0.0.9051<a class="anchor" aria-label="anchor" href="#roadrunner-0009051"></a></h2>
 <div class="section level3">

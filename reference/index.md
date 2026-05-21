@@ -72,6 +72,33 @@ nuisance estimation.
 
   Predict from a fitted `meep` object
 
+## Penalized LDA: plda()
+
+Penalized Fisher’s linear discriminant (Witten & Tibshirani 2011) with
+L1 and fused-lasso penalties, multi-class, and CV autotune.
+
+- [`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
+  : Penalized linear discriminant analysis
+
+- [`predict(`*`<plda>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.plda.md)
+  : Predict from a penalized LDA fit
+
+- [`print(`*`<plda>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.plda.md)
+  :
+
+  Print method for `plda` fits
+
+- [`summary(`*`<plda>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.plda.md)
+  [`print(`*`<summary.plda>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.plda.md)
+  :
+
+  Summary method for `plda` fits
+
+- [`plot(`*`<plda>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.plda.md)
+  :
+
+  Projection plot for `plda` fits
+
 ## Package
 
 - [`roadrunner`](https://cetialphafive.github.io/roadrunner/reference/roadrunner-package.md)
