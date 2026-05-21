@@ -77,8 +77,58 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
             class = "plda")
 }
 
-# Temporary stub — replaced by Task 12 (autotune CV).
-.plda_cv <- function(...) list(lambda = 0.1, K = 1L, grid = NULL)
+# @keywords internal
+# Default data-driven log-spaced lambda grid.
+.plda_lambda_grid <- function(x, yint, G, n = 12L) {
+  S <- plda_wcsd_cpp(x, yint, G)
+  S[S < 1e-12] <- 1
+  xs <- scale(x, center = TRUE, scale = FALSE) %*% diag(1 / S)
+  hi <- max(abs(colMeans(xs))) + 1e-8
+  exp(seq(log(hi * 1e-3), log(hi), length.out = n))
+}
+
+# @keywords internal
+# k-fold CV over (lambda grid) x (1..K); picks the lambda/K with lowest mean
+# misclassification error. Saves and restores the global RNG state so the
+# caller's random-number stream is unaffected (same pattern as .ares_autotune
+# and .krls_lambdasearch in this package).
+.plda_cv <- function(x, yint, G, K, penalty, pen_code, lam2, nfold,
+                     lambda_grid, maxit, tol) {
+  if (is.null(lambda_grid)) lambda_grid <- .plda_lambda_grid(x, yint, G)
+  n <- nrow(x)
+  # Save and restore the global RNG state so this call does not leak a seed
+  # change to the caller — consistent with .ares_autotune and .krls_lambdasearch.
+  if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+    on.exit(assign(".Random.seed", old_seed, envir = globalenv()), add = TRUE)
+  } else {
+    on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+  }
+  set.seed(0L)
+  folds <- sample(rep_len(seq_len(nfold), n))
+  err <- matrix(0, length(lambda_grid), K)
+  for (f in seq_len(nfold)) {
+    tr <- folds != f; te <- !tr
+    for (li in seq_along(lambda_grid)) {
+      eng <- plda_fit_cpp(x[tr, , drop = FALSE], yint[tr], G, K,
+                          lambda_grid[li], lam2, pen_code,
+                          as.integer(maxit), tol)
+      sc  <- plda_project_cpp(x[te, , drop = FALSE], eng$mu, eng$sdw, eng$discrim)
+      csc <- eng$cmeans %*% eng$discrim
+      for (k in seq_len(K)) {
+        d2 <- outer(rowSums(sc[, 1:k, drop = FALSE]^2),
+                    rowSums(csc[, 1:k, drop = FALSE]^2), `+`) -
+              2 * sc[, 1:k, drop = FALSE] %*% t(csc[, 1:k, drop = FALSE])
+        pred <- max.col(-d2, ties.method = "first")
+        err[li, k] <- err[li, k] + sum(pred != yint[te])
+      }
+    }
+  }
+  err <- err / n
+  best <- which(err == min(err), arr.ind = TRUE)[1, ]
+  list(lambda = lambda_grid[best[1]], K = as.integer(best[2]),
+       grid = lambda_grid, errors = err[, best[2]])
+}
 
 #' @param formula A model formula; response on the left, predictors on the right.
 #' @param data A data frame (or environment) containing the formula variables.
