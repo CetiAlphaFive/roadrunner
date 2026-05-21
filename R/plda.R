@@ -34,7 +34,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
                          penalty = c("L1", "fused"), lambda2 = NULL,
                          autotune = TRUE, nfold = 5L, lambda_grid = NULL,
                          maxit = 100L, tol = 1e-6,
-                         nthreads = getOption("roadrunner.nthreads", 0L), ...) {
+                         nthreads = 0L, ...) {
   # Save and restore the global RNG state so plda() does not leave .Random.seed
   # behind when the caller had none — every Rcpp export (plda_wcsd_cpp,
   # plda_fit_cpp, plda_project_cpp) creates .Random.seed via RNGScope.
@@ -72,14 +72,21 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
          call. = FALSE)
 
   # Resolve nthreads. `0` (or anything <= 0) means "use the package default".
+  # Mirror krls.default: bare 0L in the signature; option lookup + resolution
+  # in the body so `getOption("roadrunner.nthreads")` is honoured at call time.
   # Determinism invariant: the parallel CV harness (plda_cv_inner_cpp) writes
   # each fold into a private slot and reduces in fixed fold order, so the
   # fitted discriminants are byte-identical for any nthreads.
   nthreads <- as.integer(nthreads)
   if (length(nthreads) != 1L || is.na(nthreads) || nthreads < 0L)
     stop("plda: `nthreads` must be a single non-negative integer.", call. = FALSE)
+  if (nthreads == 0L) {
+    opt_nt <- getOption("roadrunner.nthreads", 0L)
+    nthreads <- if (!is.null(opt_nt) && opt_nt > 0L) as.integer(opt_nt) else 0L
+  }
   nthreads_eff <- if (nthreads <= 0L)
     RcppParallel::defaultNumThreads() else nthreads
+  RcppParallel::setThreadOptions(numThreads = nthreads_eff)
 
   # Validate lambda2 / warn if irrelevant
   if (penalty == "L1" && !is.null(lambda2) && lambda2 != 0) {
@@ -90,10 +97,12 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
       stop("plda: `lambda2` must be a single non-negative finite number when `penalty = 'fused'`.", call. = FALSE)
   }
 
+  nthreads_used <- 1L
   if (autotune) {
     cv <- .plda_cv(x, yint, G, K, penalty, pen_code, lam2, nfold,
                    lambda_grid, maxit, tol, nthreads_eff)
     lambda <- cv$lambda; K <- cv$K
+    nthreads_used <- cv$nthreads_used
   } else if (is.null(lambda)) {
     stop("plda: supply `lambda` or use autotune = TRUE.", call. = FALSE)
   } else {
@@ -108,7 +117,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   structure(list(discrim = eng$discrim, mu = eng$mu, sdw = eng$sdw,
                  cmeans = eng$cmeans, cw = eng$cw, classes = classes,
                  K = K, lambda = lambda, lambda2 = lam2, penalty = penalty,
-                 cv = cv, nthreads = nthreads_eff, call = match.call()),
+                 cv = cv, nthreads_used = nthreads_used, call = match.call()),
             class = "plda")
 }
 
@@ -167,9 +176,14 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
                            lam2, pen_code, as.integer(maxit), tol,
                            as.integer(nthreads))
   err <- res$err / n
+  if (!isTRUE(res$ok))
+    warning("plda: minorize-maximize criterion decreased in one or more CV folds; ",
+            "results may be unreliable. Consider a smaller lambda grid or larger maxit.",
+            call. = FALSE)
   best <- which(err == min(err), arr.ind = TRUE)[1, ]
   list(lambda = lambda_grid[best[1]], K = as.integer(best[2]),
-       grid = lambda_grid, errors = err[, best[2]])
+       grid = lambda_grid, errors = err[, best[2]],
+       nthreads_used = as.integer(res$nthreads_used))
 }
 
 #' @param formula A model formula; response on the left, predictors on the right.

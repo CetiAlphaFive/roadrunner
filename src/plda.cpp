@@ -380,7 +380,10 @@ struct PldaCvWorker : public RcppParallel::Worker {
 
   void operator()(std::size_t begin, std::size_t end) {
     for (std::size_t f = begin; f < end; ++f) {
+      // ok is initialised true per-fold; set to false once any lambda breaks
+      // down (intended — flags the whole fold as degraded, never reset to true).
       bool ok = true;
+      // safe inside TBB worker: returns arma::mat, no R API
       plda_cv_one_fold(x, y, tr_idx[f], te_idx[f], G, K, lambda_grid,
                        lambda2, penalty, maxit, tol, err_by_fold[f], ok);
       ok_by_fold[f] = ok ? 1 : 0;

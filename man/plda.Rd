@@ -20,7 +20,7 @@ plda(x, ...)
   lambda_grid = NULL,
   maxit = 100L,
   tol = 0.000001,
-  nthreads = getOption("roadrunner.nthreads", 0L),
+  nthreads = 0L,
   ...
 )
 
