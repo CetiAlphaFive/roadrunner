@@ -388,16 +388,17 @@ predict.ares <- function(object, newdata = NULL,
 #' @param newdata Numeric matrix or data.frame of predictors.
 #' @param type `"class"` (default), `"posterior"`, or `"projection"`.
 #' @param ... Unused.
-#' @return Factor of class labels, posterior probability matrix, or projection matrix.
+#' @return Factor of class labels, posterior probability matrix, or
+#'   projection matrix.
 #' @export
 predict.plda <- function(object, newdata,
                          type = c("class", "posterior", "projection"), ...) {
   type <- match.arg(type)
   if (!is.null(object$terms)) {
-    Terms <- stats::delete.response(object$terms)
-    mf <- stats::model.frame(Terms, as.data.frame(newdata),
+    trms <- stats::delete.response(object$terms)
+    mf <- stats::model.frame(trms, as.data.frame(newdata),
                              xlev = object$xlevels)
-    x <- stats::model.matrix(Terms, mf)
+    x <- stats::model.matrix(trms, mf)
     icpt <- match("(Intercept)", colnames(x), nomatch = 0L)
     if (icpt > 0L) x <- x[, -icpt, drop = FALSE]
   } else {
@@ -407,7 +408,7 @@ predict.plda <- function(object, newdata,
   cscores <- object$cmeans %*% object$discrim   # G x K centroid projections
   if (type == "projection") return(scores)
   d2 <- outer(rowSums(scores^2), rowSums(cscores^2), `+`) -
-        2 * scores %*% t(cscores)
+    2 * scores %*% t(cscores)
   if (type == "posterior") {
     m <- d2 - apply(d2, 1L, min)
     e <- exp(-0.5 * m)
