@@ -134,7 +134,7 @@ and built-in cross-validation autotune.
 
 ```r
 fit <- plda(Species ~ ., data = iris)
-predict(fit, iris)
+predict(fit, iris)        # factor of predicted Species
 ```
 
 ## References

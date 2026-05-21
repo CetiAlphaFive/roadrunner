@@ -95,5 +95,5 @@ test_that("plda handles edge cases", {
   expect_s3_class(plda(xc, y, K = 1, lambda = 0.2, autotune = FALSE), "plda")
   # OOV / missing predictor column in predict errors clearly
   fit <- plda(Species ~ ., data = iris, K = 2, lambda = 0.1, autotune = FALSE)
-  expect_error(predict(fit, iris[1:5, 1:3]))
+  expect_error(predict(fit, iris[1:5, 1:3]), "not found")
 })
