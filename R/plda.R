@@ -192,14 +192,14 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 #' @export
 plda.formula <- function(formula, data = NULL, ...) {
   if (is.null(data)) data <- environment(formula)
-  mf <- model.frame(formula, data)
-  y <- model.response(mf)
-  x <- model.matrix(attr(mf, "terms"), mf)
+  mf <- stats::model.frame(formula, data)
+  y <- stats::model.response(mf)
+  x <- stats::model.matrix(attr(mf, "terms"), mf)
   icpt <- match("(Intercept)", colnames(x), nomatch = 0L)
   if (icpt > 0L) x <- x[, -icpt, drop = FALSE]
   fit <- plda.default(x, y, ...)
   fit$call <- match.call()
   fit$terms <- attr(mf, "terms")
-  fit$xlevels <- .getXlevels(attr(mf, "terms"), mf)
+  fit$xlevels <- stats::.getXlevels(attr(mf, "terms"), mf)
   fit
 }
