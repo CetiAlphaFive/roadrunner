@@ -97,3 +97,17 @@ test_that("plda handles edge cases", {
   fit <- plda(Species ~ ., data = iris, K = 2, lambda = 0.1, autotune = FALSE)
   expect_error(predict(fit, iris[1:5, 1:3]), "not found")
 })
+
+test_that("plda CV survives a rare class and rejects singleton classes", {
+  set.seed(123)
+  x <- matrix(rnorm(40 * 6), 40, 6)
+  # rare class of size 2 — must NOT crash under default-ish nfold
+  y2 <- factor(c(rep(1, 19), rep(2, 19), rep(3, 2)))
+  expect_s3_class(plda(x, y2, nfold = 3), "plda")
+  # singleton class — must error clearly, not crash
+  y1 <- factor(c(rep(1, 20), rep(2, 19), rep(3, 1)))
+  expect_error(plda(x, y1, nfold = 3), "at least 2")
+  # unused factor level must be dropped, not crash
+  y3 <- factor(c(rep("a", 20), rep("b", 20)), levels = c("a", "b", "c"))
+  expect_s3_class(plda(x[, 1:4], y3, K = 1, lambda = 0.1, autotune = FALSE), "plda")
+})

@@ -131,6 +131,16 @@ static void class_means(const arma::mat& xs, const arma::ivec& y, int G,
   M.set_size(G, xs.n_cols); w.set_size(G);
   for (int g = 1; g <= G; ++g) {
     arma::uvec idx = arma::find(y == g);
+    // Belt-and-suspenders: an empty class would make arma::mean throw an
+    // Armadillo exception, which is undefined behaviour if it escapes a TBB
+    // worker. The R layer (droplevels + >= 2-per-class check + stratified CV
+    // folds) guarantees this never triggers, but the guard makes it impossible
+    // for any exception to cross a thread boundary.
+    if (idx.n_elem == 0) {
+      M.row(g - 1).zeros();
+      w(g - 1) = 0.0;
+      continue;
+    }
     M.row(g - 1) = arma::mean(xs.rows(idx), 0);
     w(g - 1) = (double) idx.n_elem / (double) n;
   }
@@ -210,7 +220,6 @@ struct PldaFit {
   arma::rowvec mu;     // global feature means
   arma::vec sdw;       // within-class feature sds
   arma::mat cmeans;    // G x p standardized class means
-  arma::vec cw;        // class weights n_g / n
   bool ok = true;
 };
 
@@ -259,7 +268,6 @@ static PldaFit plda_fit_core(const arma::mat& x, const arma::ivec& y,
   out.mu = S.mu;
   out.sdw = S.sdw;
   out.cmeans = M;
-  out.cw = w;
   return out;
 }
 
@@ -273,7 +281,7 @@ List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
   if (!f.ok)
     Rcpp::stop("plda: minorize-maximize criterion decreased — numerical breakdown.");
   return List::create(_["discrim"] = f.discrim, _["mu"] = f.mu,
-                      _["sdw"] = f.sdw, _["cmeans"] = f.cmeans, _["cw"] = f.cw);
+                      _["sdw"] = f.sdw, _["cmeans"] = f.cmeans);
 }
 
 // Project new data onto stored discriminant vectors after standardizing

@@ -33,7 +33,9 @@ plda(x, ...)
 
 \item{y}{Factor (or coercible) class label of length \code{nrow(x)}.}
 
-\item{K}{Number of discriminant vectors (\verb{<= G-1}). Default \code{G-1}.}
+\item{K}{Number of discriminant vectors (\verb{<= G-1}). If supplied, \code{K} is
+fixed; if \code{NULL} (default), \code{K} is chosen by cross-validation along with
+\code{lambda}. When \code{autotune = FALSE}, \code{NULL} means \code{G-1}.}
 
 \item{lambda}{Magnitude penalty. Required when \code{autotune = FALSE}.}
 

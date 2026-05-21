@@ -12,7 +12,9 @@
 plda <- function(x, ...) UseMethod("plda")
 
 #' @param y Factor (or coercible) class label of length `nrow(x)`.
-#' @param K Number of discriminant vectors (`<= G-1`). Default `G-1`.
+#' @param K Number of discriminant vectors (`<= G-1`). If supplied, `K` is
+#'   fixed; if `NULL` (default), `K` is chosen by cross-validation along with
+#'   `lambda`. When `autotune = FALSE`, `NULL` means `G-1`.
 #' @param lambda Magnitude penalty. Required when `autotune = FALSE`.
 #' @param penalty `"L1"` (default) or `"fused"`.
 #' @param lambda2 Fused-lasso difference penalty (used when `penalty = "fused"`).
@@ -49,7 +51,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   if (!is.numeric(x)) stop("plda: `x` must be numeric.", call. = FALSE)
   if (anyNA(x)) stop("plda: `x` contains missing values (NA). Remove or impute before fitting.", call. = FALSE)
   if (ncol(x) < 1L) stop("plda: `x` must have at least one column.", call. = FALSE)
-  y <- as.factor(y)
+  y <- droplevels(as.factor(y))
   if (anyNA(y))
     stop("plda: `y` contains missing class labels (NA). Remove rows with missing labels before fitting.", call. = FALSE)
   if (nrow(x) != length(y)) stop("plda: nrow(x) must equal length(y).", call. = FALSE)
@@ -57,6 +59,17 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   G <- length(classes)
   if (G < 2L) stop("plda: need at least two classes.", call. = FALSE)
   yint <- as.integer(y)
+  # LDA needs within-class variance, so every class must have >= 2 members.
+  # A singleton class also makes stratified CV folds impossible.
+  class_counts <- tabulate(yint, nbins = G)
+  if (any(class_counts < 2L)) {
+    bad <- classes[class_counts < 2L]
+    stop(sprintf("plda: every class needs at least 2 observations; too few in: %s.",
+                 paste(bad, collapse = ", ")), call. = FALSE)
+  }
+  # An explicit K is honoured under autotune (only lambda is tuned); K = NULL
+  # lets cross-validation choose K alongside lambda.
+  tune_K <- is.null(K)
   if (is.null(K)) K <- G - 1L
   if (K < 1L || K > G - 1L)
     stop(sprintf("plda: K must be in 1..%d (G-1).", G - 1L), call. = FALSE)
@@ -100,7 +113,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   nthreads_used <- 1L
   if (autotune) {
     cv <- .plda_cv(x, yint, G, K, penalty, pen_code, lam2, nfold,
-                   lambda_grid, maxit, tol, nthreads_eff)
+                   lambda_grid, maxit, tol, nthreads_eff, tune_K)
     lambda <- cv$lambda; K <- cv$K
     nthreads_used <- cv$nthreads_used
   } else if (is.null(lambda)) {
@@ -115,7 +128,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   eng <- plda_fit_cpp(x, yint, G, K, lambda, lam2, pen_code,
                       as.integer(maxit), tol)
   structure(list(discrim = eng$discrim, mu = eng$mu, sdw = eng$sdw,
-                 cmeans = eng$cmeans, cw = eng$cw, classes = classes,
+                 cmeans = eng$cmeans, classes = classes,
                  K = K, lambda = lambda, lambda2 = lam2, penalty = penalty,
                  cv = cv, nthreads_used = nthreads_used, call = match.call()),
             class = "plda")
@@ -141,10 +154,11 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 
 #' @keywords internal
 #' @noRd
-# k-fold CV over (lambda grid) x (1..K); picks the lambda/K with lowest mean
-# misclassification error. Saves and restores the global RNG state so the
-# caller's random-number stream is unaffected (same pattern as .ares_autotune
-# and .krls_lambdasearch in this package).
+# k-fold CV over the lambda grid; picks the lambda (and, when tune_K = TRUE,
+# the K in 1..K) with lowest mean misclassification error. When tune_K = FALSE
+# the supplied K is held fixed and only lambda is tuned. Saves and restores the
+# global RNG state so the caller's random-number stream is unaffected (same
+# pattern as .ares_autotune and .krls_lambdasearch in this package).
 #
 # Parallelism: the fold assignment is computed here in R (set.seed(0) +
 # sample) and passed into plda_cv_inner_cpp, which runs the fold loop with TBB
@@ -154,7 +168,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 # is a trailing argument with a default of 1L so existing positional callers
 # (e.g. tests calling .plda_cv directly) remain valid and deterministic.
 .plda_cv <- function(x, yint, G, K, penalty, pen_code, lam2, nfold,
-                     lambda_grid, maxit, tol, nthreads = 1L) {
+                     lambda_grid, maxit, tol, nthreads = 1L, tune_K = TRUE) {
   # Save and restore the global RNG state so this call does not leak a seed
   # change to the caller — consistent with .ares_autotune and .krls_lambdasearch.
   # MUST be the very first statements: .plda_lambda_grid calls plda_wcsd_cpp
@@ -169,7 +183,15 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   if (is.null(lambda_grid)) lambda_grid <- .plda_lambda_grid(x, yint, G)
   n <- nrow(x)
   set.seed(0L)
-  folds <- sample(rep_len(seq_len(nfold), n))
+  # Class-stratified fold assignment: each class is spread evenly across folds
+  # so every training fold (the nfold-1 complement) retains every class. With
+  # the >= 2-per-class guarantee from plda.default this means no training fold
+  # can lose a class. Still deterministic — set.seed(0L) fixes the sampling.
+  folds <- integer(n)
+  for (g in seq_len(G)) {
+    ig <- which(yint == g)
+    folds[ig] <- sample(rep_len(seq_len(nfold), length(ig)))
+  }
 
   res <- plda_cv_inner_cpp(x, as.integer(yint), as.integer(folds),
                            as.integer(nfold), G, K, as.numeric(lambda_grid),
@@ -180,8 +202,13 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
     warning("plda: minorize-maximize criterion decreased in one or more CV folds; ",
             "results may be unreliable. Consider a smaller lambda grid or larger maxit.",
             call. = FALSE)
+  # When the user supplied K explicitly (tune_K = FALSE), tune lambda only:
+  # restrict the (nlam x K) error matrix to the single K-th column so the K
+  # choice is fixed at the supplied value.
+  if (!tune_K) err <- err[, K, drop = FALSE]
   best <- which(err == min(err), arr.ind = TRUE)[1, ]
-  list(lambda = lambda_grid[best[1]], K = as.integer(best[2]),
+  best_K <- if (tune_K) as.integer(best[2]) else K
+  list(lambda = lambda_grid[best[1]], K = best_K,
        grid = lambda_grid, errors = err[, best[2]],
        nthreads_used = as.integer(res$nthreads_used))
 }

@@ -26,6 +26,12 @@ test_that(".plda_cv does not modify the caller RNG stream", {
   expect_equal(runif(1), ref)
 })
 
+test_that("plda autotune honors an explicit K", {
+  set.seed(7)
+  fit <- plda(Species ~ ., data = iris, K = 1)   # autotune lambda, K fixed at 1
+  expect_equal(fit$K, 1L)
+})
+
 test_that(".plda_lambda_grid spans a real data-driven range", {
   g <- roadrunner:::.plda_lambda_grid(as.matrix(iris[, 1:4]),
                                       as.integer(iris$Species), G = 3L)
