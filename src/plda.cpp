@@ -1,6 +1,7 @@
 // src/plda.cpp
 #include <RcppArmadillo.h>
-// [[Rcpp::depends(RcppArmadillo)]]
+#include <RcppParallel.h>
+// [[Rcpp::depends(RcppArmadillo, RcppParallel)]]
 using namespace Rcpp;
 
 // Within-class standard deviation per feature, divisor n. C++-internal (returns arma::vec).
@@ -155,9 +156,16 @@ static double ppca_crit(const arma::mat& BtPB, const arma::vec& beta, double d,
 // PenalizedPCA inner loop.  B is the (G x p) between-class root-scatter matrix
 // sqrt.sigma.bet; Pmat is the (G x G) deflation projection (identity for k=1).
 // prox: 0 = L1 soft-threshold; 1 = fused (tv1d then soft-threshold).
+//
+// `ok` is an out-parameter: it is set to false (and the loop bailed) if the MM
+// criterion ever decreases — a numerical breakdown. Callers running on the main
+// R thread translate `ok == false` into Rcpp::stop(); callers running inside a
+// TBB worker (the CV harness) must NOT throw across the thread boundary and so
+// inspect `ok` after the parallelFor completes. `Rcpp::stop` is intentionally
+// never reached from this function for that reason.
 static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
                                  double lambda, double lambda2, int penalty,
-                                 int maxit, double tol) {
+                                 int maxit, double tol, bool& ok) {
   // BtP = t(x) %*% P  (p x G); svd gives d and the warm-start direction.
   arma::mat BtP = B.t() * Pmat;
   arma::mat U, V; arma::vec s;
@@ -186,18 +194,35 @@ static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
     beta.replace(arma::datum::nan, 0.0);
     crits.push_back(ppca_crit(BtPB, beta, d, lambda, lambda2, penalty));
     if (crits.size() >= 2 &&
-        crits.back() < crits[crits.size() - 2] - 1e-6)
-      Rcpp::stop("plda: minorize-maximize criterion decreased — numerical breakdown.");
+        crits.back() < crits[crits.size() - 2] - 1e-6) {
+      ok = false;
+      return beta;
+    }
   }
   return beta;
 }
 
-// [[Rcpp::export]]
-List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
-                  double lambda, double lambda2, int penalty,
-                  int maxit, double tol) {
-  if (K > G - 1) Rcpp::stop("plda_fit_cpp: K must be <= G-1 (G = %d)", G);
-  if (K < 1) Rcpp::stop("plda_fit_cpp: K must be >= 1");
+// Engine output of a single pLDA fit. `ok` is false if the MM inner loop hit a
+// numerical breakdown; the caller decides whether to throw (main thread) or
+// flag the result (TBB worker).
+struct PldaFit {
+  arma::mat discrim;   // p x K discriminant vectors
+  arma::rowvec mu;     // global feature means
+  arma::vec sdw;       // within-class feature sds
+  arma::mat cmeans;    // G x p standardized class means
+  arma::vec cw;        // class weights n_g / n
+  bool ok = true;
+};
+
+// Core pLDA fit. Pure numeric — calls no Rcpp throwing primitives, so it is
+// safe to invoke from inside a TBB worker. Determinism: every step is a fixed,
+// data-only computation; running it on N threads (one fit per thread) and on 1
+// thread produces byte-identical PldaFit results because the fits are wholly
+// independent and never share mutable state.
+static PldaFit plda_fit_core(const arma::mat& x, const arma::ivec& y,
+                             int G, int K, double lambda, double lambda2,
+                             int penalty, int maxit, double tol) {
+  PldaFit out;
   Standardized S = standardize(x, y, G);
   arma::mat M; arma::vec w;
   class_means(S.xs, y, G, M, w);
@@ -224,12 +249,31 @@ List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
         Pmat -= Uk * Uk.t();
       }
     }
+    bool ok = true;
     arma::vec beta = mm_discriminant(B, Pmat, lambda, lambda2, penalty,
-                                     maxit, tol);
+                                     maxit, tol, ok);
+    if (!ok) out.ok = false;
     discrim.col(k) = beta;
   }
-  return List::create(_["discrim"] = discrim, _["mu"] = S.mu,
-                      _["sdw"] = S.sdw, _["cmeans"] = M, _["cw"] = w);
+  out.discrim = discrim;
+  out.mu = S.mu;
+  out.sdw = S.sdw;
+  out.cmeans = M;
+  out.cw = w;
+  return out;
+}
+
+// [[Rcpp::export]]
+List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
+                  double lambda, double lambda2, int penalty,
+                  int maxit, double tol) {
+  if (K > G - 1) Rcpp::stop("plda_fit_cpp: K must be <= G-1 (G = %d)", G);
+  if (K < 1) Rcpp::stop("plda_fit_cpp: K must be >= 1");
+  PldaFit f = plda_fit_core(x, y, G, K, lambda, lambda2, penalty, maxit, tol);
+  if (!f.ok)
+    Rcpp::stop("plda: minorize-maximize criterion decreased — numerical breakdown.");
+  return List::create(_["discrim"] = f.discrim, _["mu"] = f.mu,
+                      _["sdw"] = f.sdw, _["cmeans"] = f.cmeans, _["cw"] = f.cw);
 }
 
 // Project new data onto stored discriminant vectors after standardizing
@@ -241,4 +285,157 @@ arma::mat plda_project_cpp(const arma::mat& xnew, const arma::rowvec& mu,
   xs.each_row() -= mu;
   xs.each_row() /= sdw.t();
   return xs * discrim;
+}
+
+// ---------------------------------------------------------------------------
+// Parallel k-fold cross-validation harness (pLDA Task 13).
+//
+// Runs the full nfold x length(lambda_grid) grid. One TBB task == one fold.
+// Each fold's misclassification counts go into a private slot (err_by_fold[f],
+// a length(lambda_grid) x K matrix). After the parallelFor, the slots are
+// summed in fixed fold order 0,1,...,nfold-1 — so the reduction is byte-
+// identical regardless of how many threads ran the folds, satisfying the
+// roadrunner determinism invariant.
+//
+// Determinism notes:
+//   * Folds are assigned in R (set.seed(0) + sample(...)) and passed in as a
+//     1-based integer vector `folds`; C++ never randomizes.
+//   * Each task only reads shared const inputs and writes its own err_by_fold
+//     slot — no cross-thread mutable aliasing.
+//   * plda_fit_core is pure numeric; one fit per thread is independent of one
+//     fit on the main thread, bit-for-bit.
+//   * The final err matrix is sum_f err_by_fold[f] accumulated in ascending f.
+//
+// Classification mirrors the former R loop exactly: for prefix dimension k,
+// nearest-centroid in the first k discriminant scores, ties broken "first"
+// (the lowest class index), via an argmin over squared distances.
+// ---------------------------------------------------------------------------
+
+// Misclassification counts for one fold, all lambdas, all k in 1..K.
+// Pure numeric: safe inside a TBB worker.
+static void plda_cv_one_fold(const arma::mat& x, const arma::ivec& y,
+                             const arma::uvec& tr, const arma::uvec& te,
+                             int G, int K, const arma::vec& lambda_grid,
+                             double lambda2, int penalty, int maxit, double tol,
+                             arma::mat& err_slot, bool& ok_slot) {
+  const arma::uword nlam = lambda_grid.n_elem;
+  arma::mat x_tr = x.rows(tr);
+  arma::ivec y_tr = y.elem(tr);
+  arma::mat x_te = x.rows(te);
+  arma::ivec y_te = y.elem(te);
+  const arma::uword nte = te.n_elem;
+
+  for (arma::uword li = 0; li < nlam; ++li) {
+    PldaFit f = plda_fit_core(x_tr, y_tr, G, K, lambda_grid(li), lambda2,
+                              penalty, maxit, tol);
+    if (!f.ok) ok_slot = false;
+
+    // Test-point scores (nte x K) and class-mean scores (G x K).
+    arma::mat sc  = plda_project_cpp(x_te, f.mu, f.sdw, f.discrim);
+    arma::mat csc = f.cmeans * f.discrim;
+
+    for (int k = 1; k <= K; ++k) {
+      // Squared distance in the first k score dimensions; nearest centroid.
+      arma::uword miscls = 0;
+      for (arma::uword i = 0; i < nte; ++i) {
+        double best = arma::datum::inf;
+        int bestg = 1;
+        for (int g = 0; g < G; ++g) {
+          double d2 = 0.0;
+          for (int kk = 0; kk < k; ++kk) {
+            double diff = sc(i, kk) - csc(g, kk);
+            d2 += diff * diff;
+          }
+          // ties.method = "first": strict < keeps the lowest class index.
+          if (d2 < best) { best = d2; bestg = g + 1; }
+        }
+        if (bestg != y_te(i)) ++miscls;
+      }
+      err_slot(li, k - 1) = (double) miscls;
+    }
+  }
+}
+
+struct PldaCvWorker : public RcppParallel::Worker {
+  const arma::mat& x;
+  const arma::ivec& y;
+  const std::vector<arma::uvec>& tr_idx;
+  const std::vector<arma::uvec>& te_idx;
+  int G, K;
+  const arma::vec& lambda_grid;
+  double lambda2;
+  int penalty, maxit;
+  double tol;
+  std::vector<arma::mat>& err_by_fold;   // one fixed slot per fold
+  std::vector<unsigned char>& ok_by_fold;
+
+  PldaCvWorker(const arma::mat& x_, const arma::ivec& y_,
+               const std::vector<arma::uvec>& tr_, const std::vector<arma::uvec>& te_,
+               int G_, int K_, const arma::vec& lg_, double lambda2_,
+               int penalty_, int maxit_, double tol_,
+               std::vector<arma::mat>& err_, std::vector<unsigned char>& ok_)
+    : x(x_), y(y_), tr_idx(tr_), te_idx(te_), G(G_), K(K_),
+      lambda_grid(lg_), lambda2(lambda2_), penalty(penalty_), maxit(maxit_),
+      tol(tol_), err_by_fold(err_), ok_by_fold(ok_) {}
+
+  void operator()(std::size_t begin, std::size_t end) {
+    for (std::size_t f = begin; f < end; ++f) {
+      bool ok = true;
+      plda_cv_one_fold(x, y, tr_idx[f], te_idx[f], G, K, lambda_grid,
+                       lambda2, penalty, maxit, tol, err_by_fold[f], ok);
+      ok_by_fold[f] = ok ? 1 : 0;
+    }
+  }
+};
+
+// [[Rcpp::export]]
+Rcpp::List plda_cv_inner_cpp(const arma::mat& x, const arma::ivec& y,
+                             const arma::ivec& folds, int nfold,
+                             int G, int K, const arma::vec& lambda_grid,
+                             double lambda2, int penalty,
+                             int maxit, double tol, int nthreads) {
+  const arma::uword nlam = lambda_grid.n_elem;
+
+  // Pre-resolve per-fold train/test row index vectors (1-based folds in R).
+  std::vector<arma::uvec> tr_idx(nfold), te_idx(nfold);
+  for (int f = 0; f < nfold; ++f) {
+    tr_idx[f] = arma::find(folds != (f + 1));
+    te_idx[f] = arma::find(folds == (f + 1));
+  }
+
+  // Disjoint output slots: one error matrix and one ok flag per fold.
+  std::vector<arma::mat> err_by_fold(nfold);
+  for (int f = 0; f < nfold; ++f)
+    err_by_fold[f] = arma::mat(nlam, K, arma::fill::zeros);
+  std::vector<unsigned char> ok_by_fold(nfold, 1);
+
+  // Clamp worker count: >= 1, no idle workers beyond the number of folds.
+  int n_workers = nthreads;
+  if (n_workers < 1) n_workers = 1;
+  if (n_workers > nfold) n_workers = nfold;
+
+  PldaCvWorker worker(x, y, tr_idx, te_idx, G, K, lambda_grid, lambda2,
+                      penalty, maxit, tol, err_by_fold, ok_by_fold);
+  RcppParallel::parallelFor(0, nfold, worker, /*grainSize=*/1,
+                            /*numThreads=*/n_workers);
+
+  // Serial-order reduction: sum the per-fold slots in ascending fold index so
+  // the result is byte-identical for any n_workers.
+  arma::mat err(nlam, K, arma::fill::zeros);
+  bool all_ok = true;
+  for (int f = 0; f < nfold; ++f) {
+    err += err_by_fold[f];
+    if (!ok_by_fold[f]) all_ok = false;
+  }
+
+  Rcpp::NumericMatrix err_out(nlam, K);
+  for (arma::uword i = 0; i < nlam; ++i)
+    for (int k = 0; k < K; ++k)
+      err_out(i, k) = err(i, k);
+
+  return Rcpp::List::create(
+    Rcpp::Named("err")          = err_out,
+    Rcpp::Named("ok")           = all_ok,
+    Rcpp::Named("nthreads_used") = n_workers
+  );
 }

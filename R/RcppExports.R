@@ -101,3 +101,7 @@ plda_project_cpp <- function(xnew, mu, sdw, discrim) {
     .Call(`_roadrunner_plda_project_cpp`, xnew, mu, sdw, discrim)
 }
 
+plda_cv_inner_cpp <- function(x, y, folds, nfold, G, K, lambda_grid, lambda2, penalty, maxit, tol, nthreads) {
+    .Call(`_roadrunner_plda_cv_inner_cpp`, x, y, folds, nfold, G, K, lambda_grid, lambda2, penalty, maxit, tol, nthreads)
+}
+

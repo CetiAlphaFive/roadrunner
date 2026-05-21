@@ -408,6 +408,28 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_cv_inner_cpp
+Rcpp::List plda_cv_inner_cpp(const arma::mat& x, const arma::ivec& y, const arma::ivec& folds, int nfold, int G, int K, const arma::vec& lambda_grid, double lambda2, int penalty, int maxit, double tol, int nthreads);
+RcppExport SEXP _roadrunner_plda_cv_inner_cpp(SEXP xSEXP, SEXP ySEXP, SEXP foldsSEXP, SEXP nfoldSEXP, SEXP GSEXP, SEXP KSEXP, SEXP lambda_gridSEXP, SEXP lambda2SEXP, SEXP penaltySEXP, SEXP maxitSEXP, SEXP tolSEXP, SEXP nthreadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::ivec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::ivec& >::type folds(foldsSEXP);
+    Rcpp::traits::input_parameter< int >::type nfold(nfoldSEXP);
+    Rcpp::traits::input_parameter< int >::type G(GSEXP);
+    Rcpp::traits::input_parameter< int >::type K(KSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type lambda_grid(lambda_gridSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda2(lambda2SEXP);
+    Rcpp::traits::input_parameter< int >::type penalty(penaltySEXP);
+    Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_cv_inner_cpp(x, y, folds, nfold, G, K, lambda_grid, lambda2, penalty, maxit, tol, nthreads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -435,6 +457,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_plda_tv1d_cpp", (DL_FUNC) &_roadrunner_plda_tv1d_cpp, 2},
     {"_roadrunner_plda_fit_cpp", (DL_FUNC) &_roadrunner_plda_fit_cpp, 9},
     {"_roadrunner_plda_project_cpp", (DL_FUNC) &_roadrunner_plda_project_cpp, 4},
+    {"_roadrunner_plda_cv_inner_cpp", (DL_FUNC) &_roadrunner_plda_cv_inner_cpp, 12},
     {NULL, NULL, 0}
 };
 

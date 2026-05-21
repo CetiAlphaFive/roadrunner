@@ -20,6 +20,7 @@ plda(x, ...)
   lambda_grid = NULL,
   maxit = 100L,
   tol = 0.000001,
+  nthreads = getOption("roadrunner.nthreads", 0L),
   ...
 )
 
@@ -49,6 +50,14 @@ plda(x, ...)
 \item{maxit}{MM solver maximum iterations.}
 
 \item{tol}{MM solver convergence tolerance.}
+
+\item{nthreads}{Integer. Number of worker threads for the cross-validation
+autotune (\code{autotune = TRUE}). \code{0} (the default, taken from
+\code{getOption("roadrunner.nthreads")} when set) uses
+\code{RcppParallel::defaultNumThreads()}. The CV fold loop is parallelised with
+fixed per-fold output slots and a serial-order reduction, so the fitted
+discriminants are byte-identical regardless of \code{nthreads}. Ignored when
+\code{autotune = FALSE} (a single fit is already sequential).}
 
 \item{formula}{A model formula; response on the left, predictors on the right.}
 

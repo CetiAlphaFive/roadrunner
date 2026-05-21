@@ -21,12 +21,20 @@ plda <- function(x, ...) UseMethod("plda")
 #' @param lambda_grid Optional CV grid.
 #' @param maxit MM solver maximum iterations.
 #' @param tol MM solver convergence tolerance.
+#' @param nthreads Integer. Number of worker threads for the cross-validation
+#'   autotune (`autotune = TRUE`). `0` (the default, taken from
+#'   `getOption("roadrunner.nthreads")` when set) uses
+#'   `RcppParallel::defaultNumThreads()`. The CV fold loop is parallelised with
+#'   fixed per-fold output slots and a serial-order reduction, so the fitted
+#'   discriminants are byte-identical regardless of `nthreads`. Ignored when
+#'   `autotune = FALSE` (a single fit is already sequential).
 #' @rdname plda
 #' @export
 plda.default <- function(x, y, K = NULL, lambda = NULL,
                          penalty = c("L1", "fused"), lambda2 = NULL,
                          autotune = TRUE, nfold = 5L, lambda_grid = NULL,
-                         maxit = 100L, tol = 1e-6, ...) {
+                         maxit = 100L, tol = 1e-6,
+                         nthreads = getOption("roadrunner.nthreads", 0L), ...) {
   # Save and restore the global RNG state so plda() does not leave .Random.seed
   # behind when the caller had none — every Rcpp export (plda_wcsd_cpp,
   # plda_fit_cpp, plda_project_cpp) creates .Random.seed via RNGScope.
@@ -63,6 +71,16 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
     stop(sprintf("plda: `nfold` (%d) cannot exceed nrow(x) (%d).", nfold, nrow(x)),
          call. = FALSE)
 
+  # Resolve nthreads. `0` (or anything <= 0) means "use the package default".
+  # Determinism invariant: the parallel CV harness (plda_cv_inner_cpp) writes
+  # each fold into a private slot and reduces in fixed fold order, so the
+  # fitted discriminants are byte-identical for any nthreads.
+  nthreads <- as.integer(nthreads)
+  if (length(nthreads) != 1L || is.na(nthreads) || nthreads < 0L)
+    stop("plda: `nthreads` must be a single non-negative integer.", call. = FALSE)
+  nthreads_eff <- if (nthreads <= 0L)
+    RcppParallel::defaultNumThreads() else nthreads
+
   # Validate lambda2 / warn if irrelevant
   if (penalty == "L1" && !is.null(lambda2) && lambda2 != 0) {
     warning("plda: `lambda2` is ignored when `penalty = 'L1'`.", call. = FALSE)
@@ -74,7 +92,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 
   if (autotune) {
     cv <- .plda_cv(x, yint, G, K, penalty, pen_code, lam2, nfold,
-                   lambda_grid, maxit, tol)
+                   lambda_grid, maxit, tol, nthreads_eff)
     lambda <- cv$lambda; K <- cv$K
   } else if (is.null(lambda)) {
     stop("plda: supply `lambda` or use autotune = TRUE.", call. = FALSE)
@@ -90,7 +108,7 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   structure(list(discrim = eng$discrim, mu = eng$mu, sdw = eng$sdw,
                  cmeans = eng$cmeans, cw = eng$cw, classes = classes,
                  K = K, lambda = lambda, lambda2 = lam2, penalty = penalty,
-                 cv = cv, call = match.call()),
+                 cv = cv, nthreads = nthreads_eff, call = match.call()),
             class = "plda")
 }
 
@@ -118,8 +136,16 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 # misclassification error. Saves and restores the global RNG state so the
 # caller's random-number stream is unaffected (same pattern as .ares_autotune
 # and .krls_lambdasearch in this package).
+#
+# Parallelism: the fold assignment is computed here in R (set.seed(0) +
+# sample) and passed into plda_cv_inner_cpp, which runs the fold loop with TBB
+# — one fold per task, each fold writing its misclassification counts into a
+# private slot, reduced in fixed fold order. The result is therefore byte-
+# identical for any `nthreads` (the roadrunner determinism invariant). `nthreads`
+# is a trailing argument with a default of 1L so existing positional callers
+# (e.g. tests calling .plda_cv directly) remain valid and deterministic.
 .plda_cv <- function(x, yint, G, K, penalty, pen_code, lam2, nfold,
-                     lambda_grid, maxit, tol) {
+                     lambda_grid, maxit, tol, nthreads = 1L) {
   # Save and restore the global RNG state so this call does not leak a seed
   # change to the caller — consistent with .ares_autotune and .krls_lambdasearch.
   # MUST be the very first statements: .plda_lambda_grid calls plda_wcsd_cpp
@@ -135,25 +161,12 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   n <- nrow(x)
   set.seed(0L)
   folds <- sample(rep_len(seq_len(nfold), n))
-  err <- matrix(0, length(lambda_grid), K)
-  for (f in seq_len(nfold)) {
-    tr <- folds != f; te <- !tr
-    for (li in seq_along(lambda_grid)) {
-      eng <- plda_fit_cpp(x[tr, , drop = FALSE], yint[tr], G, K,
-                          lambda_grid[li], lam2, pen_code,
-                          as.integer(maxit), tol)
-      sc  <- plda_project_cpp(x[te, , drop = FALSE], eng$mu, eng$sdw, eng$discrim)
-      csc <- eng$cmeans %*% eng$discrim
-      for (k in seq_len(K)) {
-        d2 <- outer(rowSums(sc[, 1:k, drop = FALSE]^2),
-                    rowSums(csc[, 1:k, drop = FALSE]^2), `+`) -
-              2 * sc[, 1:k, drop = FALSE] %*% t(csc[, 1:k, drop = FALSE])
-        pred <- max.col(-d2, ties.method = "first")
-        err[li, k] <- err[li, k] + sum(pred != yint[te])
-      }
-    }
-  }
-  err <- err / n
+
+  res <- plda_cv_inner_cpp(x, as.integer(yint), as.integer(folds),
+                           as.integer(nfold), G, K, as.numeric(lambda_grid),
+                           lam2, pen_code, as.integer(maxit), tol,
+                           as.integer(nthreads))
+  err <- res$err / n
   best <- which(err == min(err), arr.ind = TRUE)[1, ]
   list(lambda = lambda_grid[best[1]], K = as.integer(best[2]),
        grid = lambda_grid, errors = err[, best[2]])
