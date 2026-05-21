@@ -2,9 +2,28 @@
 % Please edit documentation in R/plda.R
 \name{plda}
 \alias{plda}
+\alias{plda.default}
+\alias{plda.formula}
 \title{Penalized linear discriminant analysis}
 \usage{
 plda(x, ...)
+
+\method{plda}{default}(
+  x,
+  y,
+  K = NULL,
+  lambda = NULL,
+  penalty = c("L1", "fused"),
+  lambda2 = NULL,
+  autotune = TRUE,
+  nfold = 5L,
+  lambda_grid = NULL,
+  maxit = 100L,
+  tol = 0.000001,
+  ...
+)
+
+\method{plda}{formula}(formula, data, ...)
 }
 \arguments{
 \item{x}{Numeric predictor matrix, or a formula for the formula interface.}
@@ -12,6 +31,24 @@ plda(x, ...)
 \item{...}{Passed to methods.}
 
 \item{y}{Factor (or coercible) class label of length \code{nrow(x)}.}
+
+\item{K}{Number of discriminant vectors (\verb{<= G-1}). Default \code{G-1}.}
+
+\item{lambda}{Magnitude penalty. Required when \code{autotune = FALSE}.}
+
+\item{penalty}{\code{"L1"} (default) or \code{"fused"}.}
+
+\item{lambda2}{Fused-lasso difference penalty (used when \code{penalty = "fused"}).}
+
+\item{autotune}{If \code{TRUE} (default), cross-validate \code{lambda} (and \code{K}).}
+
+\item{nfold}{CV folds.}
+
+\item{lambda_grid}{Optional CV grid.}
+
+\item{maxit}{MM solver maximum iterations.}
+
+\item{tol}{MM solver convergence tolerance.}
 }
 \value{
 An object of S3 class \code{"plda"}.
