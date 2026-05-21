@@ -9,12 +9,13 @@
 Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Two algorithms today:
+with thin, base-R-style interfaces. Three core fitters today:
 
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
+- **`plda()`** -- Penalized Linear Discriminant Analysis (L1 / fused-lasso).
 
-Plus **`meep()`** -- a cross-fitted ensemble of the above, built for
+Plus **`meep()`** -- a cross-fitted ensemble of `ares()` and `krls()`, built for
 Double Machine Learning and causal-forest nuisance estimation.
 
 ## Package design
@@ -125,6 +126,17 @@ data.frame(
 #>    E[D|X]      0.865       0.916
 ```
 
+### Penalized LDA via `plda()`
+
+`plda()` fits penalized Fisher's linear discriminant analysis (Witten &
+Tibshirani 2011) with L1 or fused-lasso penalties, multi-class support,
+and built-in cross-validation autotune.
+
+```r
+fit <- plda(Species ~ ., data = iris)
+predict(fit, iris)
+```
+
 ## References
 
 - Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
@@ -133,6 +145,9 @@ data.frame(
   Squares: Reducing Misspecification Bias with a Flexible and
   Interpretable Machine Learning Approach. *Political Analysis*,
   22(2):143-168.
+- Witten, D. M. and Tibshirani, R. (2011). Penalized classification using
+  Fisher's linear discriminant. *Journal of the Royal Statistical Society,
+  Series B*, 73(5):753-772.
 
 ## License
 
