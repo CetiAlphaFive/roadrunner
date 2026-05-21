@@ -52,6 +52,14 @@ test_that("plda.formula works when data is omitted and vars are in calling env",
   expect_s3_class(f, "plda")
 })
 
+test_that("plda print and summary work", {
+  fit <- plda(Species ~ ., data = iris, K = 2, lambda = 0.1, autotune = FALSE)
+  expect_output(print(fit), "Penalized LDA")
+  s <- summary(fit)
+  expect_s3_class(s, "summary.plda")
+  expect_output(print(s), "nonzero")
+})
+
 test_that("predict.plda returns class / posterior / projection", {
   set.seed(11)
   x <- as.matrix(iris[, 1:4]); y <- iris$Species

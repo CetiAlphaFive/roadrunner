@@ -397,3 +397,84 @@ plot.ares <- function(x,
 
   invisible(x)
 }
+
+#' Print method for `plda` fits
+#'
+#' @param x A `"plda"` object.
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @export
+print.plda <- function(x, ...) {
+  cat("Penalized LDA (", x$penalty, " penalty)\n", sep = "")
+  cat("  Classes:      ", paste(x$classes, collapse = ", "), "\n", sep = "")
+  cat("  Discriminants:", x$K, "\n")
+  cat("  lambda:       ", format(x$lambda, digits = 4), "\n", sep = "")
+  if (x$penalty == "fused")
+    cat("  lambda2:      ", format(x$lambda2, digits = 4), "\n", sep = "")
+  nz <- colSums(abs(x$discrim) > 0)
+  cat("  Nonzero feats per discriminant:", paste(nz, collapse = ", "), "\n")
+  invisible(x)
+}
+
+#' Summary method for `plda` fits
+#'
+#' @param object A `"plda"` object.
+#' @param ... Currently ignored.
+#' @return An object of class `"summary.plda"`.
+#' @export
+summary.plda <- function(object, ...) {
+  nz <- colSums(abs(object$discrim) > 0)
+  structure(list(penalty  = object$penalty,
+                 classes  = object$classes,
+                 K        = object$K,
+                 lambda   = object$lambda,
+                 lambda2  = object$lambda2,
+                 nonzero  = nz,
+                 npred    = nrow(object$discrim),
+                 cv       = object$cv),
+            class = "summary.plda")
+}
+
+#' @rdname summary.plda
+#' @param x A `summary.plda` object.
+#' @export
+print.summary.plda <- function(x, ...) {
+  cat("Penalized LDA summary\n")
+  cat("  penalty:", x$penalty, "| classes:", length(x$classes),
+      "| discriminants:", x$K, "\n")
+  cat("  lambda:", format(x$lambda, digits = 4), "\n")
+  for (k in seq_len(x$K))
+    cat(sprintf("  discriminant %d: %d / %d nonzero features\n",
+                k, x$nonzero[k], x$npred))
+  if (!is.null(x$cv))
+    cat("  CV-selected via", length(x$cv$grid), "lambda grid points\n")
+  invisible(x)
+}
+
+#' Projection plot for `plda` fits
+#'
+#' @param x A `"plda"` object.
+#' @param data Predictor matrix (required).
+#' @param labels Optional class label vector for colouring points.
+#' @param ... Further graphical parameters passed to [graphics::plot()].
+#' @return Invisibly returns `x`.
+#' @export
+plot.plda <- function(x, data = NULL, labels = NULL, ...) {
+  if (is.null(data))
+    stop("plot.plda: supply `data` (predictor matrix used to fit).",
+         call. = FALSE)
+  sc <- plda_project_cpp(as.matrix(data), x$mu, x$sdw, x$discrim)
+  cols <- if (is.null(labels)) 1L else as.integer(as.factor(labels))
+  if (x$K >= 2L) {
+    graphics::plot(sc[, 1], sc[, 2], col = cols, pch = 19,
+                   xlab = "Discriminant 1", ylab = "Discriminant 2",
+                   main = "Penalized LDA projection", ...)
+  } else {
+    d <- sc[, 1]
+    graphics::plot(d, jitter(rep(0, length(d))),
+                   col = cols, pch = 19, yaxt = "n",
+                   xlab = "Discriminant 1", ylab = "",
+                   main = "Penalized LDA projection", ...)
+  }
+  invisible(x)
+}
