@@ -63,8 +63,8 @@ static Standardized standardize(const arma::mat& x, const arma::ivec& y, int G) 
 // G x p matrix of class means of the standardized data, and class weights n_g/n.
 static void class_means(const arma::mat& xs, const arma::ivec& y, int G,
                         arma::mat& M, arma::vec& w) {
-  const arma::uword n = xs.n_rows, p = xs.n_cols;
-  M.set_size(G, p); w.set_size(G);
+  const arma::uword n = xs.n_rows;
+  M.set_size(G, xs.n_cols); w.set_size(G);
   for (int g = 1; g <= G; ++g) {
     arma::uvec idx = arma::find(y == g);
     M.row(g - 1) = arma::mean(xs.rows(idx), 0);
@@ -107,6 +107,7 @@ static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
   std::vector<double> crits;
   crits.push_back(ppca_crit(BtPB, beta, d, lambda, lambda2, penalty));
   for (int iter = 0; iter < maxit; ++iter) {
+    // crits needs >= 4 entries before the relative-change test fires (matches penalizedLDA).
     bool converged = (crits.size() >= 4) &&
       (std::abs(crits.back() - crits[crits.size() - 2]) /
          std::max(0.001, crits.back()) <= tol);
@@ -119,6 +120,9 @@ static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
     beta = normalize_l2(prox);
     beta.replace(arma::datum::nan, 0.0);
     crits.push_back(ppca_crit(BtPB, beta, d, lambda, lambda2, penalty));
+    if (crits.size() >= 2 &&
+        crits.back() < crits[crits.size() - 2] - 1e-6)
+      Rcpp::stop("plda: minorize-maximize criterion decreased — numerical breakdown.");
   }
   return beta;
 }
@@ -127,6 +131,8 @@ static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
 List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
                   double lambda, double lambda2, int penalty,
                   int maxit, double tol) {
+  if (K > G - 1) Rcpp::stop("plda_fit_cpp: K must be <= G-1 (G = %d)", G);
+  if (K < 1) Rcpp::stop("plda_fit_cpp: K must be >= 1");
   Standardized S = standardize(x, y, G);
   arma::mat M; arma::vec w;
   class_means(S.xs, y, G, M, w);
