@@ -363,6 +363,18 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_tv1d_cpp
+Rcpp::NumericVector plda_tv1d_cpp(const arma::vec& u, double lam);
+RcppExport SEXP _roadrunner_plda_tv1d_cpp(SEXP uSEXP, SEXP lamSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type u(uSEXP);
+    Rcpp::traits::input_parameter< double >::type lam(lamSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_tv1d_cpp(u, lam));
+    return rcpp_result_gen;
+END_RCPP
+}
 // plda_fit_cpp
 List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K, double lambda, double lambda2, int penalty, int maxit, double tol);
 RcppExport SEXP _roadrunner_plda_fit_cpp(SEXP xSEXP, SEXP ySEXP, SEXP GSEXP, SEXP KSEXP, SEXP lambdaSEXP, SEXP lambda2SEXP, SEXP penaltySEXP, SEXP maxitSEXP, SEXP tolSEXP) {
@@ -420,6 +432,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
     {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
     {"_roadrunner_plda_softthresh_cpp", (DL_FUNC) &_roadrunner_plda_softthresh_cpp, 2},
+    {"_roadrunner_plda_tv1d_cpp", (DL_FUNC) &_roadrunner_plda_tv1d_cpp, 2},
     {"_roadrunner_plda_fit_cpp", (DL_FUNC) &_roadrunner_plda_fit_cpp, 9},
     {"_roadrunner_plda_project_cpp", (DL_FUNC) &_roadrunner_plda_project_cpp, 4},
     {NULL, NULL, 0}

@@ -41,9 +41,63 @@ Rcpp::NumericVector plda_softthresh_cpp(const arma::vec& u, double lam) {
   return Rcpp::NumericVector(v.begin(), v.end());
 }
 
-// Temporary forward stub for the fused-lasso 1-D total-variation prox.
-// Task 10 replaces the body with Condat's (2013) direct algorithm.
-static arma::vec tv1d(const arma::vec& u, double) { return u; }
+// Condat (2013) direct 1-D total-variation denoising:
+// minimize 0.5 * sum (b_j - u_j)^2 + lam * sum |b_{j+1} - b_j|.
+// Reference: L. Condat, "A direct algorithm for 1-D total variation denoising,"
+// IEEE Signal Processing Letters, 2013.
+static arma::vec tv1d(const arma::vec& u, double lam) {
+  const int N = (int) u.n_elem;
+  arma::vec x(N);
+  if (N == 0) return x;
+  if (lam <= 0.0) { x = u; return x; }
+  int k = 0, k0 = 0, kplus = 0, kminus = 0;
+  double vmin = u[0] - lam, vmax = u[0] + lam;
+  double umin = lam, umax = -lam;
+  while (true) {
+    if (k == N - 1) {
+      x[k] = vmin + umin;
+      break;
+    }
+    if (u[k + 1] + umin < vmin - lam) {
+      for (int i = k0; i <= kminus; ++i) x[i] = vmin;
+      k = k0 = kminus = kplus = kminus + 1;
+      vmin = u[k]; vmax = u[k] + 2 * lam;
+      umin = lam; umax = -lam;
+    } else if (u[k + 1] + umax > vmax + lam) {
+      for (int i = k0; i <= kplus; ++i) x[i] = vmax;
+      k = k0 = kminus = kplus = kplus + 1;
+      vmin = u[k] - 2 * lam; vmax = u[k];
+      umin = lam; umax = -lam;
+    } else {
+      ++k;
+      umin += u[k] - vmin;
+      umax += u[k] - vmax;
+      if (umin >= lam) { vmin += (umin - lam) / (k - k0 + 1); umin = lam; kminus = k; }
+      if (umax <= -lam) { vmax += (umax + lam) / (k - k0 + 1); umax = -lam; kplus = k; }
+    }
+    if (k == N - 1) {
+      if (umin < 0.0) {
+        for (int i = k0; i <= kminus; ++i) x[i] = vmin;
+        k = k0 = kminus = kminus + 1;
+        vmin = u[k]; umin = lam; umax = u[k] + lam - vmax;
+      } else if (umax > 0.0) {
+        for (int i = k0; i <= kplus; ++i) x[i] = vmax;
+        k = k0 = kplus = kplus + 1;
+        vmax = u[k]; umax = -lam; umin = u[k] - lam - vmin;
+      } else {
+        for (int i = k0; i <= N - 1; ++i) x[i] = vmin + umin / (k - k0 + 1);
+        break;
+      }
+    }
+  }
+  return x;
+}
+
+// [[Rcpp::export]]
+Rcpp::NumericVector plda_tv1d_cpp(const arma::vec& u, double lam) {
+  arma::vec v = tv1d(u, lam);
+  return Rcpp::NumericVector(v.begin(), v.end());
+}
 
 // Standardize x: subtract global column means, divide by within-class sd.
 // Drops constant features by leaving their sd as 1 (column becomes ~0).
