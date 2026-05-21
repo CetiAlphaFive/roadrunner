@@ -27,6 +27,15 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
                          penalty = c("L1", "fused"), lambda2 = NULL,
                          autotune = TRUE, nfold = 5L, lambda_grid = NULL,
                          maxit = 100L, tol = 1e-6, ...) {
+  # Save and restore the global RNG state so plda() does not leave .Random.seed
+  # behind when the caller had none — every Rcpp export (plda_wcsd_cpp,
+  # plda_fit_cpp, plda_project_cpp) creates .Random.seed via RNGScope.
+  if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
+    old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
+    on.exit(assign(".Random.seed", old_seed, envir = globalenv()), add = TRUE)
+  } else {
+    on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
+  }
   penalty <- match.arg(penalty)
   x <- as.matrix(x)
   if (!is.numeric(x)) stop("plda: `x` must be numeric.", call. = FALSE)
@@ -94,16 +103,19 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 # and .krls_lambdasearch in this package).
 .plda_cv <- function(x, yint, G, K, penalty, pen_code, lam2, nfold,
                      lambda_grid, maxit, tol) {
-  if (is.null(lambda_grid)) lambda_grid <- .plda_lambda_grid(x, yint, G)
-  n <- nrow(x)
   # Save and restore the global RNG state so this call does not leak a seed
   # change to the caller — consistent with .ares_autotune and .krls_lambdasearch.
+  # MUST be the very first statements: .plda_lambda_grid calls plda_wcsd_cpp
+  # (an Rcpp export) which creates .Random.seed via RNGScope/GetRNGstate(), so
+  # the existence check must run before any C++ is touched.
   if (exists(".Random.seed", envir = globalenv(), inherits = FALSE)) {
     old_seed <- get(".Random.seed", envir = globalenv(), inherits = FALSE)
     on.exit(assign(".Random.seed", old_seed, envir = globalenv()), add = TRUE)
   } else {
     on.exit(rm(list = ".Random.seed", envir = globalenv()), add = TRUE)
   }
+  if (is.null(lambda_grid)) lambda_grid <- .plda_lambda_grid(x, yint, G)
+  n <- nrow(x)
   set.seed(0L)
   folds <- sample(rep_len(seq_len(nfold), n))
   err <- matrix(0, length(lambda_grid), K)
