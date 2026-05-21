@@ -860,11 +860,20 @@ Run: `Rscript -e 'devtools::load_all(); devtools::test(filter = "plda-cv")'`
 
 ```r
 # Default data-driven log-spaced lambda grid.
+# The `hi` upper bound is the largest standardized between-class mean across
+# features (corrected: the prior version used colMeans of a centred matrix,
+# which is identically zero, collapsing the grid to [1e-11, 1e-8]).
 .plda_lambda_grid <- function(x, yint, G, n = 12L) {
   S <- plda_wcsd_cpp(x, yint, G)
   S[S < 1e-12] <- 1
-  xs <- scale(x, center = TRUE, scale = FALSE) %*% diag(1 / S)
-  hi <- max(abs(colMeans(xs))) + 1e-8
+  # standardize: centre by global mean, scale by within-class sd
+  xs <- scale(x, center = TRUE, scale = S)
+  # per-class means in standardized space (rows = classes)
+  cm <- t(vapply(seq_len(G),
+                 function(g) colMeans(xs[yint == g, , drop = FALSE]),
+                 numeric(ncol(x))))
+  # upper lambda: largest standardized between-class signal across features
+  hi <- max(abs(cm)) + 1e-8
   exp(seq(log(hi * 1e-3), log(hi), length.out = n))
 }
 

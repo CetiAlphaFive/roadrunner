@@ -16,3 +16,20 @@ test_that("plda autotune fit predicts iris well", {
   acc <- mean(predict(fit, iris) == iris$Species)
   expect_gt(acc, 0.9)
 })
+
+test_that(".plda_cv does not modify the caller RNG stream", {
+  set.seed(42); ref <- runif(1)
+  set.seed(42)
+  roadrunner:::.plda_cv(as.matrix(iris[, 1:4]), as.integer(iris$Species),
+                        G = 3L, K = 2L, penalty = "L1", pen_code = 0L, lam2 = 0,
+                        nfold = 3L, lambda_grid = NULL, maxit = 50L, tol = 1e-4)
+  expect_equal(runif(1), ref)
+})
+
+test_that(".plda_lambda_grid spans a real data-driven range", {
+  g <- roadrunner:::.plda_lambda_grid(as.matrix(iris[, 1:4]),
+                                      as.integer(iris$Species), G = 3L)
+  expect_length(g, 12L)
+  expect_gt(max(g), 0.1)          # not the old collapsed 1e-8 grid
+  expect_true(all(diff(g) > 0))   # ascending
+})

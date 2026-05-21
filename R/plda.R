@@ -55,6 +55,14 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   lam2 <- if (is.null(lambda2)) 0 else lambda2
   pen_code <- if (penalty == "fused") 1L else 0L
 
+  # Validate nfold
+  nfold <- as.integer(nfold)
+  if (is.na(nfold) || nfold < 2L)
+    stop("plda: `nfold` must be an integer >= 2.", call. = FALSE)
+  if (nfold > nrow(x))
+    stop(sprintf("plda: `nfold` (%d) cannot exceed nrow(x) (%d).", nfold, nrow(x)),
+         call. = FALSE)
+
   # Validate lambda2 / warn if irrelevant
   if (penalty == "L1" && !is.null(lambda2) && lambda2 != 0) {
     warning("plda: `lambda2` is ignored when `penalty = 'L1'`.", call. = FALSE)
@@ -86,17 +94,26 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
             class = "plda")
 }
 
-# @keywords internal
+#' @keywords internal
+#' @noRd
 # Default data-driven log-spaced lambda grid.
+# `hi` is the largest standardized between-class mean across features.
 .plda_lambda_grid <- function(x, yint, G, n = 12L) {
   S <- plda_wcsd_cpp(x, yint, G)
   S[S < 1e-12] <- 1
-  xs <- scale(x, center = TRUE, scale = FALSE) %*% diag(1 / S)
-  hi <- max(abs(colMeans(xs))) + 1e-8
+  # standardize: centre by global mean, scale by within-class sd
+  xs <- scale(x, center = TRUE, scale = S)
+  # per-class means in standardized space (rows = classes)
+  cm <- t(vapply(seq_len(G),
+                 function(g) colMeans(xs[yint == g, , drop = FALSE]),
+                 numeric(ncol(x))))
+  # upper lambda: largest standardized between-class signal across features
+  hi <- max(abs(cm)) + 1e-8
   exp(seq(log(hi * 1e-3), log(hi), length.out = n))
 }
 
-# @keywords internal
+#' @keywords internal
+#' @noRd
 # k-fold CV over (lambda grid) x (1..K); picks the lambda/K with lowest mean
 # misclassification error. Saves and restores the global RNG state so the
 # caller's random-number stream is unaffected (same pattern as .ares_autotune
