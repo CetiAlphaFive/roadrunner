@@ -23,7 +23,7 @@ plda(x, ...)
   ...
 )
 
-\method{plda}{formula}(formula, data, ...)
+\method{plda}{formula}(formula, data = NULL, ...)
 }
 \arguments{
 \item{x}{Numeric predictor matrix, or a formula for the formula interface.}
@@ -49,6 +49,10 @@ plda(x, ...)
 \item{maxit}{MM solver maximum iterations.}
 
 \item{tol}{MM solver convergence tolerance.}
+
+\item{formula}{A model formula; response on the left, predictors on the right.}
+
+\item{data}{A data frame (or environment) containing the formula variables.}
 }
 \value{
 An object of S3 class \code{"plda"}.

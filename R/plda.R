@@ -30,7 +30,11 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   penalty <- match.arg(penalty)
   x <- as.matrix(x)
   if (!is.numeric(x)) stop("plda: `x` must be numeric.", call. = FALSE)
+  if (anyNA(x)) stop("plda: `x` contains missing values (NA). Remove or impute before fitting.", call. = FALSE)
+  if (ncol(x) < 1L) stop("plda: `x` must have at least one column.", call. = FALSE)
   y <- as.factor(y)
+  if (anyNA(y))
+    stop("plda: `y` contains missing class labels (NA). Remove rows with missing labels before fitting.", call. = FALSE)
   if (nrow(x) != length(y)) stop("plda: nrow(x) must equal length(y).", call. = FALSE)
   classes <- levels(y)
   G <- length(classes)
@@ -42,6 +46,15 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   lam2 <- if (is.null(lambda2)) 0 else lambda2
   pen_code <- if (penalty == "fused") 1L else 0L
 
+  # Validate lambda2 / warn if irrelevant
+  if (penalty == "L1" && !is.null(lambda2) && lambda2 != 0) {
+    warning("plda: `lambda2` is ignored when `penalty = 'L1'`.", call. = FALSE)
+  }
+  if (penalty == "fused") {
+    if (!is.numeric(lam2) || length(lam2) != 1L || !is.finite(lam2) || lam2 < 0)
+      stop("plda: `lambda2` must be a single non-negative finite number when `penalty = 'fused'`.", call. = FALSE)
+  }
+
   if (autotune) {
     cv <- .plda_cv(x, yint, G, K, penalty, pen_code, lam2, nfold,
                    lambda_grid, maxit, tol)
@@ -51,6 +64,9 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   } else {
     cv <- NULL
   }
+
+  if (!is.numeric(lambda) || length(lambda) != 1L || !is.finite(lambda) || lambda <= 0)
+    stop("plda: `lambda` must be a single positive finite number.", call. = FALSE)
 
   eng <- plda_fit_cpp(x, yint, G, K, lambda, lam2, pen_code,
                       as.integer(maxit), tol)
@@ -64,9 +80,12 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
 # Temporary stub — replaced by Task 12 (autotune CV).
 .plda_cv <- function(...) list(lambda = 0.1, K = 1L, grid = NULL)
 
+#' @param formula A model formula; response on the left, predictors on the right.
+#' @param data A data frame (or environment) containing the formula variables.
 #' @rdname plda
 #' @export
-plda.formula <- function(formula, data, ...) {
+plda.formula <- function(formula, data = NULL, ...) {
+  if (is.null(data)) data <- environment(formula)
   mf <- model.frame(formula, data)
   y <- model.response(mf)
   x <- model.matrix(attr(mf, "terms"), mf)
