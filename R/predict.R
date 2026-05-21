@@ -382,6 +382,43 @@ predict.ares <- function(object, newdata = NULL,
   yhat
 }
 
+#' Predict from a penalized LDA fit
+#'
+#' @param object A `"plda"` object.
+#' @param newdata Numeric matrix or data.frame of predictors.
+#' @param type `"class"` (default), `"posterior"`, or `"projection"`.
+#' @param ... Unused.
+#' @return Factor of class labels, posterior probability matrix, or projection matrix.
+#' @export
+predict.plda <- function(object, newdata,
+                         type = c("class", "posterior", "projection"), ...) {
+  type <- match.arg(type)
+  if (!is.null(object$terms)) {
+    Terms <- stats::delete.response(object$terms)
+    mf <- stats::model.frame(Terms, as.data.frame(newdata),
+                             xlev = object$xlevels)
+    x <- stats::model.matrix(Terms, mf)
+    icpt <- match("(Intercept)", colnames(x), nomatch = 0L)
+    if (icpt > 0L) x <- x[, -icpt, drop = FALSE]
+  } else {
+    x <- as.matrix(newdata)
+  }
+  scores  <- plda_project_cpp(x, object$mu, object$sdw, object$discrim)
+  cscores <- object$cmeans %*% object$discrim   # G x K centroid projections
+  if (type == "projection") return(scores)
+  d2 <- outer(rowSums(scores^2), rowSums(cscores^2), `+`) -
+        2 * scores %*% t(cscores)
+  if (type == "posterior") {
+    m <- d2 - apply(d2, 1L, min)
+    e <- exp(-0.5 * m)
+    p <- e / rowSums(e)
+    colnames(p) <- object$classes
+    return(p)
+  }
+  factor(object$classes[max.col(-d2, ties.method = "first")],
+         levels = object$classes)
+}
+
 # Tiny null-coalescing operator (mirrors the one in ares.R).
 `%||%` <- function(a, b) if (is.null(a)) b else a
 

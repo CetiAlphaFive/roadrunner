@@ -51,3 +51,18 @@ test_that("plda.formula works when data is omitted and vars are in calling env",
   f <- plda(y_local ~ x_local, lambda = 0.1, autotune = FALSE)
   expect_s3_class(f, "plda")
 })
+
+test_that("predict.plda returns class / posterior / projection", {
+  set.seed(11)
+  x <- as.matrix(iris[, 1:4]); y <- iris$Species
+  fit <- plda(x, y, K = 2, lambda = 0.05, autotune = FALSE)
+  cl <- predict(fit, x)
+  expect_s3_class(cl, "factor")
+  expect_equal(levels(cl), levels(y))
+  expect_gt(mean(cl == y), 0.9)
+  po <- predict(fit, x, type = "posterior")
+  expect_equal(dim(po), c(150L, 3L))
+  expect_equal(unname(rowSums(po)), rep(1, 150), tolerance = 1e-8)
+  pr <- predict(fit, x, type = "projection")
+  expect_equal(dim(pr), c(150L, 2L))
+})

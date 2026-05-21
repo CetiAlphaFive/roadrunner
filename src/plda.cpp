@@ -166,3 +166,14 @@ List plda_fit_cpp(const arma::mat& x, const arma::ivec& y, int G, int K,
   return List::create(_["discrim"] = discrim, _["mu"] = S.mu,
                       _["sdw"] = S.sdw, _["cmeans"] = M, _["cw"] = w);
 }
+
+// Project new data onto stored discriminant vectors after standardizing
+// with the training mu/sdw. Returns an m x K score matrix.
+// [[Rcpp::export]]
+arma::mat plda_project_cpp(const arma::mat& xnew, const arma::rowvec& mu,
+                           const arma::vec& sdw, const arma::mat& discrim) {
+  arma::mat xs = xnew;
+  xs.each_row() -= mu;
+  xs.each_row() /= sdw.t();
+  return xs * discrim;
+}

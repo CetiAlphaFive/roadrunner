@@ -93,3 +93,7 @@ plda_fit_cpp <- function(x, y, G, K, lambda, lambda2, penalty, maxit, tol) {
     .Call(`_roadrunner_plda_fit_cpp`, x, y, G, K, lambda, lambda2, penalty, maxit, tol)
 }
 
+plda_project_cpp <- function(xnew, mu, sdw, discrim) {
+    .Call(`_roadrunner_plda_project_cpp`, xnew, mu, sdw, discrim)
+}
+

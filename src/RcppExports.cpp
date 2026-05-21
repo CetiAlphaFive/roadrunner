@@ -382,6 +382,20 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// plda_project_cpp
+arma::mat plda_project_cpp(const arma::mat& xnew, const arma::rowvec& mu, const arma::vec& sdw, const arma::mat& discrim);
+RcppExport SEXP _roadrunner_plda_project_cpp(SEXP xnewSEXP, SEXP muSEXP, SEXP sdwSEXP, SEXP discrimSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type xnew(xnewSEXP);
+    Rcpp::traits::input_parameter< const arma::rowvec& >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type sdw(sdwSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type discrim(discrimSEXP);
+    rcpp_result_gen = Rcpp::wrap(plda_project_cpp(xnew, mu, sdw, discrim));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
@@ -407,6 +421,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
     {"_roadrunner_plda_softthresh_cpp", (DL_FUNC) &_roadrunner_plda_softthresh_cpp, 2},
     {"_roadrunner_plda_fit_cpp", (DL_FUNC) &_roadrunner_plda_fit_cpp, 9},
+    {"_roadrunner_plda_project_cpp", (DL_FUNC) &_roadrunner_plda_project_cpp, 4},
     {NULL, NULL, 0}
 };
 
