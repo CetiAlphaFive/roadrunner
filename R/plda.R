@@ -28,10 +28,6 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
                          autotune = TRUE, nfold = 5L, lambda_grid = NULL,
                          maxit = 100L, tol = 1e-6, ...) {
   penalty <- match.arg(penalty)
-  # TEMPORARY (remove when the fused-lasso tv1d engine lands): the fused penalty
-  # is not wired up yet — fail loud rather than return silently-wrong discriminants.
-  if (penalty == "fused")
-    stop("plda: penalty = 'fused' is not yet implemented.", call. = FALSE)
   x <- as.matrix(x)
   if (!is.numeric(x)) stop("plda: `x` must be numeric.", call. = FALSE)
   if (anyNA(x)) stop("plda: `x` contains missing values (NA). Remove or impute before fitting.", call. = FALSE)
