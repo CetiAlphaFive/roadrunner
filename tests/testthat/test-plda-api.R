@@ -60,6 +60,13 @@ test_that("plda print and summary work", {
   expect_output(print(s), "nonzero")
 })
 
+test_that("predict.plda errors on matrix newdata with wrong column count", {
+  fit <- plda(as.matrix(iris[, 1:4]), iris$Species,
+              K = 2, lambda = 0.1, autotune = FALSE)
+  bad <- as.matrix(iris[, 1:3])
+  expect_snapshot(error = TRUE, predict(fit, bad))
+})
+
 test_that("predict.plda returns class / posterior / projection", {
   set.seed(11)
   x <- as.matrix(iris[, 1:4]); y <- iris$Species

@@ -9,15 +9,24 @@
 \arguments{
 \item{object}{A \code{"plda"} object.}
 
-\item{newdata}{Numeric matrix or data.frame of predictors.}
+\item{newdata}{Numeric matrix or data frame of predictors. For
+formula-trained fits, \code{newdata} must be a data frame or a named
+matrix with the original predictor columns (matching the behavior
+of \code{predict.krls_rr}).}
 
 \item{type}{\code{"class"} (default), \code{"posterior"}, or \code{"projection"}.}
 
 \item{...}{Unused.}
 }
 \value{
-Factor of class labels, posterior probability matrix, or projection matrix.
+Factor of class labels, posterior probability matrix, or
+projection matrix (with columns named \code{"Discriminant 1"},
+\code{"Discriminant 2"}, etc.) when \code{type = "projection"}.
 }
 \description{
 Predict from a penalized LDA fit
+}
+\examples{
+fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+predict(fit, iris)
 }

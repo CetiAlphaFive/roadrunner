@@ -21,3 +21,9 @@ Invisibly returns \code{x}.
 \description{
 Projection plot for \code{plda} fits
 }
+\examples{
+\dontrun{
+  fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+  plot(fit, data = iris[, 1:4])
+}
+}

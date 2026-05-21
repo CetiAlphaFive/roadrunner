@@ -18,7 +18,15 @@
 }
 \value{
 An object of class \code{"summary.plda"}.
+
+Invisibly returns \code{x}.
 }
 \description{
 Summary method for \code{plda} fits
+}
+\examples{
+fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+summary(fit)
+fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+print(summary(fit))
 }

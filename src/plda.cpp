@@ -114,6 +114,8 @@ static arma::vec mm_discriminant(const arma::mat& B, const arma::mat& Pmat,
     if (converged || arma::accu(arma::abs(beta)) == 0.0) break;
     arma::vec tmp = BtPB * beta;
     arma::vec prox;
+    // penalizedLDA scales the L1 threshold by d/2, where d is the leading squared
+    // singular value of the projected between-class root-scatter matrix.
     if (penalty == 0) prox = soft_threshold(tmp, d * lambda / 2.0);
     else              prox = soft_threshold(tv1d(tmp, d * lambda2 / 2.0),
                                             d * lambda / 2.0);

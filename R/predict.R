@@ -385,11 +385,18 @@ predict.ares <- function(object, newdata = NULL,
 #' Predict from a penalized LDA fit
 #'
 #' @param object A `"plda"` object.
-#' @param newdata Numeric matrix or data.frame of predictors.
+#' @param newdata Numeric matrix or data frame of predictors. For
+#'   formula-trained fits, `newdata` must be a data frame or a named
+#'   matrix with the original predictor columns (matching the behavior
+#'   of `predict.krls_rr`).
 #' @param type `"class"` (default), `"posterior"`, or `"projection"`.
 #' @param ... Unused.
 #' @return Factor of class labels, posterior probability matrix, or
-#'   projection matrix.
+#'   projection matrix (with columns named `"Discriminant 1"`,
+#'   `"Discriminant 2"`, etc.) when `type = "projection"`.
+#' @examples
+#' fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+#' predict(fit, iris)
 #' @export
 predict.plda <- function(object, newdata,
                          type = c("class", "posterior", "projection"), ...) {
@@ -403,8 +410,12 @@ predict.plda <- function(object, newdata,
     if (icpt > 0L) x <- x[, -icpt, drop = FALSE]
   } else {
     x <- as.matrix(newdata)
+    if (ncol(x) != nrow(object$discrim))
+      stop(sprintf("plda: newdata has %d column(s); model expects %d.",
+                   ncol(x), nrow(object$discrim)), call. = FALSE)
   }
   scores  <- plda_project_cpp(x, object$mu, object$sdw, object$discrim)
+  colnames(scores) <- paste0("Discriminant ", seq_len(ncol(scores)))
   cscores <- object$cmeans %*% object$discrim   # G x K centroid projections
   if (type == "projection") return(scores)
   d2 <- outer(rowSums(scores^2), rowSums(cscores^2), `+`) -

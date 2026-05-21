@@ -403,6 +403,9 @@ plot.ares <- function(x,
 #' @param x A `"plda"` object.
 #' @param ... Currently ignored.
 #' @return Invisibly returns `x`.
+#' @examples
+#' fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+#' print(fit)
 #' @export
 print.plda <- function(x, ...) {
   cat("Penalized LDA (", x$penalty, " penalty)\n", sep = "")
@@ -421,6 +424,9 @@ print.plda <- function(x, ...) {
 #' @param object A `"plda"` object.
 #' @param ... Currently ignored.
 #' @return An object of class `"summary.plda"`.
+#' @examples
+#' fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+#' summary(fit)
 #' @export
 summary.plda <- function(object, ...) {
   nz <- colSums(abs(object$discrim) > 0)
@@ -437,6 +443,10 @@ summary.plda <- function(object, ...) {
 
 #' @rdname summary.plda
 #' @param x A `summary.plda` object.
+#' @return Invisibly returns `x`.
+#' @examples
+#' fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+#' print(summary(fit))
 #' @export
 print.summary.plda <- function(x, ...) {
   cat("Penalized LDA summary\n")
@@ -458,6 +468,11 @@ print.summary.plda <- function(x, ...) {
 #' @param labels Optional class label vector for colouring points.
 #' @param ... Further graphical parameters passed to [graphics::plot()].
 #' @return Invisibly returns `x`.
+#' @examples
+#' \dontrun{
+#'   fit <- plda(Species ~ ., data = iris, lambda = 0.1, autotune = FALSE)
+#'   plot(fit, data = iris[, 1:4])
+#' }
 #' @export
 plot.plda <- function(x, data = NULL, labels = NULL, ...) {
   if (is.null(data))
