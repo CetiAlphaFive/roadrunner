@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9053</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9054</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,18 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9054" id="roadrunner-0009054">roadrunner 0.0.0.9054<a class="anchor" aria-label="anchor" href="#roadrunner-0009054"></a></h2>
+<div class="section level3">
+<h3 id="meep--ols-and-logreg-are-now-default-learners-0-0-0-9054">meep() — ols() and logreg() are now default learners<a class="anchor" aria-label="anchor" href="#meep--ols-and-logreg-are-now-default-learners-0-0-0-9054"></a></h3>
+<p><code><a href="../reference/meep.html">meep()</a></code>’s default <code>learners</code> is now <code>c("ares", "krls", "ols", "logreg")</code> (previously <code>c("ares", "krls")</code>). The two linear learners are applied <em>per nuisance by family</em>: <code>ols</code> is fitted only for gaussian (continuous) nuisances and <code>logreg</code> only for binomial (binary) ones, while <code>ares</code> and <code>krls</code> remain family-agnostic and apply everywhere.</p>
+<ul><li>Because the Y-model and the D-model can differ in family, applicability is resolved per nuisance. A gaussian outcome with a binary treatment fits <code>ols</code> for <code>outcome</code>/<code>mu0</code>/<code>mu1</code> and <code>logreg</code> for <code>treatment</code>.</li>
+<li>A learner that does not apply to a nuisance is skipped cleanly: its OOF column stays all-<code>NA</code> (the ensemble already excludes all-<code>NA</code> columns) and it is <em>not</em> recorded as a fold failure.</li>
+<li>Narrowing <code>learners</code> to names that are all family-incompatible with a nuisance (for example <code>learners = "ols"</code> with a binary outcome) is now an error naming the nuisance, its family, and the cause.</li>
+<li>Custom list-learners are never family-filtered.</li>
+</ul><p><strong>This changes default <code><a href="../reference/meep.html">meep()</a></code> output</strong>: the default OOF prediction matrices now carry <code>ols</code>/<code>logreg</code> columns and the ensemble weights are recomputed over the larger learner set.</p>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9053" id="roadrunner-0009053">roadrunner 0.0.0.9053<a class="anchor" aria-label="anchor" href="#roadrunner-0009053"></a></h2>
 <div class="section level3">

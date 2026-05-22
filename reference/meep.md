@@ -19,7 +19,7 @@ meep(
   y,
   treatment = NULL,
   folds = 5L,
-  learners = c("ares", "krls"),
+  learners = c("ares", "krls", "ols", "logreg"),
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -61,10 +61,18 @@ meep(
 - learners:
 
   Character subset of `c("ares", "krls", "ols", "logreg")`, or a named
-  list of adapter closures (extensibility hook). The default is
-  `c("ares", "krls")`. `"ols"` (gaussian) and `"logreg"` (binomial) are
-  opt-in unregularized linear learners with no hyperparameters, so
-  `tune` is a no-op for them (plain refit per fold).
+  list of adapter closures (extensibility hook). The default is all
+  four: `c("ares", "krls", "ols", "logreg")`. `ares` and `krls` are
+  family-agnostic and apply to every nuisance. `"ols"` and `"logreg"`
+  are unregularized linear learners with no hyperparameters (so `tune`
+  is a no-op for them – a plain refit per fold); they are applied *per
+  nuisance by family*, `ols` for gaussian (continuous) targets and
+  `logreg` for binomial (binary) ones. A learner that does not apply to
+  a nuisance is skipped, leaving an all-`NA` OOF column that the
+  ensemble excludes; it is not counted as a fold failure. Narrowing
+  `learners` to names that are all family-incompatible with a nuisance
+  (for example `learners = "ols"` with a binary outcome) is an error.
+  Custom list-learners are never family-filtered.
 
 - ensemble:
 
@@ -166,6 +174,16 @@ via logistic regression, a continuous treatment via gaussian regression.
 A treatment with three or more distinct values is rejected (multi-valued
 / continuous-treatment IRM is out of scope).
 
+The family also governs which default learners are fitted for each
+nuisance. `ares` and `krls` are family-agnostic and always apply. `ols`
+is fitted only for gaussian (continuous) nuisances and `logreg` only for
+binomial (binary) nuisances. Because the Y-model and the D-model can
+differ in family, applicability is resolved *per nuisance*: a gaussian
+outcome with a binary treatment fits `ols` for `outcome`/`mu0`/`mu1` and
+`logreg` for `treatment`. A learner that does not apply to a nuisance is
+simply skipped – its OOF column stays all-`NA` and it is *not* recorded
+as a fold failure.
+
 ## Tuning (`tune`)
 
 - `"once"` (default) – autotune each learner on the full data, freeze
@@ -221,16 +239,16 @@ fit
 #> 
 #>   n = 800,  p = 5
 #>   folds: 5-fold cross-fitting
-#>   learners: ares, krls
+#>   learners: ares, krls, ols, logreg
 #>   outcome family: gaussian  |  treatment family: gaussian
 #>   ensemble: stack  |  tune: once
 #> 
 #> Ensemble weights:
-#>   outcome  : ares=0.317  krls=0.683
-#>   treatment: ares=0.704  krls=0.296
+#>   outcome  : ares=0.213  krls=0.066  ols=0.720  logreg=0.000
+#>   treatment: ares=0.704  krls=0.296  ols=0.000  logreg=0.000
 #> 
 #> OOF loss (per nuisance, ensemble):
-#>   outcome  : mse = 0.3804
+#>   outcome  : mse = 0.378
 #>   treatment: mse = 0.09565
 # Hand the honest OOF nuisances to a causal forest:
 # grf::causal_forest(X, Y, D, Y.hat = fit$y_hat_oof, W.hat = fit$d_hat_oof)
