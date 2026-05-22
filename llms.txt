@@ -4,7 +4,7 @@ Fast, low-dependency machine learning algorithms in R. Useful for causal
 plug-ins (e.g., nuisance fits in DML) or simple predictive applications.
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Three core fitters today:
+with thin, base-R-style interfaces. Five core fitters today:
 
 - **[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)**
   – Multivariate Adaptive Regression Splines (MARS).
@@ -12,6 +12,10 @@ with thin, base-R-style interfaces. Three core fitters today:
   – Kernel Regularized Least Squares (KRLS).
 - **[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)**
   – Penalized Linear Discriminant Analysis (L1 / fused-lasso).
+- **[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)**
+  – Ordinary and weighted least squares with HC robust SEs.
+- **[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)**
+  – Binary logistic regression by IRLS with HC robust SEs.
 
 Plus
 **[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)**
@@ -153,6 +157,30 @@ fit <- plda(Species ~ ., data = iris)
 predict(fit, iris)        # factor of predicted Species
 ```
 
+### Linear models via `ols()` and `logreg()`
+
+[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)
+fits ordinary and weighted least squares;
+[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)
+fits binary logistic regression by IRLS. Both have C++ engines,
+classical and HC0-HC3 robust standard errors, optional bagging, and the
+standard formula and matrix interfaces.
+
+``` r
+
+fit <- ols(mpg ~ wt + hp, data = mtcars)
+summary(fit, robust = "HC3")            # HC3 robust standard errors
+predict(fit, mtcars[1:3, ], interval = "confidence")
+
+df  <- data.frame(am = mtcars$am, mtcars[c("wt", "hp")])
+lr  <- logreg(am ~ wt + hp, data = df)
+predict(lr, df[1:3, ], type = "response")
+```
+
+Both also slot into
+[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+as opt-in learners (`learners = c("ols", "logreg")`).
+
 ## References
 
 - Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
@@ -269,6 +297,64 @@ L1 and fused-lasso penalties, multi-class, and CV autotune.
   :
 
   Projection plot for `plda` fits
+
+## Linear models: ols()
+
+Ordinary and weighted least squares with classical and HC robust
+standard errors, bagging, and prediction intervals.
+
+- [`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)
+  : Ordinary and weighted least squares
+
+- [`predict(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.ols.md)
+  :
+
+  Predictions from an `ols` fit
+
+- [`print(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.ols.md)
+  :
+
+  Print method for `ols` fits
+
+- [`summary(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.ols.md)
+  [`print(`*`<summary.ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.ols.md)
+  :
+
+  Summary method for `ols` fits
+
+- [`plot(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.ols.md)
+  :
+
+  Diagnostic plots for an `ols` fit
+
+## Logistic regression: logreg()
+
+Binary logistic regression by IRLS with classical and HC robust standard
+errors and bagging.
+
+- [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)
+  : Binary logistic regression
+
+- [`predict(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.logreg.md)
+  :
+
+  Predictions from a `logreg` fit
+
+- [`print(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.logreg.md)
+  :
+
+  Print method for `logreg` fits
+
+- [`summary(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.logreg.md)
+  [`print(`*`<summary.logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.logreg.md)
+  :
+
+  Summary method for `logreg` fits
+
+- [`plot(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.logreg.md)
+  :
+
+  Diagnostic plots for a `logreg` fit
 
 ## Package
 

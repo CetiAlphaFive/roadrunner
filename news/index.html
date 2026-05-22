@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9052</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9053</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,27 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9053" id="roadrunner-0009053">roadrunner 0.0.0.9053<a class="anchor" aria-label="anchor" href="#roadrunner-0009053"></a></h2>
+<div class="section level3">
+<h3 id="ols-and-logreg--unregularized-linear-fitters-0-0-0-9053">ols() and logreg() — unregularized linear fitters<a class="anchor" aria-label="anchor" href="#ols-and-logreg--unregularized-linear-fitters-0-0-0-9053"></a></h3>
+<p>Two new user-facing functions, <code><a href="../reference/ols.html">ols()</a></code> and <code><a href="../reference/logreg.html">logreg()</a></code>: fast, low-dependency unregularized linear fitters with C++ (Rcpp/Armadillo) engines, classical and HC robust standard errors, and the package’s standard base-R-style API.</p>
+<ul><li>
+<strong><code>ols(x, y, weights, n.boot, varmod, ...)</code></strong> — ordinary and weighted least squares via a weighted economy-QR solve. Matrix and formula interfaces. Returns an S3 object of class <code>"ols"</code>. A rank-deficient design matrix is rejected with a clear error rather than silently dropping columns.</li>
+<li>
+<strong><code>logreg(x, y, weights, n.boot, ...)</code></strong> — binary logistic regression by iteratively reweighted least squares (Fisher scoring). Matrix and formula interfaces; accepts a 0/1 numeric, logical, or two-level-factor response. Returns an S3 object of class <code>"logreg"</code>. Non-convergence (the signature of quasi-complete separation) is reported with a warning.</li>
+<li>
+<strong>Robust SEs</strong> — classical and HC0–HC3 sandwich covariances; surfaced in <code><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary()</a></code> and <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> via a <code>robust</code> argument.</li>
+<li>
+<strong>Bagging</strong> — <code>n.boot &gt; 0</code> refits on bootstrap-weight resamples; bagged <code><a href="https://rdrr.io/r/stats/predict.html" class="external-link">predict()</a></code> returns the bag mean. Serial loop, deterministic across thread counts.</li>
+<li>
+<strong>Prediction intervals</strong> — <code><a href="../reference/ols.html">ols()</a></code> supports <code>varmod = "const" | "lm"</code> for heteroskedastic gaussian prediction intervals (shared <code><a href="../reference/ares.html">ares()</a></code> variance-model helper).</li>
+<li>
+<strong>S3 methods</strong> — <code>predict</code>, <code>print</code>, <code>summary</code>, <code>plot</code> for both classes.</li>
+<li>
+<strong><code><a href="../reference/meep.html">meep()</a></code> integration</strong> — <code>"ols"</code> and <code>"logreg"</code> are opt-in <code><a href="../reference/meep.html">meep()</a></code> learners (<code>ols</code> = gaussian, <code>logreg</code> = binomial). The default <code>learners</code> stays <code>c("ares", "krls")</code>. Having no hyperparameters, <code>tune</code> is a no-op for them: every cross-fitting fold is a plain refit.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9052" id="roadrunner-0009052">roadrunner 0.0.0.9052<a class="anchor" aria-label="anchor" href="#roadrunner-0009052"></a></h2>
 <div class="section level3">

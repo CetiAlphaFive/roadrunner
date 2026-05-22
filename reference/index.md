@@ -99,6 +99,64 @@ L1 and fused-lasso penalties, multi-class, and CV autotune.
 
   Projection plot for `plda` fits
 
+## Linear models: ols()
+
+Ordinary and weighted least squares with classical and HC robust
+standard errors, bagging, and prediction intervals.
+
+- [`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)
+  : Ordinary and weighted least squares
+
+- [`predict(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.ols.md)
+  :
+
+  Predictions from an `ols` fit
+
+- [`print(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.ols.md)
+  :
+
+  Print method for `ols` fits
+
+- [`summary(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.ols.md)
+  [`print(`*`<summary.ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.ols.md)
+  :
+
+  Summary method for `ols` fits
+
+- [`plot(`*`<ols>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.ols.md)
+  :
+
+  Diagnostic plots for an `ols` fit
+
+## Logistic regression: logreg()
+
+Binary logistic regression by IRLS with classical and HC robust standard
+errors and bagging.
+
+- [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)
+  : Binary logistic regression
+
+- [`predict(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.logreg.md)
+  :
+
+  Predictions from a `logreg` fit
+
+- [`print(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.logreg.md)
+  :
+
+  Print method for `logreg` fits
+
+- [`summary(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.logreg.md)
+  [`print(`*`<summary.logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.logreg.md)
+  :
+
+  Summary method for `logreg` fits
+
+- [`plot(`*`<logreg>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.logreg.md)
+  :
+
+  Diagnostic plots for a `logreg` fit
+
 ## Package
 
 - [`roadrunner`](https://cetialphafive.github.io/roadrunner/reference/roadrunner-package.md)

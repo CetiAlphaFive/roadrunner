@@ -30,6 +30,8 @@ meep(
   seed = NULL,
   ares_args = list(),
   krls_args = list(),
+  ols_args = list(),
+  logreg_args = list(),
   verbose = FALSE,
   ...
 )
@@ -58,8 +60,11 @@ meep(
 
 - learners:
 
-  Character subset of `c("ares", "krls")`, or a named list of adapter
-  closures (extensibility hook).
+  Character subset of `c("ares", "krls", "ols", "logreg")`, or a named
+  list of adapter closures (extensibility hook). The default is
+  `c("ares", "krls")`. `"ols"` (gaussian) and `"logreg"` (binomial) are
+  opt-in unregularized linear learners with no hyperparameters, so
+  `tune` is a no-op for them (plain refit per fold).
 
 - ensemble:
 
@@ -110,6 +115,18 @@ meep(
   A named list of extra arguments spliced into every
   [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   call.
+
+- ols_args:
+
+  A named list of extra arguments spliced into every
+  [`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)
+  call (only relevant when `"ols"` is among `learners`).
+
+- logreg_args:
+
+  A named list of extra arguments spliced into every
+  [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)
+  call (only relevant when `"logreg"` is among `learners`).
 
 - verbose:
 

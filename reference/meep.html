@@ -21,7 +21,7 @@ supplied) \(\hat E[D\mid X]\), plus the residuals \(Y-\hat Y\) and
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9052</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9053</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -76,6 +76,8 @@ supplied) \(\hat E[D\mid X]\), plus the residuals \(Y-\hat Y\) and
 <span>  seed <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  ares_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  krls_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  ols_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  logreg_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  verbose <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
@@ -105,8 +107,11 @@ length-n integer vector of fold ids that is honored verbatim.</p></dd>
 
 
 <dt id="arg-learners">learners<a class="anchor" aria-label="anchor" href="#arg-learners"></a></dt>
-<dd><p>Character subset of <code>c("ares", "krls")</code>, or a named
-list of adapter closures (extensibility hook).</p></dd>
+<dd><p>Character subset of <code>c("ares", "krls", "ols", "logreg")</code>, or a named list of adapter closures (extensibility
+hook). The default is <code>c("ares", "krls")</code>. <code>"ols"</code> (gaussian) and
+<code>"logreg"</code> (binomial) are opt-in unregularized linear learners with
+no hyperparameters, so <code>tune</code> is a no-op for them (plain refit per
+fold).</p></dd>
 
 
 <dt id="arg-ensemble">ensemble<a class="anchor" aria-label="anchor" href="#arg-ensemble"></a></dt>
@@ -157,6 +162,17 @@ fit and into the NNLS stacking objective.</p></dd>
 <dt id="arg-krls-args">krls_args<a class="anchor" aria-label="anchor" href="#arg-krls-args"></a></dt>
 <dd><p>A named list of extra arguments spliced into every
 <code><a href="krls.html">krls()</a></code> call.</p></dd>
+
+
+<dt id="arg-ols-args">ols_args<a class="anchor" aria-label="anchor" href="#arg-ols-args"></a></dt>
+<dd><p>A named list of extra arguments spliced into every
+<code><a href="ols.html">ols()</a></code> call (only relevant when <code>"ols"</code> is among <code>learners</code>).</p></dd>
+
+
+<dt id="arg-logreg-args">logreg_args<a class="anchor" aria-label="anchor" href="#arg-logreg-args"></a></dt>
+<dd><p>A named list of extra arguments spliced into every
+<code><a href="logreg.html">logreg()</a></code> call (only relevant when <code>"logreg"</code> is among
+<code>learners</code>).</p></dd>
 
 
 <dt id="arg-verbose">verbose<a class="anchor" aria-label="anchor" href="#arg-verbose"></a></dt>
