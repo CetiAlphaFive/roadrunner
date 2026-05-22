@@ -81,6 +81,14 @@ krls_logistic_loo_loss_cpp <- function(eta, y, p, W, H_diag) {
     .Call(`_roadrunner_krls_logistic_loo_loss_cpp`, eta, y, p, W, H_diag)
 }
 
+ols_fit_cpp <- function(X, y, w) {
+    .Call(`_roadrunner_ols_fit_cpp`, X, y, w)
+}
+
+ols_vcov_cpp <- function(X, w, resid, XtXinv, hatdiag, sigma2, type) {
+    .Call(`_roadrunner_ols_vcov_cpp`, X, w, resid, XtXinv, hatdiag, sigma2, type)
+}
+
 plda_wcsd_cpp <- function(x, y, G) {
     .Call(`_roadrunner_plda_wcsd_cpp`, x, y, G)
 }

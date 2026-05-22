@@ -338,6 +338,36 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// ols_fit_cpp
+Rcpp::List ols_fit_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& w);
+RcppExport SEXP _roadrunner_ols_fit_cpp(SEXP XSEXP, SEXP ySEXP, SEXP wSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type w(wSEXP);
+    rcpp_result_gen = Rcpp::wrap(ols_fit_cpp(X, y, w));
+    return rcpp_result_gen;
+END_RCPP
+}
+// ols_vcov_cpp
+arma::mat ols_vcov_cpp(const arma::mat& X, const arma::vec& w, const arma::vec& resid, const arma::mat& XtXinv, const arma::vec& hatdiag, double sigma2, int type);
+RcppExport SEXP _roadrunner_ols_vcov_cpp(SEXP XSEXP, SEXP wSEXP, SEXP residSEXP, SEXP XtXinvSEXP, SEXP hatdiagSEXP, SEXP sigma2SEXP, SEXP typeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type w(wSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type resid(residSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type XtXinv(XtXinvSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type hatdiag(hatdiagSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma2(sigma2SEXP);
+    Rcpp::traits::input_parameter< int >::type type(typeSEXP);
+    rcpp_result_gen = Rcpp::wrap(ols_vcov_cpp(X, w, resid, XtXinv, hatdiag, sigma2, type));
+    return rcpp_result_gen;
+END_RCPP
+}
 // plda_wcsd_cpp
 Rcpp::NumericVector plda_wcsd_cpp(const arma::mat& x, const arma::ivec& y, int G);
 RcppExport SEXP _roadrunner_plda_wcsd_cpp(SEXP xSEXP, SEXP ySEXP, SEXP GSEXP) {
@@ -452,6 +482,8 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_nystrom_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_autotune_inner_cpp, 9},
     {"_roadrunner_krls_irls_logistic_cpp", (DL_FUNC) &_roadrunner_krls_irls_logistic_cpp, 8},
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
+    {"_roadrunner_ols_fit_cpp", (DL_FUNC) &_roadrunner_ols_fit_cpp, 3},
+    {"_roadrunner_ols_vcov_cpp", (DL_FUNC) &_roadrunner_ols_vcov_cpp, 7},
     {"_roadrunner_plda_wcsd_cpp", (DL_FUNC) &_roadrunner_plda_wcsd_cpp, 3},
     {"_roadrunner_plda_softthresh_cpp", (DL_FUNC) &_roadrunner_plda_softthresh_cpp, 2},
     {"_roadrunner_plda_tv1d_cpp", (DL_FUNC) &_roadrunner_plda_tv1d_cpp, 2},

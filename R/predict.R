@@ -474,6 +474,221 @@ predict.plda <- function(object, newdata,
         upr = yhat + qq * sigma_vec)
 }
 
+#' Predictions from an `ols` fit
+#'
+#' Returns predictions for new data from a fitted `ols` model, with
+#' optional standard errors and exact closed-form confidence or
+#' prediction intervals.
+#'
+#' @param object An object of class `"ols"`.
+#' @param newdata A numeric matrix or data frame of new predictors.
+#'   `NULL` (default) returns `object$fitted.values`.
+#' @param type Prediction scale. Only `"response"` is supported (the
+#'   linear predictor coincides with the response for a gaussian fit).
+#' @param se.fit If `TRUE`, the returned vector carries an `"se.fit"`
+#'   attribute holding the per-row standard error of the fitted mean.
+#'   For bagged fits the standard error is the per-row bag standard
+#'   deviation. Default `FALSE`.
+#' @param interval Type of interval to return.
+#'   - `"none"` (default): point predictions only.
+#'   - `"confidence"`: a matrix with columns `c("fit", "lwr", "upr")`
+#'     for the mean response.
+#'   - `"prediction"`: a matrix with columns `c("fit", "lwr", "upr")`
+#'     for a new observation (adds the residual variance, or the
+#'     variance-model variance when the fit was built with
+#'     `varmod = "const"` or `"lm"`).
+#' @param level Confidence/prediction level. Default `0.95`.
+#' @param robust Heteroscedasticity-consistent covariance used for the
+#'   standard errors / intervals.
+#'   - `"none"` (default): the classical `sigma2 (X'WX)^-1`.
+#'   - `"HC0"`, `"HC1"`, `"HC2"`, `"HC3"`: a sandwich estimator.
+#' @param ... Currently unused.
+#' @return A numeric vector of predictions, or a matrix with columns
+#'   `c("fit", "lwr", "upr")` when `interval != "none"`. With
+#'   `se.fit = TRUE` the result carries an `"se.fit"` attribute.
+#' @examples
+#' fit <- ols(mpg ~ wt + hp, data = mtcars)
+#' predict(fit, mtcars[1:5, ], interval = "confidence")
+#' @export
+predict.ols <- function(object, newdata = NULL,
+                        type = "response",
+                        se.fit = FALSE,
+                        interval = c("none", "confidence", "prediction"),
+                        level = 0.95,
+                        robust = c("none", "HC0", "HC1", "HC2", "HC3"),
+                        ...) {
+  type <- match.arg(type)
+  interval <- match.arg(interval)
+  robust <- match.arg(robust)
+
+  # ---- newdata = NULL fast path -------------------------------------------
+  # For a single (non-bagged) fit, predict(object) is just $fitted.values.
+  # For a bagged fit it must be the bag mean (matching predict(object,
+  # x_train)); we re-route through the bag path using the stored design.
+  if (is.null(newdata)) {
+    if (is.null(object$boot)) {
+      yhat <- object$fitted.values
+      if (!isTRUE(se.fit) && interval == "none") return(yhat)
+      xnew <- object$X
+    } else {
+      xnew <- object$X
+    }
+  } else {
+    xnew <- .ols_newdata_matrix(object, newdata)
+  }
+  storage.mode(xnew) <- "double"
+
+  # ---- Point estimate -----------------------------------------------------
+  # Single fit: the central-fit linear predictor. Bagged fit: the mean over
+  # the central fit plus the bootstrap replicates (the bag mean).
+  eta_central <- drop(xnew %*% object$coefficients)
+  boot_preds <- NULL
+  if (!is.null(object$boot)) {
+    boot_preds <- cbind(eta_central, xnew %*% object$boot$coefficients)
+    yhat <- rowMeans(boot_preds)
+  } else {
+    yhat <- eta_central
+  }
+
+  # ---- Variance-covariance of the coefficients ----------------------------
+  # robust = "none" reuses the stored classical vcov; HC* recomputes the
+  # sandwich on the training design via the C++ engine.
+  vcov <- .ols_vcov(object, robust)
+
+  need_var <- isTRUE(se.fit) || interval != "none"
+  se_mean <- NULL
+  if (need_var) {
+    if (!is.null(object$boot)) {
+      # Bagged fit: the per-row SE is the bag standard deviation of the
+      # replicate predictions (plus the central fit).
+      se_mean <- apply(boot_preds, 1L, stats::sd)
+    } else {
+      # var(xhat' beta) = xhat' V xhat, computed rowwise.
+      se_mean <- sqrt(pmax(rowSums((xnew %*% vcov) * xnew), 0))
+    }
+  }
+
+  if (isTRUE(se.fit)) attr(yhat, "se.fit") <- se_mean
+  if (interval == "none") return(yhat)
+
+  # ---- Closed-form confidence / prediction intervals ----------------------
+  alpha <- (1 - level) / 2
+  df <- object$df.residual
+  qq <- stats::qt(1 - alpha, df = df)
+  if (interval == "confidence") {
+    half <- qq * se_mean
+  } else {
+    # Prediction interval: add the variance of a fresh observation. With a
+    # variance model, use its (possibly yhat-dependent) sigma; otherwise
+    # use the fitted residual variance sigma2.
+    if (!is.null(object$varmod)) {
+      sig_obs <- .ols_varmod_sigma(object$varmod, yhat)
+      half <- qq * sqrt(se_mean^2 + sig_obs^2)
+    } else {
+      half <- qq * sqrt(se_mean^2 + object$sigma2)
+    }
+  }
+  out <- cbind(fit = yhat, lwr = yhat - half, upr = yhat + half)
+  if (isTRUE(se.fit)) attr(out, "se.fit") <- se_mean
+  out
+}
+
+# Internal: turn `newdata` into a numeric design matrix aligned with the
+# training design of an `ols` fit. Handles the formula path (terms +
+# xlevels), the factor-expanded data-frame path, and the plain matrix /
+# data-frame path. Mirrors the predict.ares column-alignment logic.
+#
+# @keywords internal
+.ols_newdata_matrix <- function(object, newdata) {
+  cn <- colnames(object$X)
+  has_int <- isTRUE(object$intercept) ||
+    (!is.null(cn) && "(Intercept)" %in% cn)
+  if (!is.null(object$terms)) {
+    tt <- stats::delete.response(object$terms)
+    mf <- stats::model.frame(tt, as.data.frame(newdata),
+                             xlev = object$xlevels)
+    mm <- stats::model.matrix(tt, mf)
+    if (!identical(colnames(mm), cn)) {
+      missing_cols <- setdiff(cn, colnames(mm))
+      if (length(missing_cols))
+        stop("ols: newdata model-matrix expansion is missing columns: ",
+             paste(missing_cols, collapse = ", "), call. = FALSE)
+      mm <- mm[, cn, drop = FALSE]
+    }
+    return(mm)
+  }
+  if (is.data.frame(newdata) && !is.null(object$factor_info)) {
+    fi <- object$factor_info
+    if (!all(fi$orig_names %in% colnames(newdata)))
+      stop("ols: newdata is missing columns: ",
+           paste(setdiff(fi$orig_names, colnames(newdata)),
+                 collapse = ", "), call. = FALSE)
+    nd <- newdata[, fi$orig_names, drop = FALSE]
+    for (jn in names(fi$xlevels)) {
+      col <- nd[[jn]]
+      tr_lev <- fi$xlevels[[jn]]
+      col_chr <- as.character(col)
+      if (any(!is.na(col_chr) & !(col_chr %in% tr_lev)))
+        stop("ols: out-of-vocabulary factor level(s) in newdata column ",
+             jn, ".", call. = FALSE)
+      nd[[jn]] <- factor(col, levels = tr_lev)
+    }
+    xnew <- stats::model.matrix(~ ., data = nd)
+    if ("(Intercept)" %in% colnames(xnew))
+      xnew <- xnew[, colnames(xnew) != "(Intercept)", drop = FALSE]
+    xnew <- xnew[, fi$expanded_names, drop = FALSE]
+  } else if (is.data.frame(newdata)) {
+    pred_names <- if (has_int) setdiff(cn, "(Intercept)") else cn
+    if (!all(pred_names %in% colnames(newdata)))
+      stop("ols: newdata is missing columns: ",
+           paste(setdiff(pred_names, colnames(newdata)), collapse = ", "),
+           call. = FALSE)
+    xnew <- as.matrix(newdata[, pred_names, drop = FALSE])
+  } else if (is.matrix(newdata) || is.numeric(newdata)) {
+    xnew <- as.matrix(newdata)
+    n_pred <- if (has_int) ncol(object$X) - 1L else ncol(object$X)
+    if (ncol(xnew) != n_pred)
+      stop("ols: newdata has ", ncol(xnew),
+           " columns; expected ", n_pred, ".", call. = FALSE)
+  } else {
+    stop("ols: newdata must be a matrix or data frame.", call. = FALSE)
+  }
+  if (has_int)
+    xnew <- cbind(`(Intercept)` = 1, xnew)
+  storage.mode(xnew) <- "double"
+  xnew
+}
+
+# Internal: resolve the coefficient variance-covariance matrix for an
+# `ols` fit at the requested robustness level. "none" returns the stored
+# classical vcov; HC* recomputes the sandwich via the C++ engine.
+#
+# @keywords internal
+.ols_vcov <- function(object, robust = "none") {
+  if (identical(robust, "none")) return(object$vcov)
+  type <- switch(robust, HC0 = 1L, HC1 = 2L, HC2 = 3L, HC3 = 4L)
+  w_vec <- if (is.null(object$weights)) rep(1, object$n) else
+    as.numeric(object$weights)
+  v <- ols_vcov_cpp(object$X, w_vec, object$residuals, object$XtXinv,
+                    object$hatvalues, object$sigma2, type)
+  dimnames(v) <- dimnames(object$vcov)
+  v
+}
+
+# Internal: per-row observation-level sigma from a stored varmod. Mirrors
+# the .ares_make_pi sigma logic but returns the sigma vector directly so
+# predict.ols can fold it into a prediction-interval half-width.
+#
+# @keywords internal
+.ols_varmod_sigma <- function(vm, yhat) {
+  if (identical(vm$type, "const"))
+    return(rep(vm$sigma_hat, length(yhat)))
+  # vm$type == "lm": linear MAD model in yhat, floored as in ares.
+  raw_mad <- vm$scale * (vm$intercept + vm$slope * yhat)
+  floor_val <- if (!is.null(vm$sigma_floor)) vm$sigma_floor else 1e-12
+  pmax(raw_mad, floor_val)
+}
+
 # Internal: compute bag SD on a built-in xnew (training x). Currently unused
 # from outside predict.ares; kept tiny for clarity.
 .ares_boot_sd <- function(object, newdata) {

@@ -493,3 +493,262 @@ plot.plda <- function(x, data = NULL, labels = NULL, ...) {
   }
   invisible(x)
 }
+
+# ============================================================================
+#  S3 print / summary / plot methods for the `ols` class
+# ============================================================================
+
+#' Print method for `ols` fits
+#'
+#' Prints the call, the fitted coefficients, the residual standard error,
+#' and the residual degrees of freedom.
+#'
+#' @param x An object of class `"ols"`.
+#' @param digits Significant digits for numeric output.
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @examples
+#' fit <- ols(mpg ~ wt + hp, data = mtcars)
+#' print(fit)
+#' @export
+print.ols <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
+  cat("Call:\n")
+  print(x$call)
+  weighted <- !is.null(x$weights)
+  cat("\n", if (weighted) "Weighted " else "",
+      "linear model (OLS)\n", sep = "")
+  cat("\nCoefficients:\n")
+  print.default(format(x$coefficients, digits = digits),
+                print.gap = 2L, quote = FALSE)
+  cat("\n  Residual SE:", format(x$sigma, digits = digits),
+      "on", x$df.residual, "degrees of freedom\n")
+  if (!is.null(x$boot))
+    cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  if (!is.null(x$varmod))
+    cat("  Variance model:", x$varmod$type, "\n")
+  invisible(x)
+}
+
+#' Summary method for `ols` fits
+#'
+#' Returns the coefficient table (estimate, standard error, t value,
+#' p value), the residual standard error, R-squared and adjusted
+#' R-squared, and the overall F-statistic.
+#'
+#' @param object An object of class `"ols"`.
+#' @param robust Heteroscedasticity-consistent covariance for the
+#'   standard errors and t / F tests. `"none"` (default) uses the
+#'   classical covariance; `"HC0"`-`"HC3"` use a sandwich estimator.
+#' @param ... Currently ignored.
+#' @return An object of class `"summary.ols"`.
+#' @examples
+#' fit <- ols(mpg ~ wt + hp, data = mtcars)
+#' summary(fit)
+#' summary(fit, robust = "HC3")
+#' @export
+summary.ols <- function(object,
+                        robust = c("none", "HC0", "HC1", "HC2", "HC3"),
+                        ...) {
+  robust <- match.arg(robust)
+  vcov <- .ols_vcov(object, robust)
+  est <- object$coefficients
+  se <- sqrt(diag(vcov))
+  tval <- est / se
+  df <- object$df.residual
+  pval <- 2 * stats::pt(-abs(tval), df = df)
+  coef_tab <- cbind(Estimate = est, `Std. Error` = se,
+                    `t value` = tval, `Pr(>|t|)` = pval)
+  rownames(coef_tab) <- names(est)
+
+  # R-squared. With weights, the total sum of squares is weighted around
+  # the weighted mean; the intercept governs whether the mean is removed.
+  w <- if (is.null(object$weights)) rep(1, object$n) else
+    as.numeric(object$weights)
+  y <- object$y
+  has_int <- isTRUE(object$intercept) ||
+    "(Intercept)" %in% names(est)
+  ybar <- if (has_int) stats::weighted.mean(y, w) else 0
+  tss <- sum(w * (y - ybar)^2)
+  rss <- object$rss
+  r_squared <- if (tss > 0) 1 - rss / tss else NA_real_
+  # df for the model: p minus the intercept when present.
+  p_model <- object$p - as.integer(has_int)
+  adj_r_squared <- if (tss > 0 && df > 0)
+    1 - (1 - r_squared) * (object$n - as.integer(has_int)) / df else
+      NA_real_
+
+  # Overall F-statistic: model mean square over residual mean square.
+  # When robust != "none" the test is a Wald F on the non-intercept
+  # coefficients using the robust covariance; otherwise the classical F.
+  fstat <- NULL
+  if (p_model >= 1L) {
+    if (identical(robust, "none")) {
+      f_value <- ((tss - rss) / p_model) / (rss / df)
+    } else {
+      idx <- if (has_int) which(names(est) != "(Intercept)") else
+        seq_along(est)
+      b <- est[idx]
+      vb <- vcov[idx, idx, drop = FALSE]
+      wald <- as.numeric(t(b) %*% solve(vb, b))
+      f_value <- wald / p_model
+    }
+    fstat <- list(value = f_value, numdf = p_model, dendf = df,
+                  pvalue = stats::pf(f_value, p_model, df,
+                                     lower.tail = FALSE))
+  }
+
+  structure(list(call = object$call, coefficients = coef_tab,
+                 sigma = object$sigma, df.residual = df,
+                 r.squared = r_squared, adj.r.squared = adj_r_squared,
+                 fstatistic = fstat, robust = robust,
+                 weighted = !is.null(object$weights),
+                 boot = object$boot),
+            class = "summary.ols")
+}
+
+#' @rdname summary.ols
+#' @param x A `summary.ols` object.
+#' @param digits Significant digits for numeric output.
+#' @export
+print.summary.ols <- function(x, digits = max(3L, getOption("digits") - 3L),
+                              ...) {
+  cat("Call:\n"); print(x$call)
+  cat("\n", if (x$weighted) "Weighted " else "",
+      "linear model (OLS)", sep = "")
+  if (!identical(x$robust, "none"))
+    cat("  --  ", x$robust, " robust standard errors", sep = "")
+  cat("\n\nCoefficients:\n")
+  stats::printCoefmat(x$coefficients, digits = digits,
+                      signif.stars = getOption("show.signif.stars", TRUE),
+                      has.Pvalue = TRUE)
+  cat("\nResidual standard error:", format(x$sigma, digits = digits),
+      "on", x$df.residual, "degrees of freedom\n")
+  cat("Multiple R-squared: ", format(x$r.squared, digits = digits),
+      ",  Adjusted R-squared: ", format(x$adj.r.squared, digits = digits),
+      "\n", sep = "")
+  if (!is.null(x$fstatistic)) {
+    f <- x$fstatistic
+    cat("F-statistic: ", format(f$value, digits = digits),
+        " on ", f$numdf, " and ", f$dendf, " DF,  p-value: ",
+        format.pval(f$pvalue, digits = digits), "\n", sep = "")
+  }
+  if (!is.null(x$boot))
+    cat("Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  invisible(x)
+}
+
+#' Diagnostic plots for an `ols` fit
+#'
+#' Four diagnostic panels modelled on [stats::plot.lm()]: residuals vs
+#' fitted, normal Q-Q of standardized residuals, scale-location, and
+#' residuals vs leverage with Cook's-distance contours.
+#'
+#' @param x A fitted object of class `"ols"`.
+#' @param which Integer subset of `1:4` selecting which panels to draw.
+#'   Default `1:4`.
+#' @param id.n Number of extreme points to label per panel (default
+#'   `3`; set `0` to suppress).
+#' @param ... Further graphical parameters passed to the underlying
+#'   `plot()` calls.
+#' @return Invisibly returns `x`.
+#' @examples
+#' \dontrun{
+#'   fit <- ols(mpg ~ wt + hp, data = mtcars)
+#'   plot(fit)
+#' }
+#' @export
+plot.ols <- function(x, which = 1:4, id.n = 3L, ...) {
+  if (!inherits(x, "ols"))
+    stop("plot.ols: 'x' must be an 'ols' object.")
+  which <- as.integer(which)
+  if (any(!which %in% 1:4))
+    stop("plot.ols: `which` must be a subset of 1:4.")
+  show <- rep(FALSE, 4L); show[which] <- TRUE
+
+  yhat <- as.numeric(x$fitted.values)
+  rraw <- as.numeric(x$residuals)
+  n <- length(yhat)
+  if (n == 0L) stop("plot.ols: fit has zero observations.")
+  w <- if (!is.null(x$weights)) as.numeric(x$weights) else rep(1, n)
+  h <- pmin(pmax(as.numeric(x$hatvalues), 0), 1 - .Machine$double.eps)
+  rk <- max(x$rank, 1L)
+  sigma <- x$sigma
+  # plot.lm standardized residual: r sqrt(w) / (sigma sqrt(1 - h)).
+  rstd <- rraw * sqrt(w) / (sigma * sqrt(1 - h))
+  rstd[!is.finite(rstd)] <- NA_real_
+  cook <- (rstd^2 / rk) * h / (1 - h)
+  cook[!is.finite(cook)] <- NA_real_
+
+  labels.id <- as.character(seq_len(n))
+  extrm <- function(v, k = id.n) {
+    if (k < 1L) return(integer(0))
+    finite <- which(is.finite(v))
+    if (!length(finite)) return(integer(0))
+    ord <- finite[order(-abs(v[finite]))]
+    ord[seq_len(min(k, length(ord)))]
+  }
+
+  one_fig <- all(graphics::par("mfcol") == c(1L, 1L))
+  if (one_fig && length(which) > 1L) {
+    op <- graphics::par(mfrow = c(2L, 2L), mar = c(4, 4, 2, 1))
+    on.exit(graphics::par(op), add = TRUE)
+  }
+
+  # Panel 1: residuals vs fitted.
+  if (show[1L]) {
+    graphics::plot(yhat, rraw, xlab = "Fitted values", ylab = "Residuals",
+                   main = "Residuals vs Fitted", ...)
+    graphics::abline(h = 0, lty = 3, col = "gray")
+    graphics::lines(stats::lowess(yhat, rraw), col = "red")
+    idx <- extrm(rraw)
+    if (length(idx))
+      graphics::text(yhat[idx], rraw[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 2: normal Q-Q of standardized residuals.
+  if (show[2L]) {
+    qq <- stats::qqnorm(rstd, main = "Normal Q-Q",
+                        ylab = "Standardized residuals", ...)
+    stats::qqline(rstd, lty = 3, col = "gray")
+    idx <- extrm(rstd)
+    if (length(idx))
+      graphics::text(qq$x[idx], qq$y[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 3: scale-location.
+  if (show[3L]) {
+    sqrtabs <- sqrt(abs(rstd))
+    graphics::plot(yhat, sqrtabs, xlab = "Fitted values",
+                   ylab = expression(sqrt(abs(`Standardized residuals`))),
+                   main = "Scale-Location", ...)
+    ok <- is.finite(yhat) & is.finite(sqrtabs)
+    if (any(ok))
+      graphics::lines(stats::lowess(yhat[ok], sqrtabs[ok]), col = "red")
+    idx <- extrm(sqrtabs)
+    if (length(idx))
+      graphics::text(yhat[idx], sqrtabs[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 4: residuals vs leverage with Cook's-distance contours.
+  if (show[4L]) {
+    xlim <- c(0, max(h, na.rm = TRUE) * 1.05)
+    ylim <- range(rstd, na.rm = TRUE, finite = TRUE)
+    if (!all(is.finite(ylim))) ylim <- c(-3, 3)
+    graphics::plot(h, rstd, xlim = xlim, ylim = ylim,
+                   xlab = "Leverage", ylab = "Standardized residuals",
+                   main = "Residuals vs Leverage", ...)
+    graphics::abline(h = 0, v = 0, lty = 3, col = "gray")
+    hh <- seq.int(0.001, max(h, na.rm = TRUE), length.out = 101L)
+    hh <- hh[hh < 1 & hh > 0]
+    for (cl_lvl in c(0.5, 1.0)) {
+      rr <- sqrt(cl_lvl * rk * (1 - hh) / hh)
+      graphics::lines(hh, rr, lty = 2, col = "red")
+      graphics::lines(hh, -rr, lty = 2, col = "red")
+    }
+    idx <- extrm(cook)
+    if (length(idx))
+      graphics::text(h[idx], rstd[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  invisible(x)
+}
