@@ -705,3 +705,209 @@ predict.ols <- function(object, newdata = NULL,
   }
   rep(NA_real_, nrow(newdata))
 }
+
+# ============================================================================
+#  predict method for the `logreg` class
+# ============================================================================
+
+#' Predictions from a `logreg` fit
+#'
+#' Returns predictions for new data from a fitted `logreg` model on the
+#' link, probability, or class scale, with optional standard errors.
+#'
+#' @param object An object of class `"logreg"`.
+#' @param newdata A numeric matrix or data frame of new predictors.
+#'   `NULL` (default) returns predictions for the training data.
+#' @param type Prediction scale.
+#'   - `"link"`: the linear predictor (log-odds).
+#'   - `"response"` (default): the fitted probability.
+#'   - `"class"`: a hard 0/1 (or factor) label obtained by thresholding
+#'     the fitted probability at `threshold`.
+#' @param se.fit If `TRUE`, the returned object carries an `"se.fit"`
+#'   attribute holding the per-row standard error. For `type = "link"`
+#'   the SE is on the log-odds scale; for `type = "response"` it is the
+#'   delta-method SE of the probability. `se.fit` is not available for
+#'   `type = "class"`. For bagged fits the SE is the per-row bag
+#'   standard deviation of the predicted probability. Default `FALSE`.
+#' @param threshold Probability cut-off for `type = "class"`. Default
+#'   `0.5`.
+#' @param robust Heteroscedasticity-consistent covariance used for the
+#'   standard errors.
+#'   - `"none"` (default): the classical maximum-likelihood covariance.
+#'   - `"HC0"`, `"HC1"`, `"HC2"`, `"HC3"`: a sandwich estimator.
+#' @param ... Currently unused.
+#' @return A numeric vector of predictions on the requested scale (a
+#'   factor when `type = "class"` and the fit was built from a factor
+#'   response). With `se.fit = TRUE` the result carries an `"se.fit"`
+#'   attribute.
+#' @examples
+#' df <- data.frame(y = as.integer(mtcars$am), mtcars[c("wt", "hp")])
+#' fit <- logreg(y ~ wt + hp, data = df)
+#' predict(fit, df[1:5, ], type = "response")
+#' predict(fit, df[1:5, ], type = "class")
+#' @export
+predict.logreg <- function(object, newdata = NULL,
+                           type = c("link", "response", "class"),
+                           se.fit = FALSE,
+                           threshold = 0.5,
+                           robust = c("none", "HC0", "HC1", "HC2", "HC3"),
+                           ...) {
+  type <- match.arg(type)
+  robust <- match.arg(robust)
+  if (isTRUE(se.fit) && type == "class")
+    stop("logreg: se.fit is not available for type = 'class'.",
+         call. = FALSE)
+
+  # ---- newdata = NULL fast path -------------------------------------------
+  # For a single (non-bagged) fit, the training-data predictions are
+  # already stored; with no SE / class request we can return them
+  # directly. For a bagged fit, or when SEs are needed, re-route through
+  # the design path so the bag mean / vcov can be computed.
+  if (is.null(newdata)) {
+    if (is.null(object$boot) && !isTRUE(se.fit) && type != "class") {
+      if (type == "link") return(object$linear.predictors)
+      return(object$fitted.values)              # type == "response".
+    }
+    xnew <- object$X
+  } else {
+    xnew <- .logreg_newdata_matrix(object, newdata)
+  }
+  storage.mode(xnew) <- "double"
+
+  # ---- Linear predictor ---------------------------------------------------
+  # Single fit: the central-fit log-odds. Bagged fit: the bag mean is
+  # taken on the PROBABILITY scale (averaging probabilities, not
+  # log-odds), matching the ares/ols bag-mean convention of averaging the
+  # quantity predict() reports.
+  eta_central <- drop(xnew %*% object$coefficients)
+  boot_probs <- NULL
+  if (!is.null(object$boot)) {
+    bc <- object$boot$coefficients
+    ok <- which(!apply(is.na(bc), 2L, any))
+    eta_mat <- cbind(eta_central, xnew %*% bc[, ok, drop = FALSE])
+    boot_probs <- stats::plogis(eta_mat)
+    prob <- rowMeans(boot_probs)
+    eta <- stats::qlogis(pmin(pmax(prob, 1e-10), 1 - 1e-10))
+  } else {
+    eta <- eta_central
+    prob <- stats::plogis(eta)
+  }
+
+  # ---- Standard errors ----------------------------------------------------
+  se_link <- NULL
+  se_resp <- NULL
+  if (isTRUE(se.fit)) {
+    if (!is.null(object$boot)) {
+      # Bagged fit: the per-row SE is the bag standard deviation of the
+      # predicted probabilities (plus the central fit).
+      se_resp <- apply(boot_probs, 1L, stats::sd)
+      se_link <- se_resp / pmax(prob * (1 - prob), 1e-12)
+    } else {
+      vcov <- .logreg_vcov(object, robust)
+      # var(eta) = x' V x, computed rowwise; delta method for the
+      # probability scale: d mu / d eta = mu (1 - mu).
+      se_link <- sqrt(pmax(rowSums((xnew %*% vcov) * xnew), 0))
+      se_resp <- se_link * prob * (1 - prob)
+    }
+  }
+
+  # ---- Assemble the requested scale --------------------------------------
+  if (type == "link") {
+    out <- eta
+    if (isTRUE(se.fit)) attr(out, "se.fit") <- se_link
+    return(out)
+  }
+  if (type == "response") {
+    out <- prob
+    if (isTRUE(se.fit)) attr(out, "se.fit") <- se_resp
+    return(out)
+  }
+  # type == "class": threshold the probability. When the fit was built
+  # from a factor response, return the original factor levels.
+  cls <- as.integer(prob > threshold)
+  if (!is.null(object$y.levels))
+    cls <- factor(object$y.levels[cls + 1L], levels = object$y.levels)
+  cls
+}
+
+# Internal: turn `newdata` into a numeric design matrix aligned with the
+# training design of a `logreg` fit. Handles the formula path (terms +
+# xlevels), the factor-expanded data-frame path, and the plain matrix /
+# data-frame path. Mirrors .ols_newdata_matrix.
+#
+# @keywords internal
+.logreg_newdata_matrix <- function(object, newdata) {
+  cn <- colnames(object$X)
+  has_int <- isTRUE(object$intercept) ||
+    (!is.null(cn) && "(Intercept)" %in% cn)
+  if (!is.null(object$terms)) {
+    tt <- stats::delete.response(object$terms)
+    mf <- stats::model.frame(tt, as.data.frame(newdata),
+                             xlev = object$xlevels)
+    mm <- stats::model.matrix(tt, mf)
+    if (!identical(colnames(mm), cn)) {
+      missing_cols <- setdiff(cn, colnames(mm))
+      if (length(missing_cols))
+        stop("logreg: newdata model-matrix expansion is missing columns: ",
+             paste(missing_cols, collapse = ", "), call. = FALSE)
+      mm <- mm[, cn, drop = FALSE]
+    }
+    return(mm)
+  }
+  if (is.data.frame(newdata) && !is.null(object$factor_info)) {
+    fi <- object$factor_info
+    if (!all(fi$orig_names %in% colnames(newdata)))
+      stop("logreg: newdata is missing columns: ",
+           paste(setdiff(fi$orig_names, colnames(newdata)),
+                 collapse = ", "), call. = FALSE)
+    nd <- newdata[, fi$orig_names, drop = FALSE]
+    for (jn in names(fi$xlevels)) {
+      col <- nd[[jn]]
+      tr_lev <- fi$xlevels[[jn]]
+      col_chr <- as.character(col)
+      if (any(!is.na(col_chr) & !(col_chr %in% tr_lev)))
+        stop("logreg: out-of-vocabulary factor level(s) in newdata ",
+             "column ", jn, ".", call. = FALSE)
+      nd[[jn]] <- factor(col, levels = tr_lev)
+    }
+    xnew <- stats::model.matrix(~ ., data = nd)
+    if ("(Intercept)" %in% colnames(xnew))
+      xnew <- xnew[, colnames(xnew) != "(Intercept)", drop = FALSE]
+    xnew <- xnew[, fi$expanded_names, drop = FALSE]
+  } else if (is.data.frame(newdata)) {
+    pred_names <- if (has_int) setdiff(cn, "(Intercept)") else cn
+    if (!all(pred_names %in% colnames(newdata)))
+      stop("logreg: newdata is missing columns: ",
+           paste(setdiff(pred_names, colnames(newdata)), collapse = ", "),
+           call. = FALSE)
+    xnew <- as.matrix(newdata[, pred_names, drop = FALSE])
+  } else if (is.matrix(newdata) || is.numeric(newdata)) {
+    xnew <- as.matrix(newdata)
+    n_pred <- if (has_int) ncol(object$X) - 1L else ncol(object$X)
+    if (ncol(xnew) != n_pred)
+      stop("logreg: newdata has ", ncol(xnew),
+           " columns; expected ", n_pred, ".", call. = FALSE)
+  } else {
+    stop("logreg: newdata must be a matrix or data frame.", call. = FALSE)
+  }
+  if (has_int)
+    xnew <- cbind(`(Intercept)` = 1, xnew)
+  storage.mode(xnew) <- "double"
+  xnew
+}
+
+# Internal: resolve the coefficient variance-covariance matrix for a
+# `logreg` fit at the requested robustness level. "none" returns the
+# stored classical vcov; HC* recomputes the sandwich via the C++ engine.
+#
+# @keywords internal
+.logreg_vcov <- function(object, robust = "none") {
+  if (identical(robust, "none")) return(object$vcov)
+  type <- switch(robust, HC0 = 1L, HC1 = 2L, HC2 = 3L, HC3 = 4L)
+  w_vec <- if (is.null(object$weights)) rep(1, object$n) else
+    as.numeric(object$weights)
+  v <- logreg_vcov_cpp(object$X, w_vec, object$y, object$fitted.values,
+                       object$XtWXinv, object$hatvalues, type)
+  dimnames(v) <- dimnames(object$vcov)
+  v
+}

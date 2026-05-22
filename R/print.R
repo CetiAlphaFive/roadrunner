@@ -752,3 +752,238 @@ plot.ols <- function(x, which = 1:4, id.n = 3L, ...) {
   }
   invisible(x)
 }
+
+# ============================================================================
+#  S3 print / summary / plot methods for the `logreg` class
+# ============================================================================
+
+#' Print method for `logreg` fits
+#'
+#' Prints the call, the fitted coefficients, the residual and null
+#' deviance, the IRLS iteration count, and the convergence status.
+#'
+#' @param x An object of class `"logreg"`.
+#' @param digits Significant digits for numeric output.
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @examples
+#' df <- data.frame(y = as.integer(mtcars$am), mtcars[c("wt", "hp")])
+#' print(logreg(y ~ wt + hp, data = df))
+#' @export
+print.logreg <- function(x, digits = max(3L, getOption("digits") - 3L),
+                          ...) {
+  cat("Call:\n")
+  print(x$call)
+  weighted <- !is.null(x$weights)
+  cat("\n", if (weighted) "Weighted " else "",
+      "binary logistic regression\n", sep = "")
+  cat("\nCoefficients:\n")
+  print.default(format(x$coefficients, digits = digits),
+                print.gap = 2L, quote = FALSE)
+  cat("\n  Null deviance:    ", format(x$null.deviance, digits = digits),
+      " on ", x$df.null, " degrees of freedom\n", sep = "")
+  cat("  Residual deviance:", format(x$deviance, digits = digits),
+      " on ", x$df.residual, " degrees of freedom\n", sep = "")
+  cat("  AIC:", format(x$aic, digits = digits), "\n")
+  cat("  IRLS iterations:", x$iter,
+      if (x$converged) "(converged)" else "(NOT converged)", "\n")
+  if (!is.null(x$boot))
+    cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  invisible(x)
+}
+
+#' Summary method for `logreg` fits
+#'
+#' Returns the coefficient table (estimate, standard error, z value,
+#' p value), the residual and null deviance, the AIC, and the IRLS
+#' iteration count / convergence status.
+#'
+#' @param object An object of class `"logreg"`.
+#' @param robust Heteroscedasticity-consistent covariance for the
+#'   standard errors and z tests. `"none"` (default) uses the classical
+#'   maximum-likelihood covariance; `"HC0"`-`"HC3"` use a sandwich
+#'   estimator.
+#' @param ... Currently ignored.
+#' @return An object of class `"summary.logreg"`.
+#' @examples
+#' df <- data.frame(y = as.integer(mtcars$am), mtcars[c("wt", "hp")])
+#' fit <- logreg(y ~ wt + hp, data = df)
+#' summary(fit)
+#' summary(fit, robust = "HC3")
+#' @export
+summary.logreg <- function(object,
+                           robust = c("none", "HC0", "HC1", "HC2", "HC3"),
+                           ...) {
+  robust <- match.arg(robust)
+  vcov <- .logreg_vcov(object, robust)
+  est <- object$coefficients
+  se <- sqrt(diag(vcov))
+  zval <- est / se
+  pval <- 2 * stats::pnorm(-abs(zval))
+  coef_tab <- cbind(Estimate = est, `Std. Error` = se,
+                    `z value` = zval, `Pr(>|z|)` = pval)
+  rownames(coef_tab) <- names(est)
+
+  structure(list(call = object$call, coefficients = coef_tab,
+                 deviance = object$deviance,
+                 null.deviance = object$null.deviance,
+                 df.residual = object$df.residual,
+                 df.null = object$df.null,
+                 aic = object$aic, iter = object$iter,
+                 converged = object$converged, robust = robust,
+                 weighted = !is.null(object$weights),
+                 boot = object$boot),
+            class = "summary.logreg")
+}
+
+#' @rdname summary.logreg
+#' @param x A `summary.logreg` object.
+#' @param digits Significant digits for numeric output.
+#' @export
+print.summary.logreg <- function(x,
+                                 digits = max(3L, getOption("digits") - 3L),
+                                 ...) {
+  cat("Call:\n"); print(x$call)
+  cat("\n", if (x$weighted) "Weighted " else "",
+      "binary logistic regression", sep = "")
+  if (!identical(x$robust, "none"))
+    cat("  --  ", x$robust, " robust standard errors", sep = "")
+  cat("\n\nCoefficients:\n")
+  stats::printCoefmat(x$coefficients, digits = digits,
+                      signif.stars = getOption("show.signif.stars", TRUE),
+                      has.Pvalue = TRUE)
+  cat("\n    Null deviance: ", format(x$null.deviance, digits = digits),
+      "  on ", x$df.null, " degrees of freedom\n", sep = "")
+  cat("Residual deviance: ", format(x$deviance, digits = digits),
+      "  on ", x$df.residual, " degrees of freedom\n", sep = "")
+  cat("AIC: ", format(x$aic, digits = digits), "\n", sep = "")
+  cat("Number of Fisher Scoring iterations: ", x$iter,
+      if (x$converged) "" else "  (NOT converged)", "\n", sep = "")
+  if (!is.null(x$boot))
+    cat("Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+  invisible(x)
+}
+
+#' Diagnostic plots for a `logreg` fit
+#'
+#' Four diagnostic panels for a logistic-regression fit: deviance
+#' residuals vs the linear predictor, a normal Q-Q plot of the deviance
+#' residuals, a scale-location panel, and deviance residuals vs leverage
+#' with Cook's-distance contours.
+#'
+#' @param x A fitted object of class `"logreg"`.
+#' @param which Integer subset of `1:4` selecting which panels to draw.
+#'   Default `1:4`.
+#' @param id.n Number of extreme points to label per panel (default
+#'   `3`; set `0` to suppress).
+#' @param ... Further graphical parameters passed to the underlying
+#'   `plot()` calls.
+#' @return Invisibly returns `x`.
+#' @examples
+#' \dontrun{
+#'   df <- data.frame(y = as.integer(mtcars$am), mtcars[c("wt", "hp")])
+#'   plot(logreg(y ~ wt + hp, data = df))
+#' }
+#' @export
+plot.logreg <- function(x, which = 1:4, id.n = 3L, ...) {
+  if (!inherits(x, "logreg"))
+    stop("plot.logreg: 'x' must be a 'logreg' object.")
+  which <- as.integer(which)
+  if (any(!which %in% 1:4))
+    stop("plot.logreg: `which` must be a subset of 1:4.")
+  show <- rep(FALSE, 4L); show[which] <- TRUE
+
+  eta <- as.numeric(x$linear.predictors)
+  rdev <- as.numeric(x$residuals)              # deviance residuals.
+  n <- length(eta)
+  if (n == 0L) stop("plot.logreg: fit has zero observations.")
+  h <- pmin(pmax(as.numeric(x$hatvalues), 0), 1 - .Machine$double.eps)
+  rk <- max(x$rank, 1L)
+  # Standardized deviance residual: r_dev / sqrt(1 - h).
+  rstd <- rdev / sqrt(1 - h)
+  rstd[!is.finite(rstd)] <- NA_real_
+  # Approximate Cook's distance for a GLM.
+  pear <- as.numeric((x$y - x$fitted.values) /
+                       sqrt(x$fitted.values * (1 - x$fitted.values)))
+  cook <- (pear^2 / rk) * h / (1 - h)^2
+  cook[!is.finite(cook)] <- NA_real_
+
+  labels.id <- as.character(seq_len(n))
+  extrm <- function(v, k = id.n) {
+    if (k < 1L) return(integer(0))
+    finite <- which(is.finite(v))
+    if (!length(finite)) return(integer(0))
+    ord <- finite[order(-abs(v[finite]))]
+    ord[seq_len(min(k, length(ord)))]
+  }
+
+  one_fig <- all(graphics::par("mfcol") == c(1L, 1L))
+  if (one_fig && length(which) > 1L) {
+    op <- graphics::par(mfrow = c(2L, 2L), mar = c(4, 4, 2, 1))
+    on.exit(graphics::par(op), add = TRUE)
+  }
+
+  # Panel 1: deviance residuals vs the linear predictor.
+  if (show[1L]) {
+    graphics::plot(eta, rdev, xlab = "Linear predictor",
+                   ylab = "Deviance residuals",
+                   main = "Residuals vs Linear Predictor", ...)
+    graphics::abline(h = 0, lty = 3, col = "gray")
+    ok <- is.finite(eta) & is.finite(rdev)
+    if (sum(ok) > 1L)
+      graphics::lines(stats::lowess(eta[ok], rdev[ok]), col = "red")
+    idx <- extrm(rdev)
+    if (length(idx))
+      graphics::text(eta[idx], rdev[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 2: normal Q-Q of standardized deviance residuals.
+  if (show[2L]) {
+    qq <- stats::qqnorm(rstd, main = "Normal Q-Q",
+                        ylab = "Std. deviance residuals", ...)
+    stats::qqline(rstd, lty = 3, col = "gray")
+    idx <- extrm(rstd)
+    if (length(idx))
+      graphics::text(qq$x[idx], qq$y[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 3: scale-location.
+  if (show[3L]) {
+    sqrtabs <- sqrt(abs(rstd))
+    graphics::plot(eta, sqrtabs, xlab = "Linear predictor",
+                   ylab = expression(sqrt(abs(`Std. deviance residuals`))),
+                   main = "Scale-Location", ...)
+    ok <- is.finite(eta) & is.finite(sqrtabs)
+    if (sum(ok) > 1L)
+      graphics::lines(stats::lowess(eta[ok], sqrtabs[ok]), col = "red")
+    idx <- extrm(sqrtabs)
+    if (length(idx))
+      graphics::text(eta[idx], sqrtabs[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  # Panel 4: deviance residuals vs leverage with Cook's-distance contours.
+  if (show[4L]) {
+    xlim <- c(0, max(h, na.rm = TRUE) * 1.05)
+    ylim <- range(rstd, na.rm = TRUE, finite = TRUE)
+    if (!all(is.finite(ylim))) ylim <- c(-3, 3)
+    graphics::plot(h, rstd, xlim = xlim, ylim = ylim,
+                   xlab = "Leverage", ylab = "Std. deviance residuals",
+                   main = "Residuals vs Leverage", ...)
+    graphics::abline(h = 0, v = 0, lty = 3, col = "gray")
+    hmax <- max(h, na.rm = TRUE)
+    if (is.finite(hmax) && hmax > 0) {
+      hh <- seq.int(0.001, hmax, length.out = 101L)
+      hh <- hh[hh < 1 & hh > 0]
+      for (cl_lvl in c(0.5, 1.0)) {
+        rr <- sqrt(cl_lvl * rk * (1 - hh) / hh)
+        graphics::lines(hh, rr, lty = 2, col = "red")
+        graphics::lines(hh, -rr, lty = 2, col = "red")
+      }
+    }
+    idx <- extrm(cook)
+    if (length(idx))
+      graphics::text(h[idx], rstd[idx], labels = labels.id[idx],
+                     cex = 0.75, pos = 4)
+  }
+  invisible(x)
+}
