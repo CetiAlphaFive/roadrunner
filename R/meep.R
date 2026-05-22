@@ -159,7 +159,13 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #   $predict(model, newX, family)    -> numeric vector (response scale;
 #                                       probabilities for binomial)
 
-.meep_learner_specs <- function(ares_args = list(), krls_args = list()) {
+#
+# `ols` and `logreg` are opt-in (not in the default `learners`): they are
+# unregularized linear fitters with NO hyperparameters, so `tune` is a
+# no-op for them -- every fold is a plain refit. `ols` is the gaussian
+# learner; `logreg` is the binomial learner (binary outcome / propensity).
+.meep_learner_specs <- function(ares_args = list(), krls_args = list(),
+                                ols_args = list(), logreg_args = list()) {
   list(
     ares = list(
       fit = function(X, y, family, weights, hp) {
@@ -188,6 +194,38 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
         # returns a bare numeric. Normalise to a numeric vector.
         if (is.list(pr)) pr <- pr$fit
         as.numeric(pr)
+      }
+    ),
+    ols = list(
+      # Gaussian learner. No hyperparameters: `hp` is always empty.
+      fit = function(X, y, family, weights, hp) {
+        if (identical(family, "binomial"))
+          stop("meep: learner 'ols' cannot fit a binomial nuisance; ",
+               "use 'logreg' for binary outcomes/treatments.",
+               call. = FALSE)
+        args <- c(list(x = X, y = y),
+                  if (!is.null(weights)) list(weights = weights),
+                  ols_args)
+        do.call(ols, args)
+      },
+      predict = function(model, newX, family) {
+        as.numeric(predict(model, newdata = newX, type = "response"))
+      }
+    ),
+    logreg = list(
+      # Binomial learner. No hyperparameters: `hp` is always empty.
+      fit = function(X, y, family, weights, hp) {
+        if (!identical(family, "binomial"))
+          stop("meep: learner 'logreg' only fits binomial nuisances; ",
+               "use 'ols' for a continuous outcome/treatment.",
+               call. = FALSE)
+        args <- c(list(x = X, y = y),
+                  if (!is.null(weights)) list(weights = weights),
+                  logreg_args)
+        do.call(logreg, args)
+      },
+      predict = function(model, newX, family) {
+        as.numeric(predict(model, newdata = newX, type = "response"))
       }
     )
   )
@@ -343,8 +381,12 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   gives an outcome-only fit (no `d_hat_oof`, no arm models).
 #' @param folds Either a single integer `K` (number of folds), or a
 #'   length-n integer vector of fold ids that is honored verbatim.
-#' @param learners Character subset of `c("ares", "krls")`, or a named
-#'   list of adapter closures (extensibility hook).
+#' @param learners Character subset of `c("ares", "krls", "ols",
+#'   "logreg")`, or a named list of adapter closures (extensibility
+#'   hook). The default is `c("ares", "krls")`. `"ols"` (gaussian) and
+#'   `"logreg"` (binomial) are opt-in unregularized linear learners with
+#'   no hyperparameters, so `tune` is a no-op for them (plain refit per
+#'   fold).
 #' @param ensemble How to combine learners: `"stack"` (non-negative least
 #'   squares on the OOF matrix), `"average"` (equal weights), or `"best"`
 #'   (pick the single lowest-OOF-loss learner).
@@ -365,6 +407,11 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   [ares()] call.
 #' @param krls_args A named list of extra arguments spliced into every
 #'   [krls()] call.
+#' @param ols_args A named list of extra arguments spliced into every
+#'   [ols()] call (only relevant when `"ols"` is among `learners`).
+#' @param logreg_args A named list of extra arguments spliced into every
+#'   [logreg()] call (only relevant when `"logreg"` is among
+#'   `learners`).
 #' @param verbose Logical; if `TRUE`, print progress per nuisance / fold.
 #' @param ... Currently unused; reserved.
 #'
@@ -405,6 +452,8 @@ meep <- function(X, y, treatment = NULL,
                  seed = NULL,
                  ares_args = list(),
                  krls_args = list(),
+                 ols_args = list(),
+                 logreg_args = list(),
                  verbose = FALSE, ...) {
   cl <- match.call()
   ensemble   <- match.arg(ensemble)
@@ -445,9 +494,11 @@ meep <- function(X, y, treatment = NULL,
     if (is.null(learner_names) || any(!nzchar(learner_names)))
       stop("meep: a list of `learners` must be fully named.", call. = FALSE)
   } else {
-    learners <- match.arg(learners, c("ares", "krls"), several.ok = TRUE)
+    learners <- match.arg(learners, c("ares", "krls", "ols", "logreg"),
+                          several.ok = TRUE)
     learners <- unique(learners)
-    all_specs <- .meep_learner_specs(ares_args, krls_args)
+    all_specs <- .meep_learner_specs(ares_args, krls_args,
+                                     ols_args, logreg_args)
     learner_specs <- all_specs[learners]
     learner_names <- learners
   }
@@ -760,7 +811,8 @@ meep <- function(X, y, treatment = NULL,
         frozen[[lname]] <- list(sigma = sig, lambda = fit$lambda)
       }
     } else {
-      # unknown learner -- nothing to freeze
+      # ols / logreg (no hyperparameters) and any unknown learner --
+      # nothing to freeze; the per-fold call is a plain refit.
       frozen[[lname]] <- list()
     }
     if (verbose)

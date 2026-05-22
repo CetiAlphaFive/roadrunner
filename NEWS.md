@@ -1,3 +1,35 @@
+# roadrunner 0.0.0.9053
+
+## ols() and logreg() — unregularized linear fitters
+
+Two new user-facing functions, `ols()` and `logreg()`: fast, low-dependency
+unregularized linear fitters with C++ (Rcpp/Armadillo) engines, classical
+and HC robust standard errors, and the package's standard base-R-style API.
+
+* **`ols(x, y, weights, n.boot, varmod, ...)`** — ordinary and weighted
+  least squares via a weighted economy-QR solve. Matrix and formula
+  interfaces. Returns an S3 object of class `"ols"`. A rank-deficient
+  design matrix is rejected with a clear error rather than silently
+  dropping columns.
+* **`logreg(x, y, weights, n.boot, ...)`** — binary logistic regression by
+  iteratively reweighted least squares (Fisher scoring). Matrix and
+  formula interfaces; accepts a 0/1 numeric, logical, or two-level-factor
+  response. Returns an S3 object of class `"logreg"`. Non-convergence (the
+  signature of quasi-complete separation) is reported with a warning.
+* **Robust SEs** — classical and HC0–HC3 sandwich covariances; surfaced in
+  `summary()` and `predict()` via a `robust` argument.
+* **Bagging** — `n.boot > 0` refits on bootstrap-weight resamples; bagged
+  `predict()` returns the bag mean. Serial loop, deterministic across
+  thread counts.
+* **Prediction intervals** — `ols()` supports `varmod = "const" | "lm"`
+  for heteroskedastic gaussian prediction intervals (shared `ares()`
+  variance-model helper).
+* **S3 methods** — `predict`, `print`, `summary`, `plot` for both classes.
+* **`meep()` integration** — `"ols"` and `"logreg"` are opt-in `meep()`
+  learners (`ols` = gaussian, `logreg` = binomial). The default
+  `learners` stays `c("ares", "krls")`. Having no hyperparameters, `tune`
+  is a no-op for them: every cross-fitting fold is a plain refit.
+
 # roadrunner 0.0.0.9052
 
 ## plda() — Penalized Linear Discriminant Analysis

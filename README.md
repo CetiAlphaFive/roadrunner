@@ -9,11 +9,13 @@
 Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Three core fitters today:
+with thin, base-R-style interfaces. Five core fitters today:
 
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
 - **`plda()`** -- Penalized Linear Discriminant Analysis (L1 / fused-lasso).
+- **`ols()`** -- Ordinary and weighted least squares with HC robust SEs.
+- **`logreg()`** -- Binary logistic regression by IRLS with HC robust SEs.
 
 Plus **`meep()`** -- a cross-fitted ensemble of `ares()` and `krls()`, built for
 Double Machine Learning and causal-forest nuisance estimation.
@@ -136,6 +138,26 @@ and built-in cross-validation autotune.
 fit <- plda(Species ~ ., data = iris)
 predict(fit, iris)        # factor of predicted Species
 ```
+
+### Linear models via `ols()` and `logreg()`
+
+`ols()` fits ordinary and weighted least squares; `logreg()` fits binary
+logistic regression by IRLS. Both have C++ engines, classical and HC0-HC3
+robust standard errors, optional bagging, and the standard formula and
+matrix interfaces.
+
+```r
+fit <- ols(mpg ~ wt + hp, data = mtcars)
+summary(fit, robust = "HC3")            # HC3 robust standard errors
+predict(fit, mtcars[1:3, ], interval = "confidence")
+
+df  <- data.frame(am = mtcars$am, mtcars[c("wt", "hp")])
+lr  <- logreg(am ~ wt + hp, data = df)
+predict(lr, df[1:3, ], type = "response")
+```
+
+Both also slot into `meep()` as opt-in learners (`learners = c("ols",
+"logreg")`).
 
 ## References
 

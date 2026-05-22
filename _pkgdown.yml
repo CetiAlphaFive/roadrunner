@@ -33,6 +33,22 @@ reference:
   - print.plda
   - summary.plda
   - plot.plda
+- title: "Linear models: ols()"
+  desc: "Ordinary and weighted least squares with classical and HC robust standard errors, bagging, and prediction intervals."
+  contents:
+  - ols
+  - predict.ols
+  - print.ols
+  - summary.ols
+  - plot.ols
+- title: "Logistic regression: logreg()"
+  desc: "Binary logistic regression by IRLS with classical and HC robust standard errors and bagging."
+  contents:
+  - logreg
+  - predict.logreg
+  - print.logreg
+  - summary.logreg
+  - plot.logreg
 - title: "Package"
   contents:
   - roadrunner-package

@@ -20,6 +20,8 @@ meep(
   seed = NULL,
   ares_args = list(),
   krls_args = list(),
+  ols_args = list(),
+  logreg_args = list(),
   verbose = FALSE,
   ...
 )
@@ -36,8 +38,11 @@ gives an outcome-only fit (no \code{d_hat_oof}, no arm models).}
 \item{folds}{Either a single integer \code{K} (number of folds), or a
 length-n integer vector of fold ids that is honored verbatim.}
 
-\item{learners}{Character subset of \code{c("ares", "krls")}, or a named
-list of adapter closures (extensibility hook).}
+\item{learners}{Character subset of \code{c("ares", "krls", "ols", "logreg")}, or a named list of adapter closures (extensibility
+hook). The default is \code{c("ares", "krls")}. \code{"ols"} (gaussian) and
+\code{"logreg"} (binomial) are opt-in unregularized linear learners with
+no hyperparameters, so \code{tune} is a no-op for them (plain refit per
+fold).}
 
 \item{ensemble}{How to combine learners: \code{"stack"} (non-negative least
 squares on the OOF matrix), \code{"average"} (equal weights), or \code{"best"}
@@ -68,6 +73,13 @@ fit and into the NNLS stacking objective.}
 
 \item{krls_args}{A named list of extra arguments spliced into every
 \code{\link[=krls]{krls()}} call.}
+
+\item{ols_args}{A named list of extra arguments spliced into every
+\code{\link[=ols]{ols()}} call (only relevant when \code{"ols"} is among \code{learners}).}
+
+\item{logreg_args}{A named list of extra arguments spliced into every
+\code{\link[=logreg]{logreg()}} call (only relevant when \code{"logreg"} is among
+\code{learners}).}
 
 \item{verbose}{Logical; if \code{TRUE}, print progress per nuisance / fold.}
 
