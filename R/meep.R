@@ -41,6 +41,19 @@
   as.numeric(v == u[2L])
 }
 
+# Is learner `name` applicable to a nuisance of family `fam`?
+#
+# `ares` and `krls` are family-agnostic (always apply). `ols` is a gaussian
+# learner only; `logreg` is a binomial learner only. Any other name is a
+# custom list-learner -- not filtered (the user is responsible for matching
+# it to the nuisance families).
+.meep_learner_family_ok <- function(name, fam) {
+  if (identical(name, "ols"))    return(identical(fam, "gaussian"))
+  if (identical(name, "logreg")) return(identical(fam, "binomial"))
+  # ares, krls, and any custom list-learner: applicable to both families.
+  TRUE
+}
+
 # ----------------------------------------------------------------------------
 #  build_folds() -- K-fold assignment, cluster-aware, seeded
 # ----------------------------------------------------------------------------
@@ -350,6 +363,16 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' regression. A treatment with three or more distinct values is rejected
 #' (multi-valued / continuous-treatment IRM is out of scope).
 #'
+#' The family also governs which default learners are fitted for each
+#' nuisance. `ares` and `krls` are family-agnostic and always apply.
+#' `ols` is fitted only for gaussian (continuous) nuisances and `logreg`
+#' only for binomial (binary) nuisances. Because the Y-model and the
+#' D-model can differ in family, applicability is resolved *per nuisance*:
+#' a gaussian outcome with a binary treatment fits `ols` for
+#' `outcome`/`mu0`/`mu1` and `logreg` for `treatment`. A learner that
+#' does not apply to a nuisance is simply skipped -- its OOF column stays
+#' all-`NA` and it is *not* recorded as a fold failure.
+#'
 #' @section Tuning (`tune`):
 #' * `"once"` (default) -- autotune each learner on the full data, freeze
 #'   the resulting hyperparameters, and refit those frozen settings within
@@ -383,10 +406,18 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   length-n integer vector of fold ids that is honored verbatim.
 #' @param learners Character subset of `c("ares", "krls", "ols",
 #'   "logreg")`, or a named list of adapter closures (extensibility
-#'   hook). The default is `c("ares", "krls")`. `"ols"` (gaussian) and
-#'   `"logreg"` (binomial) are opt-in unregularized linear learners with
-#'   no hyperparameters, so `tune` is a no-op for them (plain refit per
-#'   fold).
+#'   hook). The default is all four: `c("ares", "krls", "ols",
+#'   "logreg")`. `ares` and `krls` are family-agnostic and apply to
+#'   every nuisance. `"ols"` and `"logreg"` are unregularized linear
+#'   learners with no hyperparameters (so `tune` is a no-op for them --
+#'   a plain refit per fold); they are applied *per nuisance by family*,
+#'   `ols` for gaussian (continuous) targets and `logreg` for binomial
+#'   (binary) ones. A learner that does not apply to a nuisance is
+#'   skipped, leaving an all-`NA` OOF column that the ensemble excludes;
+#'   it is not counted as a fold failure. Narrowing `learners` to names
+#'   that are all family-incompatible with a nuisance (for example
+#'   `learners = "ols"` with a binary outcome) is an error. Custom
+#'   list-learners are never family-filtered.
 #' @param ensemble How to combine learners: `"stack"` (non-negative least
 #'   squares on the OOF matrix), `"average"` (equal weights), or `"best"`
 #'   (pick the single lowest-OOF-loss learner).
@@ -441,7 +472,7 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @export
 meep <- function(X, y, treatment = NULL,
                  folds = 5L,
-                 learners = c("ares", "krls"),
+                 learners = c("ares", "krls", "ols", "logreg"),
                  ensemble = c("stack", "average", "best"),
                  arm_models = c("auto", "always", "never"),
                  family = NULL,
@@ -632,6 +663,22 @@ meep <- function(X, y, treatment = NULL,
     # job -- arm models cross-fit on arm-restricted training rows).
     arm_rows <- N$rows
 
+    # which learners apply to this nuisance's family. `ols` is gaussian-only,
+    # `logreg` binomial-only; an inapplicable learner is skipped (its OOF
+    # column stays all-NA) -- not a failure. Custom list-learners always
+    # apply. An empty applicable set means the user narrowed `learners` to
+    # family-incompatible names; stop with a clear message.
+    applicable <- vapply(learner_names,
+                         function(ln) .meep_learner_family_ok(ln, fam),
+                         logical(1L))
+    if (!any(applicable))
+      stop("meep: no applicable learner for nuisance '", nm,
+           "' (family '", fam, "'). The requested learners (",
+           paste(learner_names, collapse = ", "),
+           ") are all family-incompatible: 'ols' needs a continuous ",
+           "(gaussian) target, 'logreg' a binary (binomial) one.",
+           call. = FALSE)
+
     for (k in fold_levels) {
       te <- which(fold_id == k)
       tr <- which(fold_id != k)
@@ -639,8 +686,11 @@ meep <- function(X, y, treatment = NULL,
         tr <- intersect(tr, arm_rows)
       }
       if (length(tr) < 2L) {
-        # not enough training rows for this fold/arm: whole fold is NA
+        # not enough training rows for this fold/arm: whole fold is NA.
+        # Only applicable learners are recorded as failures -- a learner
+        # skipped for family incompatibility is not a failure.
         for (li in seq_len(L)) {
+          if (!applicable[li]) next
           fold_failures[[length(fold_failures) + 1L]] <- list(
             nuisance = nm, fold = k, learner = learner_names[li],
             reason = "insufficient training rows")
@@ -656,6 +706,9 @@ meep <- function(X, y, treatment = NULL,
 
       n_failed_here <- 0L
       for (li in seq_len(L)) {
+        # skip a learner that does not apply to this nuisance's family;
+        # its OOF column stays all-NA and no failure is recorded.
+        if (!applicable[li]) next
         lname <- learner_names[li]
         spec  <- learner_specs[[li]]
         hp <- .meep_pick_hp(tune, frozen, lname,
@@ -685,7 +738,7 @@ meep <- function(X, y, treatment = NULL,
         if (verbose)
           message("  [", nm, "] fold ", k, " / learner ", lname, " ok")
       }
-      if (n_failed_here == L)
+      if (n_failed_here == sum(applicable))
         stop("meep: every learner failed on fold ", k,
              " for nuisance '", nm, "'. Cannot cross-fit.", call. = FALSE)
     }

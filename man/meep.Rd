@@ -9,7 +9,7 @@ meep(
   y,
   treatment = NULL,
   folds = 5L,
-  learners = c("ares", "krls"),
+  learners = c("ares", "krls", "ols", "logreg"),
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -39,10 +39,17 @@ gives an outcome-only fit (no \code{d_hat_oof}, no arm models).}
 length-n integer vector of fold ids that is honored verbatim.}
 
 \item{learners}{Character subset of \code{c("ares", "krls", "ols", "logreg")}, or a named list of adapter closures (extensibility
-hook). The default is \code{c("ares", "krls")}. \code{"ols"} (gaussian) and
-\code{"logreg"} (binomial) are opt-in unregularized linear learners with
-no hyperparameters, so \code{tune} is a no-op for them (plain refit per
-fold).}
+hook). The default is all four: \code{c("ares", "krls", "ols", "logreg")}. \code{ares} and \code{krls} are family-agnostic and apply to
+every nuisance. \code{"ols"} and \code{"logreg"} are unregularized linear
+learners with no hyperparameters (so \code{tune} is a no-op for them --
+a plain refit per fold); they are applied \emph{per nuisance by family},
+\code{ols} for gaussian (continuous) targets and \code{logreg} for binomial
+(binary) ones. A learner that does not apply to a nuisance is
+skipped, leaving an all-\code{NA} OOF column that the ensemble excludes;
+it is not counted as a fold failure. Narrowing \code{learners} to names
+that are all family-incompatible with a nuisance (for example
+\code{learners = "ols"} with a binary outcome) is an error. Custom
+list-learners are never family-filtered.}
 
 \item{ensemble}{How to combine learners: \code{"stack"} (non-negative least
 squares on the OOF matrix), \code{"average"} (equal weights), or \code{"best"}
@@ -121,6 +128,16 @@ otherwise the gaussian path is used. The same logic applies to
 score via logistic regression, a continuous treatment via gaussian
 regression. A treatment with three or more distinct values is rejected
 (multi-valued / continuous-treatment IRM is out of scope).
+
+The family also governs which default learners are fitted for each
+nuisance. \code{ares} and \code{krls} are family-agnostic and always apply.
+\code{ols} is fitted only for gaussian (continuous) nuisances and \code{logreg}
+only for binomial (binary) nuisances. Because the Y-model and the
+D-model can differ in family, applicability is resolved \emph{per nuisance}:
+a gaussian outcome with a binary treatment fits \code{ols} for
+\code{outcome}/\code{mu0}/\code{mu1} and \code{logreg} for \code{treatment}. A learner that
+does not apply to a nuisance is simply skipped -- its OOF column stays
+all-\code{NA} and it is \emph{not} recorded as a fold failure.
 }
 
 \section{Tuning (\code{tune})}{

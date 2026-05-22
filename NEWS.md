@@ -1,3 +1,28 @@
+# roadrunner 0.0.0.9054
+
+## meep() — ols() and logreg() are now default learners
+
+`meep()`'s default `learners` is now `c("ares", "krls", "ols", "logreg")`
+(previously `c("ares", "krls")`). The two linear learners are applied
+*per nuisance by family*: `ols` is fitted only for gaussian (continuous)
+nuisances and `logreg` only for binomial (binary) ones, while `ares` and
+`krls` remain family-agnostic and apply everywhere.
+
+* Because the Y-model and the D-model can differ in family, applicability
+  is resolved per nuisance. A gaussian outcome with a binary treatment
+  fits `ols` for `outcome`/`mu0`/`mu1` and `logreg` for `treatment`.
+* A learner that does not apply to a nuisance is skipped cleanly: its OOF
+  column stays all-`NA` (the ensemble already excludes all-`NA` columns)
+  and it is *not* recorded as a fold failure.
+* Narrowing `learners` to names that are all family-incompatible with a
+  nuisance (for example `learners = "ols"` with a binary outcome) is now
+  an error naming the nuisance, its family, and the cause.
+* Custom list-learners are never family-filtered.
+
+**This changes default `meep()` output**: the default OOF prediction
+matrices now carry `ols`/`logreg` columns and the ensemble weights are
+recomputed over the larger learner set.
+
 # roadrunner 0.0.0.9053
 
 ## ols() and logreg() — unregularized linear fitters

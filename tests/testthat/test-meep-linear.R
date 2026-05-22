@@ -2,11 +2,13 @@
 #  Tests for meep() with the linear learners ols() and logreg()
 # ============================================================================
 #
-# Phase 3 of the ols()/logreg() feature: meep() integration. ols and logreg
-# are opt-in learners (the default `learners` stays c("ares", "krls")). They
-# carry NO hyperparameters, so `tune` ("once"/"per_fold"/"none") is a no-op:
-# every fold is a plain refit. These tests verify registration, OOF honesty,
-# stacking, determinism, and graceful degradation for the linear learners.
+# Phase 3 of the ols()/logreg() feature: meep() integration. As of
+# v0.0.0.9054 ols and logreg are DEFAULT meep() learners, applied per
+# nuisance by family (ols = gaussian, logreg = binomial). They carry NO
+# hyperparameters, so `tune` ("once"/"per_fold"/"none") is a no-op: every
+# fold is a plain refit. These tests verify registration, OOF honesty,
+# stacking, determinism, graceful degradation, and the family-aware
+# per-nuisance learner filtering.
 
 # ----------------------------------------------------------------------------
 #  Helper DGPs
@@ -55,14 +57,13 @@ test_that("meep registers ols/logreg as learners and produces OOF predictions", 
 })
 
 # ----------------------------------------------------------------------------
-#  Test 2 -- default learners unchanged: ols/logreg are opt-in only
+#  Test 2 -- default learners include ols/logreg (family-aware)
 # ----------------------------------------------------------------------------
 
-test_that("ols/logreg are opt-in: the default learners stay c('ares','krls')", {
+test_that("default learners are c('ares','krls','ols','logreg')", {
   d <- .meep_lin_dgp(n = 200, p = 3, seed = 102)
   fit <- meep(d$X, d$y, folds = 4L, tune = "none", seed = 102)
-  expect_identical(fit$learners, c("ares", "krls"))
-  expect_false(any(c("ols", "logreg") %in% fit$learners))
+  expect_identical(fit$learners, c("ares", "krls", "ols", "logreg"))
 })
 
 # ----------------------------------------------------------------------------
@@ -248,4 +249,177 @@ test_that("a failing ols fold yields an NA column and renormalized weights", {
   expect_true(all(is.finite(oof[, "ares"])))
   expect_true(all(is.finite(fit$y_hat_oof)))
   expect_gt(length(fit$fold_failures), 0L)
+})
+
+# ----------------------------------------------------------------------------
+#  Test 9 -- DEFAULT learners: gaussian outcome uses ols, excludes logreg
+# ----------------------------------------------------------------------------
+
+test_that("default learners: gaussian outcome fits ols, skips logreg cleanly", {
+  d <- .meep_lin_dgp(n = 280, p = 4, seed = 201)
+  fit <- meep(d$X, d$y, folds = 4L, tune = "none", seed = 201)
+
+  expect_identical(fit$learners,
+                   c("ares", "krls", "ols", "logreg"))
+
+  oof <- fit$oof_matrix$outcome
+  expect_identical(colnames(oof),
+                   c("ares", "krls", "ols", "logreg"))
+  # ols applies to a gaussian nuisance -> its OOF column is populated.
+  expect_true(all(is.finite(oof[, "ols"])))
+  # logreg does NOT apply to a gaussian nuisance -> all-NA column.
+  expect_true(all(is.na(oof[, "logreg"])))
+
+  # an inapplicable learner is skipped, not failed: no fold_failures entry
+  # naming logreg, and logreg is absent from learner_cv_perf.
+  ff_learners <- vapply(fit$fold_failures,
+                        function(z) z$learner, character(1L))
+  expect_false("logreg" %in% ff_learners)
+  expect_false("logreg" %in% fit$learner_cv_perf$learner)
+  expect_true("ols" %in% fit$learner_cv_perf$learner)
+
+  # the ensemble excludes the all-NA logreg column entirely.
+  expect_equal(unname(fit$ensemble_weights$outcome["logreg"]), 0)
+})
+
+# ----------------------------------------------------------------------------
+#  Test 10 -- DEFAULT learners: binary outcome + binary treatment use logreg
+# ----------------------------------------------------------------------------
+
+test_that("default learners: binary nuisances fit logreg, skip ols cleanly", {
+  set.seed(202)
+  n <- 320; p <- 4
+  X <- matrix(runif(n * p), n, p)
+  D <- rbinom(n, 1, plogis(X[, 1] - 0.5))
+  y <- rbinom(n, 1, plogis(0.6 * X[, 1] - 0.4 * X[, 2]))
+
+  fit <- suppressWarnings(
+    meep(X, y, treatment = D, folds = 4L, tune = "none", seed = 202))
+
+  expect_identical(fit$family, "binomial")
+  expect_identical(fit$treatment_family, "binomial")
+
+  # every nuisance here is binomial: logreg applies, ols does not.
+  for (nm in names(fit$oof_matrix)) {
+    oof <- fit$oof_matrix[[nm]]
+    expect_true(all(is.finite(oof[, "logreg"])),
+                info = paste("logreg populated for", nm))
+    expect_true(all(is.na(oof[, "ols"])),
+                info = paste("ols skipped for", nm))
+  }
+
+  # ols inapplicable everywhere -> no fold_failures entry, absent from perf.
+  ff_learners <- vapply(fit$fold_failures,
+                        function(z) z$learner, character(1L))
+  expect_false("ols" %in% ff_learners)
+  expect_false("ols" %in% fit$learner_cv_perf$learner)
+})
+
+# ----------------------------------------------------------------------------
+#  Test 11 -- family mixing: gaussian Y + binary D resolves per nuisance
+# ----------------------------------------------------------------------------
+
+test_that("default learners mix per nuisance: ols for Y/mu0/mu1, logreg for D", {
+  set.seed(203)
+  n <- 400; p <- 4
+  X <- matrix(runif(n * p), n, p)
+  D <- rbinom(n, 1, plogis(X[, 1] - 0.5))
+  # continuous (gaussian) outcome, binary treatment -> arm models engage.
+  y <- 1 + 0.8 * X[, 1] - 0.5 * X[, 2] + 0.6 * D + rnorm(n, sd = 0.3)
+
+  fit <- suppressWarnings(
+    meep(X, y, treatment = D, folds = 4L, tune = "none", seed = 203))
+
+  expect_identical(fit$family, "gaussian")
+  expect_identical(fit$treatment_family, "binomial")
+  # arm_models = "auto" + binary D -> mu0/mu1 nuisances present.
+  expect_true(all(c("outcome", "treatment", "mu0", "mu1") %in%
+                    names(fit$oof_matrix)))
+
+  # gaussian nuisances: ols active, logreg skipped (all-NA).
+  for (nm in c("outcome", "mu0", "mu1")) {
+    oof <- fit$oof_matrix[[nm]]
+    expect_true(all(is.finite(oof[, "ols"])),
+                info = paste("ols active for", nm))
+    expect_true(all(is.na(oof[, "logreg"])),
+                info = paste("logreg skipped for", nm))
+  }
+  # binomial treatment nuisance: logreg active, ols skipped (all-NA).
+  oof_d <- fit$oof_matrix$treatment
+  expect_true(all(is.finite(oof_d[, "logreg"])))
+  expect_true(all(is.na(oof_d[, "ols"])))
+
+  # ares/krls are family-agnostic: populated on every nuisance.
+  for (nm in names(fit$oof_matrix)) {
+    oof <- fit$oof_matrix[[nm]]
+    expect_true(all(is.finite(oof[, "ares"])),
+                info = paste("ares active for", nm))
+    expect_true(all(is.finite(oof[, "krls"])),
+                info = paste("krls active for", nm))
+  }
+
+  # no fold_failures entries from family-inapplicable skips: every logged
+  # failure (if any) names a learner that WAS applicable to that nuisance.
+  for (z in fit$fold_failures) {
+    if (z$nuisance == "treatment")
+      expect_true(z$learner != "ols")
+    else
+      expect_true(z$learner != "logreg")
+  }
+})
+
+# ----------------------------------------------------------------------------
+#  Test 12 -- empty applicable set: explicit incompatible learner errors
+# ----------------------------------------------------------------------------
+
+test_that("learners='ols' with a binary outcome errors with a clear message", {
+  set.seed(204)
+  n <- 200; p <- 3
+  X <- matrix(runif(n * p), n, p)
+  y <- rbinom(n, 1, plogis(X[, 1] - 0.5))
+
+  expect_error(
+    meep(X, y, folds = 4L, learners = "ols", tune = "none", seed = 204),
+    "no applicable learner for nuisance 'outcome'")
+  # the message names the family and the cause.
+  expect_error(
+    meep(X, y, folds = 4L, learners = "ols", tune = "none", seed = 204),
+    "binomial")
+})
+
+test_that("learners='logreg' with a gaussian outcome errors clearly", {
+  d <- .meep_lin_dgp(n = 200, p = 3, seed = 205)
+  expect_error(
+    meep(d$X, d$y, folds = 4L, learners = "logreg",
+         tune = "none", seed = 205),
+    "no applicable learner for nuisance 'outcome'")
+})
+
+# ----------------------------------------------------------------------------
+#  Test 13 -- determinism with the DEFAULT learner set
+# ----------------------------------------------------------------------------
+
+test_that("meep with default learners is byte-identical across thread counts", {
+  set.seed(206)
+  n <- 360; p <- 4
+  X <- matrix(runif(n * p), n, p)
+  D <- rbinom(n, 1, plogis(X[, 1] - 0.5))
+  y <- 1 + 0.8 * X[, 1] - 0.5 * X[, 2] + 0.6 * D + rnorm(n, sd = 0.3)
+
+  RcppParallel::setThreadOptions(numThreads = 1L)
+  fit1 <- suppressWarnings(
+    meep(X, y, treatment = D, folds = 4L, ensemble = "stack",
+         tune = "none", seed = 206))
+
+  RcppParallel::setThreadOptions(numThreads = 4L)
+  fit4 <- suppressWarnings(
+    meep(X, y, treatment = D, folds = 4L, ensemble = "stack",
+         tune = "none", seed = 206))
+  RcppParallel::setThreadOptions(numThreads = 1L)
+
+  expect_identical(fit1$y_hat_oof, fit4$y_hat_oof)
+  expect_identical(fit1$d_hat_oof, fit4$d_hat_oof)
+  expect_identical(fit1$mu0_hat_oof, fit4$mu0_hat_oof)
+  expect_identical(fit1$mu1_hat_oof, fit4$mu1_hat_oof)
+  expect_identical(fit1$ensemble_weights, fit4$ensemble_weights)
 })
