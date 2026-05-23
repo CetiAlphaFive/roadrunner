@@ -1307,20 +1307,41 @@ ares.default <- function(x, y, degree = 1L, nk = NULL, penalty = NULL,
                         weights_in = w_tr)
     M_full <- nrow(fit$dirs)
     out_mse <- rep(NA_real_, M_full)
-    for (s in seq_len(M_full)) {
-      subs <- fit$path.subsets[[s]]
-      if (is.null(subs) || length(subs) == 0L) next
-      coefs <- fit$path.coefs[[s]]
-      if (length(coefs) != length(subs)) next  # defensive
-      bx_te <- mars_basis_cpp(x_te, fit$dirs, fit$cuts,
-                              as.integer(subs))
-      yhat <- drop(bx_te %*% as.numeric(coefs))
-      r <- y_te - yhat
-      if (is.null(w_te)) {
-        out_mse[s] <- mean(r * r)
+    # BUG-014 (v0.0.0.9055): the C++ engine only populates
+    # $path.subsets / $path.coefs when M_full > 1 (the backward replay
+    # branch). When a training fold collapses to an intercept-only model
+    # (M_full == 1), those lists are empty and `[[s]]` on an empty list
+    # throws "subscript out of bounds". Guard the index against list
+    # length before extracting; for the M_full == 1 case, score the
+    # intercept-only prediction directly from $coefficients so the fold
+    # still contributes a valid size-1 MSE.
+    n_paths <- min(length(fit$path.subsets), length(fit$path.coefs))
+    if (M_full == 1L && n_paths == 0L) {
+      yhat_const <- as.numeric(fit$coefficients[1])
+      r <- y_te - yhat_const
+      out_mse[1] <- if (is.null(w_te)) {
+        mean(r * r)
       } else {
         sw <- sum(w_te)
-        out_mse[s] <- if (sw > 0) sum(w_te * r * r) / sw else mean(r * r)
+        if (sw > 0) sum(w_te * r * r) / sw else mean(r * r)
+      }
+    } else {
+      for (s in seq_len(M_full)) {
+        if (s > n_paths) next
+        subs <- fit$path.subsets[[s]]
+        if (is.null(subs) || length(subs) == 0L) next
+        coefs <- fit$path.coefs[[s]]
+        if (length(coefs) != length(subs)) next  # defensive
+        bx_te <- mars_basis_cpp(x_te, fit$dirs, fit$cuts,
+                                as.integer(subs))
+        yhat <- drop(bx_te %*% as.numeric(coefs))
+        r <- y_te - yhat
+        if (is.null(w_te)) {
+          out_mse[s] <- mean(r * r)
+        } else {
+          sw <- sum(w_te)
+          out_mse[s] <- if (sw > 0) sum(w_te * r * r) / sw else mean(r * r)
+        }
       }
     }
     out_mse

@@ -164,7 +164,16 @@ predict.ares <- function(object, newdata = NULL,
              "with the new level(s)) and retry.\n",
              paste(msgs, collapse = "\n"), call. = FALSE)
       }
-      xnew <- stats::model.matrix(~ ., data = newdata)
+      # BUG-015 (v0.0.0.9055): build the model frame with
+      # na.action = na.pass so NAs in numeric columns flow through to
+      # xnew and are handled downstream (median-imputation or post-basis
+      # NA mask). model.matrix(<formula>, data = <df>) goes through
+      # model.frame with the global na.action option (default na.omit),
+      # which silently drops rows with NA -- breaking the
+      # length(predict()) == nrow(newdata) contract.
+      mf_new <- stats::model.frame(~ ., data = newdata,
+                                   na.action = stats::na.pass)
+      xnew <- stats::model.matrix(~ ., data = mf_new)
       if ("(Intercept)" %in% colnames(xnew))
         xnew <- xnew[, colnames(xnew) != "(Intercept)", drop = FALSE]
       # Defensive: line up to training expansion exactly.
@@ -208,7 +217,12 @@ predict.ares <- function(object, newdata = NULL,
              paste(fna_report, collapse = "\n"), call. = FALSE)
       }
       xlev <- if (!is.null(object$xlevels)) object$xlevels else NULL
-      mm <- stats::model.matrix(tt, data = newdata, xlev = xlev)
+      # BUG-015 (v0.0.0.9055): build the model frame with na.pass so NAs
+      # in numeric columns are preserved (the default na.omit silently
+      # drops rows, breaking the predict()-length contract).
+      mf_t <- stats::model.frame(tt, data = newdata, xlev = xlev,
+                                 na.action = stats::na.pass)
+      mm <- stats::model.matrix(tt, data = mf_t, xlev = xlev)
       if ("(Intercept)" %in% colnames(mm))
         mm <- mm[, colnames(mm) != "(Intercept)", drop = FALSE]
       # If the formula references columns we don't have, model.matrix

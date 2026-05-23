@@ -81,8 +81,8 @@ krls_logistic_loo_loss_cpp <- function(eta, y, p, W, H_diag) {
     .Call(`_roadrunner_krls_logistic_loo_loss_cpp`, eta, y, p, W, H_diag)
 }
 
-logreg_fit_cpp <- function(X, y, w, maxit, tol) {
-    .Call(`_roadrunner_logreg_fit_cpp`, X, y, w, maxit, tol)
+logreg_fit_cpp <- function(X, y, w, maxit, tol, has_intercept = TRUE) {
+    .Call(`_roadrunner_logreg_fit_cpp`, X, y, w, maxit, tol, has_intercept)
 }
 
 logreg_vcov_cpp <- function(X, w, y, mu, XtWXinv, hatdiag, type) {

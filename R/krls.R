@@ -2216,6 +2216,19 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                 newdata = Xn_std, newdataK = NULL))
   }
 
+  # BUG-017 (v0.0.0.9055): for bagged fits, the NULL-newdata fast-path
+  # used to return $fitted (the central fit) instead of the bag mean.
+  # The non-NULL branch already averages central + per-replicate
+  # predictions, so route bagged NULL-newdata calls through that branch
+  # by setting newdata = object$X (the training design). Skip when
+  # interval = "pint" (handled separately by the PI-from-fitted path).
+  if (is.null(newdata) && !is.null(object$boot) &&
+      !is.null(object$boot$replicates) &&
+      length(object$boot$replicates) > 0L &&
+      !identical(interval, "pint")) {
+    newdata <- object$X
+  }
+
   if (is.null(newdata)) {
     # For the NULL newdata fast-path, build the PI from $fitted +
     # the stored vcov.fitted (on training points).
@@ -2475,20 +2488,58 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
   Xs_mat <- as.matrix(Xs)
   Xn_mat <- as.matrix(Xn)
 
-  one_var <- function(Xs_b, Xn_b, V_b, d_b, lam_b,
-                       sig_vec_b) {
-    v <- as.numeric(krls_posterior_var_cpp(
-      Xn_b, Xs_b, V_b, as.numeric(d_b),
-      as.numeric(lam_b),
-      as.integer(kernel_type), as.numeric(sig_vec_b),
-      as.numeric(poly_c)))
+  # BUG-016 (v0.0.0.9055): weighted-GP posterior variance must scale
+  # K_star by D = diag(sqrt(w_tr)) before the quad form, because the
+  # stored (V, dvals) come from the weighted kernel K_w = D K D, not K.
+  # The identity is V[f*] = K**(unwt) - K* D (K_w + lam I)^-1 D K*'.
+  # In the eigenbasis of K_w this is
+  #   V[f*] = K**(unwt) - rowSums( (K* D V)^2 * (1/(d+lam)) ).
+  # Without the D, K* and (V, d) live in different bases and (for the
+  # Gaussian kernel where diag(K**) = 1) the quad-form contribution
+  # blows up and the posterior variance is silently clamped to 0.
+  one_var <- function(Xs_b, Xn_b, V_b, d_b, lam_b, sig_vec_b,
+                      w_tr_b = NULL) {
+    if (is.null(w_tr_b)) {
+      v <- as.numeric(krls_posterior_var_cpp(
+        Xn_b, Xs_b, V_b, as.numeric(d_b),
+        as.numeric(lam_b),
+        as.integer(kernel_type), as.numeric(sig_vec_b),
+        as.numeric(poly_c)))
+    } else {
+      # K_star (m x n) and the unweighted K** diagonal both come from
+      # the unweighted kernel evaluations.
+      Kstar <- krls_kernel_pred_cpp(Xn_b, Xs_b,
+                                    as.numeric(sig_vec_b),
+                                    as.integer(kernel_type),
+                                    as.numeric(poly_c))
+      sw <- sqrt(as.numeric(w_tr_b))
+      # Column-scale K_star by sqrt(w_tr).
+      KsD <- sweep(Kstar, 2L, sw, `*`)
+      M <- KsD %*% V_b                  # m x n
+      inv_dl <- 1.0 / (as.numeric(d_b) + as.numeric(lam_b))
+      quad <- as.numeric((M * M) %*% inv_dl)
+      # Unweighted K** diagonal.
+      m_n <- nrow(Xn_b)
+      if (kernel_type == 0L) {
+        kss <- rep(1.0, m_n)
+      } else if (kernel_type == 1L) {
+        kss <- as.numeric(rowSums(Xn_b * Xn_b))
+      } else {
+        deg <- kernel_type - 1L
+        base <- as.numeric(rowSums(Xn_b * Xn_b)) + as.numeric(poly_c)
+        kss <- base ^ deg
+      }
+      v <- kss - quad
+    }
     v[v < 0] <- 0
     v
   }
 
+  w_tr_central <- if (!is.null(object$weights)) as.numeric(object$weights) else NULL
   sd_y_central <- as.numeric(apply(object$y, 2L, sd))
   central_var <- one_var(Xs_mat, Xn_mat, V_obj, d_obj,
-                          object$lambda, pred_sigma_vec)
+                          object$lambda, pred_sigma_vec,
+                          w_tr_b = w_tr_central)
   if (isTRUE(unscale)) central_var <- central_var * (sd_y_central^2)
 
   if (!is.null(object$boot) && !is.null(object$boot$replicates)) {
@@ -2514,10 +2565,20 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
                        nrow(Xn_mat), ncol(Xn_mat))
         sig_b_vec <- if (!is.null(Rb$sigma_vec)) Rb$sigma_vec
                      else rep(as.numeric(Rb$sigma), ncol(Rb$X))
-        K_b <- krls_kernel_cpp(Xs_b, sig_b_vec, kernel_type, poly_c)
+        # BUG-016 (v0.0.0.9055): if the replicate carries weights, eigen
+        # of its weighted K = D K D; pass w_b so the variance helper
+        # rescales K_star by sqrt(w_b) before the contraction.
+        w_b <- if (!is.null(Rb$weights)) as.numeric(Rb$weights) else NULL
+        K_b <- if (is.null(w_b)) {
+          krls_kernel_cpp(Xs_b, sig_b_vec, kernel_type, poly_c)
+        } else {
+          K_unwt <- krls_kernel_cpp(Xs_b, sig_b_vec, kernel_type, poly_c)
+          sw_b <- sqrt(w_b)
+          sweep(sweep(K_unwt, 1L, sw_b, `*`), 2L, sw_b, `*`)
+        }
         eo_b <- krls_eig_cpp(K_b)
         v_b <- one_var(Xs_b, Xn_b, eo_b$vectors, eo_b$values,
-                        Rb$lambda, sig_b_vec)
+                        Rb$lambda, sig_b_vec, w_tr_b = w_b)
         if (isTRUE(unscale)) {
           sd_yb <- as.numeric(apply(Rb$y, 2L, sd))
           v_b <- v_b * (sd_yb^2)

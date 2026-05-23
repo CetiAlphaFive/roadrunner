@@ -72,7 +72,8 @@ inline double dev_resid_sq(double yi, double mui, double wi) {
 //
 // [[Rcpp::export]]
 Rcpp::List logreg_fit_cpp(const arma::mat& X, const arma::vec& y,
-                          const arma::vec& w, int maxit, double tol) {
+                          const arma::vec& w, int maxit, double tol,
+                          bool has_intercept = true) {
   const arma::uword n = X.n_rows;
   const arma::uword p = X.n_cols;
   if (y.n_elem != n)
@@ -88,9 +89,19 @@ Rcpp::List logreg_fit_cpp(const arma::mat& X, const arma::vec& y,
   const double eps = 1e-10;          // probability clamp.
   const double wsum = arma::accu(w);
 
-  // Null deviance: the intercept-only model fits the constant probability
-  // mu0 = weighted mean of y (clamped). Used as the deviance baseline.
-  double mu0 = arma::dot(w, y) / wsum;
+  // Null deviance baseline: the canonical "intercept-only" model under
+  // the link is eta = const. With an intercept column in X, the best
+  // constant is the weighted mean of y; without an intercept (e.g.
+  // y ~ 0 + x), the null model has eta = 0 -> mu = 0.5 (BUG-020 fix,
+  // v0.0.0.9055). Without the has_intercept switch this used to use
+  // mean(y) always, which disagrees with stats::glm() and is internally
+  // inconsistent with the df.null adjustment on the R side.
+  double mu0;
+  if (has_intercept) {
+    mu0 = arma::dot(w, y) / wsum;
+  } else {
+    mu0 = 0.5;
+  }
   mu0 = std::min(std::max(mu0, eps), 1.0 - eps);
   double null_deviance = 0.0;
   for (arma::uword i = 0; i < n; ++i)

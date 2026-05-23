@@ -339,8 +339,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // logreg_fit_cpp
-Rcpp::List logreg_fit_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& w, int maxit, double tol);
-RcppExport SEXP _roadrunner_logreg_fit_cpp(SEXP XSEXP, SEXP ySEXP, SEXP wSEXP, SEXP maxitSEXP, SEXP tolSEXP) {
+Rcpp::List logreg_fit_cpp(const arma::mat& X, const arma::vec& y, const arma::vec& w, int maxit, double tol, bool has_intercept);
+RcppExport SEXP _roadrunner_logreg_fit_cpp(SEXP XSEXP, SEXP ySEXP, SEXP wSEXP, SEXP maxitSEXP, SEXP tolSEXP, SEXP has_interceptSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -349,7 +349,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type w(wSEXP);
     Rcpp::traits::input_parameter< int >::type maxit(maxitSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    rcpp_result_gen = Rcpp::wrap(logreg_fit_cpp(X, y, w, maxit, tol));
+    Rcpp::traits::input_parameter< bool >::type has_intercept(has_interceptSEXP);
+    rcpp_result_gen = Rcpp::wrap(logreg_fit_cpp(X, y, w, maxit, tol, has_intercept));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -514,7 +515,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_krls_nystrom_autotune_inner_cpp", (DL_FUNC) &_roadrunner_krls_nystrom_autotune_inner_cpp, 9},
     {"_roadrunner_krls_irls_logistic_cpp", (DL_FUNC) &_roadrunner_krls_irls_logistic_cpp, 8},
     {"_roadrunner_krls_logistic_loo_loss_cpp", (DL_FUNC) &_roadrunner_krls_logistic_loo_loss_cpp, 5},
-    {"_roadrunner_logreg_fit_cpp", (DL_FUNC) &_roadrunner_logreg_fit_cpp, 5},
+    {"_roadrunner_logreg_fit_cpp", (DL_FUNC) &_roadrunner_logreg_fit_cpp, 6},
     {"_roadrunner_logreg_vcov_cpp", (DL_FUNC) &_roadrunner_logreg_vcov_cpp, 7},
     {"_roadrunner_ols_fit_cpp", (DL_FUNC) &_roadrunner_ols_fit_cpp, 3},
     {"_roadrunner_ols_vcov_cpp", (DL_FUNC) &_roadrunner_ols_vcov_cpp, 7},

@@ -98,12 +98,17 @@ test_that("plda handles edge cases", {
   expect_error(predict(fit, iris[1:5, 1:3]), "not found")
 })
 
-test_that("plda CV survives a rare class and rejects singleton classes", {
+test_that("plda CV handles rare classes via nfold check and rejects singletons", {
   set.seed(123)
   x <- matrix(rnorm(40 * 6), 40, 6)
-  # rare class of size 2 — must NOT crash under default-ish nfold
+  # rare class of size 2 with nfold = 3 -- BUG-021 (v0.0.0.9055): the
+  # stratified fold builder cannot place class 3 into every fold, so we
+  # now reject upfront with a clear message instead of silently biasing
+  # the CV error.
   y2 <- factor(c(rep(1, 19), rep(2, 19), rep(3, 2)))
-  expect_s3_class(plda(x, y2, nfold = 3), "plda")
+  expect_error(plda(x, y2, nfold = 3), "nfold")
+  # ...and dropping to nfold = min(class_count) = 2 must succeed.
+  expect_s3_class(plda(x, y2, nfold = 2), "plda")
   # singleton class — must error clearly, not crash
   y1 <- factor(c(rep(1, 20), rep(2, 19), rep(3, 1)))
   expect_error(plda(x, y1, nfold = 3), "at least 2")

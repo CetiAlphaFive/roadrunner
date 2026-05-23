@@ -505,6 +505,19 @@ meep <- function(X, y, treatment = NULL,
   if (length(y) != n)
     stop("meep: length(y) (", length(y), ") must equal nrow(X) (", n, ").",
          call. = FALSE)
+  # BUG-019 (v0.0.0.9055): a factor or character outcome with >= 3 levels
+  # used to be silently coerced to integer codes by as.numeric() below,
+  # then auto-detected as gaussian, then fit as a regression on the
+  # label codes. Multi-class outcomes are out of scope -- reject upfront
+  # with a clear message, mirroring the treatment-validation pattern
+  # downstream at lines ~557-561.
+  if (is.factor(y) || is.character(y)) {
+    nlv <- nlevels(as.factor(y))
+    if (nlv > 2L)
+      stop("meep: outcome `y` has ", nlv,
+           " distinct categorical levels. Multi-class outcomes are not ",
+           "supported (only binary or continuous).", call. = FALSE)
+  }
   y <- as.numeric(y)
 
   if (!is.null(treatment)) {
@@ -978,8 +991,16 @@ predict.meep <- function(object, newdata,
     if (is.null(fitted_model)) {
       hp <- if (identical(object$tune, "once"))
         (object$frozen_hyperparams[[lname]] %||% list()) else list()
+      # BUG-018 (v0.0.0.9055): for arm-restricted refits (mu0 / mu1),
+      # `rows` selects the treatment-arm subset; weights must be sliced
+      # to match, otherwise the learner errors length(weights) !=
+      # length(y), the tryCatch swallows it, the OOF column stays NA,
+      # and predict.meep() returns NA_real_ per row.
+      wtr <- if (is.null(object$weights)) NULL
+             else if (is.null(rows)) object$weights
+             else object$weights[rows]
       fitted_model <- tryCatch(
-        specs[[li]]$fit(Xtr, resp, fam, object$weights, hp),
+        specs[[li]]$fit(Xtr, resp, fam, wtr, hp),
         error = function(e) e)
       if (inherits(fitted_model, "error")) next
       assign(key, fitted_model, envir = object$.full_fits)

@@ -287,7 +287,12 @@ logreg.default <- function(x, y, weights = NULL, intercept = TRUE,
   w_vec <- if (is.null(weights)) rep(1, n) else as.numeric(weights)
 
   # ---- C++ IRLS fit -------------------------------------------------------
-  eng <- logreg_fit_cpp(x, y, w_vec, maxit, tol)
+  # BUG-020 (v0.0.0.9055): pass has_intercept so the null-deviance
+  # baseline uses mu0 = 0.5 for no-intercept formulas (y ~ 0 + x), where
+  # the canonical null model is eta = 0 -> mu = 0.5. Without this, the
+  # engine always used the weighted mean of y and disagreed with
+  # stats::glm() while df.null was already adjusted on the R side.
+  eng <- logreg_fit_cpp(x, y, w_vec, maxit, tol, has_int)
   coef <- as.numeric(eng$coefficients)
   names(coef) <- colnames(x)
 
@@ -382,7 +387,8 @@ logreg.default <- function(x, y, weights = NULL, intercept = TRUE,
       yb <- y[pos]
       if (length(unique(yb)) < 2L) next
       f_b <- tryCatch(
-        logreg_fit_cpp(x[pos, , drop = FALSE], yb, w_b[pos], maxit, tol),
+        logreg_fit_cpp(x[pos, , drop = FALSE], yb, w_b[pos], maxit, tol,
+                       has_int),
         error = function(e) NULL)
       if (!is.null(f_b))
         boot_coef[, b] <- as.numeric(f_b$coefficients)

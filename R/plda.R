@@ -83,6 +83,23 @@ plda.default <- function(x, y, K = NULL, lambda = NULL,
   if (nfold > nrow(x))
     stop(sprintf("plda: `nfold` (%d) cannot exceed nrow(x) (%d).", nfold, nrow(x)),
          call. = FALSE)
+  # BUG-021 (v0.0.0.9055): the stratified fold builder places each class
+  # into folds 1..length(class) via sample(rep_len(seq_len(nfold), ...)),
+  # which means when min(class_count) < nfold some folds receive zero
+  # test observations for that class. Those folds short-circuit with
+  # err_slot = 0, biasing the CV error toward 0 and selecting the wrong
+  # lambda. Reject upfront with a clear message recommending the
+  # largest valid nfold.
+  if (autotune) {
+    min_class <- min(class_counts)
+    if (nfold > min_class)
+      stop(sprintf(
+        paste0("plda: `nfold` (%d) exceeds the smallest class count ",
+               "(%d). Stratified CV cannot place every class into ",
+               "every fold; set nfold = %d (or smaller)."),
+        nfold, min_class, min_class),
+        call. = FALSE)
+  }
 
   # Resolve nthreads. `0` (or anything <= 0) means "use the package default".
   # Mirror krls.default: bare 0L in the signature; option lookup + resolution
