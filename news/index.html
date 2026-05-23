@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9054</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9055</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,29 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9055" id="roadrunner-0009055">roadrunner 0.0.0.9055<a class="anchor" aria-label="anchor" href="#roadrunner-0009055"></a></h2>
+<div class="section level3">
+<h3 id="tier-a-audit-bug-fixes-fixes-0-0-0-9055">Tier A audit bug fixes (8 fixes)<a class="anchor" aria-label="anchor" href="#tier-a-audit-bug-fixes-fixes-0-0-0-9055"></a></h3>
+<p>This release closes eight bugs identified by the 2026-05-22 audit. Full plan: <code>docs/superpowers/audits/2026-05-22-package-audit/01-tier-A-fix-plan.md</code>.</p>
+<ul><li>
+<strong>BUG-014</strong> (<code>ares</code>): <code>pmethod = "cv"</code> crashed with <code>"subscript out of bounds"</code> when a small fold’s forward pass collapsed to an intercept-only model (<code>M_full == 1</code>). The C++ engine populates <code>$path.subsets</code> / <code>$path.coefs</code> only when <code>M &gt; 1</code>, so those lists were empty for the M=1 case. The CV loop now guards the index against list length and scores the intercept-only prediction directly from <code>$coefficients</code>, letting the fold contribute a valid size-1 MSE.</li>
+<li>
+<strong>BUG-015</strong> (<code>predict.ares</code>): when the fit carried <code>$factor_info</code> (or a <code>$terms</code>), <code><a href="https://rdrr.io/r/stats/model.matrix.html" class="external-link">model.matrix()</a></code> ran through <code><a href="https://rdrr.io/r/stats/model.frame.html" class="external-link">model.frame()</a></code> with the global <code>na.action</code> (default <code>na.omit</code>), silently dropping <code>newdata</code> rows that had <code>NA</code> in numeric columns. The returned vector was shorter than <code>nrow(newdata)</code>, violating the predict-length contract. Both branches now build the model frame with <code>na.action = na.pass</code> so NAs flow through to the downstream median-impute / NA-row-mask path.</li>
+<li>
+<strong>BUG-016</strong> (<code>krls</code>): <code>predict(weighted_krls_fit, type = "variance")</code> returned ~0 across all rows. The fit stashed <code>(V, dvals)</code> from the <em>weighted</em> kernel <code>K_w = D K D</code> (<code>D = diag(sqrt(w))</code>), but the predict-side helper built <code>K_star</code> from the <em>unweighted</em> kernel. The helper now column-scales <code>K_star</code> by <code>sqrt(w_tr)</code> before the quad-form, implementing <code>V[f*] = K**(unwt) - K* D (K_w + lam I)^-1 D K*'</code>.</li>
+<li>
+<strong>BUG-017</strong> (<code>krls</code>): <code>predict(bagged_krls_fit, newdata = NULL)</code> returned <code>$fitted</code> – the central fit – instead of the bag mean across replicates. The non-NULL branch already does the bagging, so the NULL-newdata fast-path was inconsistent with the predict-on-newdata behaviour. The fix routes bagged NULL-newdata calls through the non-NULL branch (with <code>newdata = object$X</code>).</li>
+<li>
+<strong>BUG-018</strong> (<code>meep</code>): <code>predict.meep(nuisance = "mu0" | "mu1")</code> returned all-NA for any weighted <code><a href="../reference/meep.html">meep()</a></code> fit. The arm-restricted refit inside <code>predict.meep</code> passed <code>object$weights</code> (length n) without slicing to the treatment-arm subset, so the base learner errored <code>length(weights) != length(y)</code>, the error was swallowed, and the prediction collapsed to NA. Weights are now sliced to the arm rows.</li>
+<li>
+<strong>BUG-019</strong> (<code>meep</code>): a factor or character outcome with three or more levels was silently coerced to integer codes and fit as a regression. Multi-class outcomes are out of scope; <code><a href="../reference/meep.html">meep()</a></code> now rejects them upfront with a clear message, mirroring the treatment-validation pattern.</li>
+<li>
+<strong>BUG-020</strong> (<code>logreg</code>): <code>null.deviance</code> disagreed with <code><a href="https://rdrr.io/r/stats/glm.html" class="external-link">stats::glm()</a></code> for no-intercept formulas (<code>y ~ 0 + x</code>). The C++ engine always used the weighted mean of y as the null mu, but the canonical null model under no intercept is <code>eta = 0 -&gt; mu = 0.5</code>. The engine now takes a <code>has_intercept</code> flag (R-side detected as <code>"(Intercept)" %in% colnames(X)</code> or <code>intercept = TRUE</code>), and uses <code>mu0 = 0.5</code> when false.</li>
+<li>
+<strong>BUG-021</strong> (<code>plda</code>): when <code>nfold &gt; min(table(y))</code>, the stratified fold builder placed each class only into folds <code>1..length(class)</code>, so some folds received zero test observations and biased the CV error toward 0 (selecting the wrong lambda). <code><a href="../reference/plda.html">plda()</a></code> now rejects upfront with a clear message recommending the largest valid nfold.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9054" id="roadrunner-0009054">roadrunner 0.0.0.9054<a class="anchor" aria-label="anchor" href="#roadrunner-0009054"></a></h2>
 <div class="section level3">

@@ -1,5 +1,72 @@
 # Changelog
 
+## roadrunner 0.0.0.9055
+
+### Tier A audit bug fixes (8 fixes)
+
+This release closes eight bugs identified by the 2026-05-22 audit. Full
+plan:
+`docs/superpowers/audits/2026-05-22-package-audit/01-tier-A-fix-plan.md`.
+
+- **BUG-014** (`ares`): `pmethod = "cv"` crashed with
+  `"subscript out of bounds"` when a small fold’s forward pass collapsed
+  to an intercept-only model (`M_full == 1`). The C++ engine populates
+  `$path.subsets` / `$path.coefs` only when `M > 1`, so those lists were
+  empty for the M=1 case. The CV loop now guards the index against list
+  length and scores the intercept-only prediction directly from
+  `$coefficients`, letting the fold contribute a valid size-1 MSE.
+- **BUG-015** (`predict.ares`): when the fit carried `$factor_info` (or
+  a `$terms`),
+  [`model.matrix()`](https://rdrr.io/r/stats/model.matrix.html) ran
+  through [`model.frame()`](https://rdrr.io/r/stats/model.frame.html)
+  with the global `na.action` (default `na.omit`), silently dropping
+  `newdata` rows that had `NA` in numeric columns. The returned vector
+  was shorter than `nrow(newdata)`, violating the predict-length
+  contract. Both branches now build the model frame with
+  `na.action = na.pass` so NAs flow through to the downstream
+  median-impute / NA-row-mask path.
+- **BUG-016** (`krls`): `predict(weighted_krls_fit, type = "variance")`
+  returned ~0 across all rows. The fit stashed `(V, dvals)` from the
+  *weighted* kernel `K_w = D K D` (`D = diag(sqrt(w))`), but the
+  predict-side helper built `K_star` from the *unweighted* kernel. The
+  helper now column-scales `K_star` by `sqrt(w_tr)` before the
+  quad-form, implementing
+  `V[f*] = K**(unwt) - K* D (K_w + lam I)^-1 D K*'`.
+- **BUG-017** (`krls`): `predict(bagged_krls_fit, newdata = NULL)`
+  returned `$fitted` – the central fit – instead of the bag mean across
+  replicates. The non-NULL branch already does the bagging, so the
+  NULL-newdata fast-path was inconsistent with the predict-on-newdata
+  behaviour. The fix routes bagged NULL-newdata calls through the
+  non-NULL branch (with `newdata = object$X`).
+- **BUG-018** (`meep`): `predict.meep(nuisance = "mu0" | "mu1")`
+  returned all-NA for any weighted
+  [`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+  fit. The arm-restricted refit inside `predict.meep` passed
+  `object$weights` (length n) without slicing to the treatment-arm
+  subset, so the base learner errored `length(weights) != length(y)`,
+  the error was swallowed, and the prediction collapsed to NA. Weights
+  are now sliced to the arm rows.
+- **BUG-019** (`meep`): a factor or character outcome with three or more
+  levels was silently coerced to integer codes and fit as a regression.
+  Multi-class outcomes are out of scope;
+  [`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+  now rejects them upfront with a clear message, mirroring the
+  treatment-validation pattern.
+- **BUG-020** (`logreg`): `null.deviance` disagreed with
+  [`stats::glm()`](https://rdrr.io/r/stats/glm.html) for no-intercept
+  formulas (`y ~ 0 + x`). The C++ engine always used the weighted mean
+  of y as the null mu, but the canonical null model under no intercept
+  is `eta = 0 -> mu = 0.5`. The engine now takes a `has_intercept` flag
+  (R-side detected as `"(Intercept)" %in% colnames(X)` or
+  `intercept = TRUE`), and uses `mu0 = 0.5` when false.
+- **BUG-021** (`plda`): when `nfold > min(table(y))`, the stratified
+  fold builder placed each class only into folds `1..length(class)`, so
+  some folds received zero test observations and biased the CV error
+  toward 0 (selecting the wrong lambda).
+  [`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
+  now rejects upfront with a clear message recommending the largest
+  valid nfold.
+
 ## roadrunner 0.0.0.9054
 
 ### meep() — ols() and logreg() are now default learners
