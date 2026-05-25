@@ -1,5 +1,51 @@
 # Changelog
 
+## roadrunner 0.0.0.9057
+
+### `krls()` single-fit: closed-form spectral vcov
+
+The unweighted (`weights = NULL`) `krls(..., vcov = TRUE)` path now
+computes coefficient and fitted-value covariances directly from the
+eigen-decomposition that was already produced for the lambda search,
+using the spectral identity `K = V diag(d) V^T`:
+
+``` R
+vcovmatc    = V diag(w)        V^T = tcrossprod(V scaled by sqrt(w))
+vcovmatyhat = V diag(d^2 * w)  V^T = tcrossprod(V scaled by d sqrt(w))
+```
+
+where `w = sigma2 / (d + lambda)^2`. This replaces two R-level `O(n^3)`
+dgemm calls (`V %*% (t(V) * w)` and `crossprod(K, vcovmatc %*% K)`) with
+two `O(n^3 / 2)` dsyrk calls via `tcrossprod`; no K matrix is touched on
+this path. Outputs match the v9056 formulation to within ~1e-15 (machine
+epsilon) and are symmetric by construction.
+
+Measurements (16-core MKL, Friedman-1, 12 threads,
+`inst/sims/v0.26-krls-speed-baseline.R` cells, cumulative vs v9055):
+
+| cell            | v9055  | v9057  | speedup |
+|-----------------|--------|--------|---------|
+| n=400 gcv       | 0.033s | 0.026s | 1.27x   |
+| n=1500 gcv      | 0.403s | 0.353s | 1.14x   |
+| n=1500 default  | 0.534s | 0.498s | 1.07x   |
+| n=400 autotune  | 1.456s | 0.758s | 1.92x   |
+| n=800 autotune  | 8.235s | 5.526s | 1.49x   |
+| n=1500 autotune | 50.87s | 37.92s | 1.34x   |
+
+Geometric-mean speedup across all 9 baseline cells: **+20.7%** vs v9055.
+
+The weighted (`!is.null(weights)`) path retains the v9056 two-gemm
+formulation because the spectral simplification assumes `V` diagonalises
+the kernel used in the K-times-K reduction; in the weighted path `V`
+diagonalises `K_w = D K D` (not `K`), and the residual `V^T D^-1 V`
+terms do not collapse. The non-Gaussian / logistic / Nystrom paths are
+unaffected.
+
+`AUDIT-D` thread-determinism is preserved (`nthreads = 1` and
+`nthreads = 4` produce bit-identical `K`, `coeffs`, `fitted`, `vcov.c`,
+`vcov.fitted`, `avgderivatives`). 639 krls tests pass with
+`ARES_FULL_TESTS = 1`; lint clean.
+
 ## roadrunner 0.0.0.9056
 
 ### `krls()` autotune: progressive sigma-grid pruning

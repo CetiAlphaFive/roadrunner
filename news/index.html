@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9056</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9057</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,49 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9057" id="roadrunner-0009057">roadrunner 0.0.0.9057<a class="anchor" aria-label="anchor" href="#roadrunner-0009057"></a></h2>
+<div class="section level3">
+<h3 id="krls-single-fit-closed-form-spectral-vcov-0-0-0-9057">
+<code>krls()</code> single-fit: closed-form spectral vcov<a class="anchor" aria-label="anchor" href="#krls-single-fit-closed-form-spectral-vcov-0-0-0-9057"></a></h3>
+<p>The unweighted (<code>weights = NULL</code>) <code>krls(..., vcov = TRUE)</code> path now computes coefficient and fitted-value covariances directly from the eigen-decomposition that was already produced for the lambda search, using the spectral identity <code>K = V diag(d) V^T</code>:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a>vcovmatc    <span class="ot">=</span> V <span class="fu">diag</span>(w)        V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by <span class="fu">sqrt</span>(w))</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a>vcovmatyhat <span class="ot">=</span> V <span class="fu">diag</span>(d<span class="sc">^</span><span class="dv">2</span> <span class="sc">*</span> w)  V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by d <span class="fu">sqrt</span>(w))</span></code></pre></div>
+<p>where <code>w = sigma2 / (d + lambda)^2</code>. This replaces two R-level <code>O(n^3)</code> dgemm calls (<code>V %*% (t(V) * w)</code> and <code>crossprod(K, vcovmatc %*% K)</code>) with two <code>O(n^3 / 2)</code> dsyrk calls via <code>tcrossprod</code>; no K matrix is touched on this path. Outputs match the v9056 formulation to within ~1e-15 (machine epsilon) and are symmetric by construction.</p>
+<p>Measurements (16-core MKL, Friedman-1, 12 threads, <code>inst/sims/v0.26-krls-speed-baseline.R</code> cells, cumulative vs v9055):</p>
+<table class="table"><thead><tr><th>cell</th>
+<th>v9055</th>
+<th>v9057</th>
+<th>speedup</th>
+</tr></thead><tbody><tr><td>n=400 gcv</td>
+<td>0.033s</td>
+<td>0.026s</td>
+<td>1.27x</td>
+</tr><tr><td>n=1500 gcv</td>
+<td>0.403s</td>
+<td>0.353s</td>
+<td>1.14x</td>
+</tr><tr><td>n=1500 default</td>
+<td>0.534s</td>
+<td>0.498s</td>
+<td>1.07x</td>
+</tr><tr><td>n=400 autotune</td>
+<td>1.456s</td>
+<td>0.758s</td>
+<td>1.92x</td>
+</tr><tr><td>n=800 autotune</td>
+<td>8.235s</td>
+<td>5.526s</td>
+<td>1.49x</td>
+</tr><tr><td>n=1500 autotune</td>
+<td>50.87s</td>
+<td>37.92s</td>
+<td>1.34x</td>
+</tr></tbody></table><p>Geometric-mean speedup across all 9 baseline cells: <strong>+20.7%</strong> vs v9055.</p>
+<p>The weighted (<code>!is.null(weights)</code>) path retains the v9056 two-gemm formulation because the spectral simplification assumes <code>V</code> diagonalises the kernel used in the K-times-K reduction; in the weighted path <code>V</code> diagonalises <code>K_w = D K D</code> (not <code>K</code>), and the residual <code>V^T D^-1 V</code> terms do not collapse. The non-Gaussian / logistic / Nystrom paths are unaffected.</p>
+<p><code>AUDIT-D</code> thread-determinism is preserved (<code>nthreads = 1</code> and <code>nthreads = 4</code> produce bit-identical <code>K</code>, <code>coeffs</code>, <code>fitted</code>, <code>vcov.c</code>, <code>vcov.fitted</code>, <code>avgderivatives</code>). 639 krls tests pass with <code>ARES_FULL_TESTS = 1</code>; lint clean.</p>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9056" id="roadrunner-0009056">roadrunner 0.0.0.9056<a class="anchor" aria-label="anchor" href="#roadrunner-0009056"></a></h2>
 <div class="section level3">
