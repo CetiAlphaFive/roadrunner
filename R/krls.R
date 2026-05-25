@@ -1821,14 +1821,26 @@ krls.default <- function(X, y,
   }
   if (isTRUE(vcov)) {
     w <- sigma2 / (dvals + lambda)^2
-    vcovmatc_solve <- V %*% (t(V) * w)
     if (!is.null(sqw)) {
-      # Un-twist: vcov(c_final) = D %*% vcov(c_solve) %*% D
-      vcovmatc <- vcovmatc_solve * tcrossprod(sqw)
+      ## Weighted path: keep the original two-gemm formulation. The
+      ## closed-form simplification below assumes V is the eigenbasis of
+      ## the kernel used in the K-times-K reduction (true only when
+      ## sqw == NULL; in the weighted path V diagonalises K_w = D K D,
+      ## not K, and the V^T D^-1 V terms do not collapse).
+      vcovmatc_solve <- V %*% (t(V) * w)
+      vcovmatc       <- vcovmatc_solve * tcrossprod(sqw)
+      vcovmatyhat    <- crossprod(K, vcovmatc %*% K)
     } else {
-      vcovmatc <- vcovmatc_solve
+      ## Unweighted closed form (v0.0.0.9057). Using K = V diag(d) V^T:
+      ##   vcovmatc    = V diag(w)        V^T = tcrossprod(V * sqrt(w))
+      ##   vcovmatyhat = V diag(d^2 * w)  V^T = tcrossprod(V * (d sqrt(w)))
+      ## Replaces two O(n^3) gemms involving K with two O(n^3 / 2) dsyrk
+      ## calls; no K is touched on this path. Result is symmetric by
+      ## construction.
+      sw          <- sqrt(w)
+      vcovmatc    <- tcrossprod(t(t(V) * sw))
+      vcovmatyhat <- tcrossprod(t(t(V) * (dvals * sw)))
     }
-    vcovmatyhat <- crossprod(K, vcovmatc %*% K)
   }
 
   ## --- derivatives --------------------------------------------------
