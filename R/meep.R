@@ -194,9 +194,19 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
     krls = list(
       fit = function(X, y, family, weights, hp) {
         loss <- if (identical(family, "binomial")) "logistic" else "ls"
+        ## meep uses krls as a pure curve fitter for DML / CF nuisance
+        ## estimation: only the OOF prediction matrix is consumed
+        ## downstream. The default krls() pipeline pays ~40% per fit for
+        ## vcov (coefficient + fitted-value covariance) and pointwise /
+        ## average derivatives, none of which meep reads. Turn both off
+        ## by default; the user can opt back in via
+        ## `krls_args = list(vcov = TRUE, derivative = TRUE, ...)`.
+        krls_curve_defaults <- list(vcov = FALSE, derivative = FALSE)
+        krls_args_resolved  <- utils::modifyList(krls_curve_defaults,
+                                                 as.list(krls_args))
         args <- c(list(X = X, y = y, loss = loss),
                   if (!is.null(weights)) list(weights = weights),
-                  krls_args, hp)
+                  krls_args_resolved, hp)
         # krls is verbose-by-default on some paths; keep it quiet here
         do.call(krls, args)
       },

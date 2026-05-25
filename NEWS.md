@@ -1,3 +1,42 @@
+# roadrunner 0.0.0.9058
+
+## `meep()` krls learner: curve-fitter defaults
+
+`meep()` now invokes its `krls` learner with `vcov = FALSE` and
+`derivative = FALSE` by default. The meep ensemble only consumes the
+out-of-fold prediction matrix from each nuisance fit; the SE block
+(coefficient + fitted-value covariance) and the marginal-effects block
+(pointwise + average derivatives + variance of average derivatives)
+were computed on every fold of every nuisance and then discarded.
+
+Per-fit cost share at n = 1500 (v9057 single-fit profile):
+  vcov block       ~15%  (skipped under vcov = FALSE)
+  derivative block ~23%  (skipped under derivative = FALSE)
+
+End-to-end measurement (`meep(learners = "krls", folds = 5)`, 12 threads,
+Friedman-1-like DGP with binary treatment):
+
+  n = 800   :  9.5s -> 9.1s   1.04x   (4% saved)
+  n = 1500  : 53.6s -> 51.7s  1.04x   (4% saved)
+
+OOF prediction matrices are bit-identical between the two paths
+(`max|delta| == 0` on both `y_hat_oof` and `d_hat_oof`); the overall
+meep speedup is modest because meep wall is autotune-dominated
+(per-cell eig in the inner CV), but the saved work is real, the krls
+fits in `fit$folds[[k]]$models$krls` are now `~2 * n^2 + n * p` doubles
+lighter, and any downstream uncertainty quantification for DML / CF
+nuisance fits should be derived from the residuals / OOF predictions
+rather than the individual fit-level SEs.
+
+Opt back in for vcov + derivative via `krls_args`:
+
+    meep(X, y, treatment = D, learners = "krls",
+         krls_args = list(vcov = TRUE, derivative = TRUE))
+
+The `ares` / `ols` / `logreg` learner specs are unchanged.
+
+132 meep tests pass; lint clean.
+
 # roadrunner 0.0.0.9057
 
 ## `krls()` single-fit: closed-form spectral vcov
