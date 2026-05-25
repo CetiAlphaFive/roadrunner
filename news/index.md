@@ -1,5 +1,53 @@
 # Changelog
 
+## roadrunner 0.0.0.9056
+
+### `krls()` autotune: progressive sigma-grid pruning
+
+`krls(..., autotune = TRUE)` now drops clearly-losing sigmas from the
+inner cross-validation as soon as evidence accumulates. After
+`prune_warmup` folds (default 2), any sigma whose mean held-out MSE
+exceeds `prune_factor` x the running best (default 1.5) is removed from
+the remaining fold evaluations, unless it sits within
+`prune_keep_neighbors` grid positions of the running best (default 1,
+prevents collateral damage near the minimum on flat MSE landscapes).
+
+Measured on a 16-core MKL box (Friedman-1, `autotune.speed = "fast"`, 12
+worker threads), comparing v0.0.0.9056 vs v0.0.0.9055 over the
+`inst/sims/v0.26-krls-speed-baseline.R` grid:
+
+| cell            | v9055  | v9056  | speedup |
+|-----------------|--------|--------|---------|
+| n=400 autotune  | 1.46s  | 0.80s  | 1.82x   |
+| n=800 autotune  | 8.23s  | 5.50s  | 1.50x   |
+| n=1500 autotune | 50.87s | 38.23s | 1.33x   |
+
+Selected `sigma`, `lambda`, `coeffs`, and held-out RMSE are
+bit-identical to v9055 on every cell tested. The pruning gate is
+`use_inner_cpp`-only (Gaussian + ls + unweighted + no user bracket), so
+the legacy serial fallback and non-Gaussian / weighted / logistic paths
+are unchanged.
+
+New options (all with safe defaults):
+
+- `roadrunner.krls.autotune.prune_factor` (default `1.5`). Set to `Inf`
+  to disable pruning entirely and recover v9055 behaviour byte-for-byte.
+- `roadrunner.krls.autotune.prune_warmup` (default `2L`). Minimum folds
+  populated before pruning may activate.
+- `roadrunner.krls.autotune.prune_keep_neighbors` (default `1L`). Window
+  around the running-best sigma that is protected from pruning.
+
+`fit$autotune` gains `prune_factor`, `prune_warmup`,
+`prune_keep_neighbors`, `prune_active`, `pruned_n`, and `prune_log` for
+inspection.
+
+### New: KRLS speed-tracking sim
+
+`inst/sims/v0.26-krls-speed-baseline.R` patterned on the existing ares
+baseline; cells: `(n, p) x setup`,
+`setup in {default, gcv, autotune_fast}`. Captures wall, OOS RMSE, and a
+fit digest as the byte-identity oracle.
+
 ## roadrunner 0.0.0.9055
 
 ### Tier A audit bug fixes (8 fixes)
