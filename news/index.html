@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9057</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9058</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -33,13 +33,30 @@
     </div>
 
     <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9058" id="roadrunner-0009058">roadrunner 0.0.0.9058<a class="anchor" aria-label="anchor" href="#roadrunner-0009058"></a></h2>
+<div class="section level3">
+<h3 id="meep-krls-learner-curve-fitter-defaults-0-0-0-9058">
+<code>meep()</code> krls learner: curve-fitter defaults<a class="anchor" aria-label="anchor" href="#meep-krls-learner-curve-fitter-defaults-0-0-0-9058"></a></h3>
+<p><code><a href="../reference/meep.html">meep()</a></code> now invokes its <code>krls</code> learner with <code>vcov = FALSE</code> and <code>derivative = FALSE</code> by default. The meep ensemble only consumes the out-of-fold prediction matrix from each nuisance fit; the SE block (coefficient + fitted-value covariance) and the marginal-effects block (pointwise + average derivatives + variance of average derivatives) were computed on every fold of every nuisance and then discarded.</p>
+<p>Per-fit cost share at n = 1500 (v9057 single-fit profile): vcov block ~15% (skipped under vcov = FALSE) derivative block ~23% (skipped under derivative = FALSE)</p>
+<p>End-to-end measurement (<code>meep(learners = "krls", folds = 5)</code>, 12 threads, Friedman-1-like DGP with binary treatment):</p>
+<p>n = 800 : 9.5s -&gt; 9.1s 1.04x (4% saved) n = 1500 : 53.6s -&gt; 51.7s 1.04x (4% saved)</p>
+<p>OOF prediction matrices are bit-identical between the two paths (<code>max|delta| == 0</code> on both <code>y_hat_oof</code> and <code>d_hat_oof</code>); the overall meep speedup is modest because meep wall is autotune-dominated (per-cell eig in the inner CV), but the saved work is real, the krls fits in <code>fit$folds[[k]]$models$krls</code> are now <code>~2 * n^2 + n * p</code> doubles lighter, and any downstream uncertainty quantification for DML / CF nuisance fits should be derived from the residuals / OOF predictions rather than the individual fit-level SEs.</p>
+<p>Opt back in for vcov + derivative via <code>krls_args</code>:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">meep</span>(X, y, <span class="at">treatment =</span> D, <span class="at">learners =</span> <span class="st">"krls"</span>,</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a>     <span class="at">krls_args =</span> <span class="fu">list</span>(<span class="at">vcov =</span> <span class="cn">TRUE</span>, <span class="at">derivative =</span> <span class="cn">TRUE</span>))</span></code></pre></div>
+<p>The <code>ares</code> / <code>ols</code> / <code>logreg</code> learner specs are unchanged.</p>
+<p>132 meep tests pass; lint clean.</p>
+</div>
+</div>
+    <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9057" id="roadrunner-0009057">roadrunner 0.0.0.9057<a class="anchor" aria-label="anchor" href="#roadrunner-0009057"></a></h2>
 <div class="section level3">
 <h3 id="krls-single-fit-closed-form-spectral-vcov-0-0-0-9057">
 <code>krls()</code> single-fit: closed-form spectral vcov<a class="anchor" aria-label="anchor" href="#krls-single-fit-closed-form-spectral-vcov-0-0-0-9057"></a></h3>
 <p>The unweighted (<code>weights = NULL</code>) <code>krls(..., vcov = TRUE)</code> path now computes coefficient and fitted-value covariances directly from the eigen-decomposition that was already produced for the lambda search, using the spectral identity <code>K = V diag(d) V^T</code>:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a>vcovmatc    <span class="ot">=</span> V <span class="fu">diag</span>(w)        V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by <span class="fu">sqrt</span>(w))</span>
-<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a>vcovmatyhat <span class="ot">=</span> V <span class="fu">diag</span>(d<span class="sc">^</span><span class="dv">2</span> <span class="sc">*</span> w)  V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by d <span class="fu">sqrt</span>(w))</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode R"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>vcovmatc    <span class="ot">=</span> V <span class="fu">diag</span>(w)        V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by <span class="fu">sqrt</span>(w))</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>vcovmatyhat <span class="ot">=</span> V <span class="fu">diag</span>(d<span class="sc">^</span><span class="dv">2</span> <span class="sc">*</span> w)  V<span class="sc">^</span>T <span class="ot">=</span> <span class="fu">tcrossprod</span>(V scaled by d <span class="fu">sqrt</span>(w))</span></code></pre></div>
 <p>where <code>w = sigma2 / (d + lambda)^2</code>. This replaces two R-level <code>O(n^3)</code> dgemm calls (<code>V %*% (t(V) * w)</code> and <code>crossprod(K, vcovmatc %*% K)</code>) with two <code>O(n^3 / 2)</code> dsyrk calls via <code>tcrossprod</code>; no K matrix is touched on this path. Outputs match the v9056 formulation to within ~1e-15 (machine epsilon) and are symmetric by construction.</p>
 <p>Measurements (16-core MKL, Friedman-1, 12 threads, <code>inst/sims/v0.26-krls-speed-baseline.R</code> cells, cumulative vs v9055):</p>
 <table class="table"><thead><tr><th>cell</th>
