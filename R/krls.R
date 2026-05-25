@@ -3610,6 +3610,25 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     L_step         = 10.0,
     U_start_from_n = TRUE
   )
+  ## Progressive sigma-grid pruning (v0.0.0.9056). After `prune_warmup`
+  ## folds have populated MSE columns, drop sigmas whose mean held-out
+  ## MSE exceeds `prune_factor` x the running best. Remaining folds
+  ## evaluate only surviving sigmas; pruned cells stay NA in mse_mat_at
+  ## (rowMeans(na.rm=TRUE) downstream handles the imbalance). Only
+  ## activates on the use_inner_cpp path so the legacy serial branch
+  ## stays byte-id with v9055. Disable with `prune_factor = Inf`.
+  prune_factor <- as.numeric(getOption(
+    "roadrunner.krls.autotune.prune_factor", 1.5))
+  prune_warmup <- as.integer(getOption(
+    "roadrunner.krls.autotune.prune_warmup", 2L))
+  prune_keep_neighbors <- as.integer(getOption(
+    "roadrunner.krls.autotune.prune_keep_neighbors", 1L))
+  prune_active <- use_inner_cpp && is.finite(prune_factor) &&
+                  prune_factor > 1 && prune_warmup >= 1L &&
+                  (nfold_at * ncross_at) > prune_warmup
+  surviving_idx <- seq_len(n_sig)
+  prune_log <- integer(0L)            # records col_at at which prunes happen
+  pruned_n  <- 0L
   nthreads_used_final <- 1L
   col_at <- 1L
   for (cc_at in seq_len(ncross_at)) {
@@ -3628,13 +3647,14 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
       if (use_inner_cpp) {
         D_tr <- krls_pairwise_sqdist_cpp(Xs_tr, Xs_tr)
         D_te <- krls_pairwise_sqdist_cpp(Xs_te, Xs_tr)
+        sigma_eval <- sigma_grid_sorted[surviving_idx]
         inner <- krls_autotune_inner_cpp(
           D_tr, D_te, ys_tr, ys_te,
-          sigma_grid_sorted, lambda_args,
+          sigma_eval, lambda_args,
           nthreads = autotune.nthreads
         )
-        mse_mat_at[, col_at] <- as.numeric(inner$mse_per_sigma)
-        lam_mat_at[, col_at] <- as.numeric(inner$lambda_per_sigma)
+        mse_mat_at[surviving_idx, col_at] <- as.numeric(inner$mse_per_sigma)
+        lam_mat_at[surviving_idx, col_at] <- as.numeric(inner$lambda_per_sigma)
         nthreads_used_final  <- as.integer(inner$nthreads_used)
       } else {
         for (si in seq_along(autotune.grid)) {
@@ -3718,6 +3738,48 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
         }
       }
       col_at <- col_at + 1L
+      ## Prune sigmas after `prune_warmup` folds populated.
+      ## Strategy: drop sigma s if mean MSE > prune_factor x best AND
+      ## the rank of s is outside the best +/- `prune_keep_neighbors`
+      ## window in the grid. The neighbor-keep prevents collateral
+      ## damage near the minimum on flat MSE landscapes. Pruned cells
+      ## stay NA in mse_mat_at; rowMeans(na.rm=TRUE) handles imbalance.
+      if (prune_active && length(surviving_idx) > 1L) {
+        cols_done <- col_at - 1L
+        if (cols_done >= prune_warmup) {
+          mse_warm <- rowMeans(mse_mat_at[, seq_len(cols_done), drop = FALSE],
+                               na.rm = TRUE)
+          alive_mask <- seq_len(n_sig) %in% surviving_idx
+          mse_alive  <- mse_warm
+          mse_alive[!alive_mask] <- NA_real_
+          if (any(is.finite(mse_alive))) {
+            best_pos   <- which.min(mse_alive)
+            best_alive <- mse_alive[best_pos]
+            keep_window <- seq.int(best_pos - prune_keep_neighbors,
+                                   best_pos + prune_keep_neighbors)
+            in_window  <- seq_len(n_sig) %in% keep_window
+            keep       <- !alive_mask | in_window |
+                          !is.finite(mse_warm) |
+                          (mse_warm <= prune_factor * best_alive)
+            new_surviving <- which(keep & alive_mask)
+            dropped_n     <- length(surviving_idx) - length(new_surviving)
+            if (dropped_n > 0L) {
+              surviving_idx <- new_surviving
+              pruned_n      <- pruned_n + dropped_n
+              prune_log     <- c(prune_log, col_at)
+              if (trace > 1L) {
+                cat(sprintf(
+                  paste0("[autotune] prune step at col=%d: ",
+                         "dropped %d sigmas (best_pos=%d, ",
+                         "best=%.4g, factor=%.2g, ",
+                         "keep_neighbors=%d)\n"),
+                  col_at, dropped_n, best_pos, best_alive,
+                  prune_factor, prune_keep_neighbors))
+              }
+            }
+          }
+        }
+      }
     }
   }
   mean_mse_at <- rowMeans(mse_mat_at, na.rm = TRUE)
@@ -3749,7 +3811,13 @@ predict.krls_rr <- function(object, newdata = NULL, se.fit = FALSE,
     cv.1se            = TRUE,
     sigma_1se         = sigma,
     sigma_grid_sorted = sigma_grid_sorted,
-    nthreads_used     = nthreads_used_final
+    nthreads_used     = nthreads_used_final,
+    prune_factor      = prune_factor,
+    prune_warmup      = prune_warmup,
+    prune_keep_neighbors = prune_keep_neighbors,
+    prune_active      = prune_active,
+    pruned_n          = pruned_n,
+    prune_log         = prune_log
   )
   list(sigma = sigma, autotune_info = autotune_info)
 }
