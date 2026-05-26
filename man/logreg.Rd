@@ -26,7 +26,7 @@ logreg(x, ...)
   n.boot = 0L,
   seed = NULL,
   maxit = 25L,
-  tol = 1e-08,
+  tol = 0.00000001,
   ...
 )
 }

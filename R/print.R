@@ -1029,7 +1029,7 @@ print.bgam <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
     cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
 
   sf <- sort(x$selection_frequency, decreasing = TRUE)
-  top5 <- head(sf, 5L)
+  top5 <- utils::head(sf, 5L)
   cat("\nTop-5 predictors by selection frequency:\n")
   for (nm in names(top5))
     cat("  ", format(nm, width = 12), ":",
@@ -1080,7 +1080,7 @@ summary.bgam <- function(object, ...) {
     nu            = object$nu,
     df_target     = object$df_target,
     sel_tab       = sel_tab,
-    loss_at_mstop = tail(object$loss_path, 1L),
+    loss_at_mstop = utils::tail(object$loss_path, 1L),
     sigma2        = object$sigma2,
     cv            = object$cv,
     boot          = object$boot

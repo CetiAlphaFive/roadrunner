@@ -471,6 +471,8 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @param logreg_args A named list of extra arguments spliced into every
 #'   [logreg()] call (only relevant when `"logreg"` is among
 #'   `learners`).
+#' @param bgam_args A named list of extra arguments spliced into every
+#'   [bgam()] call (only relevant when `"bgam"` is among `learners`).
 #' @param verbose Logical; if `TRUE`, print progress per nuisance / fold.
 #' @param ... Currently unused; reserved.
 #'

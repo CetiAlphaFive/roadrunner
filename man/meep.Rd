@@ -89,6 +89,9 @@ fit and into the NNLS stacking objective.}
 \code{\link[=logreg]{logreg()}} call (only relevant when \code{"logreg"} is among
 \code{learners}).}
 
+\item{bgam_args}{A named list of extra arguments spliced into every
+\code{\link[=bgam]{bgam()}} call (only relevant when \code{"bgam"} is among \code{learners}).}
+
 \item{verbose}{Logical; if \code{TRUE}, print progress per nuisance / fold.}
 
 \item{...}{Currently unused; reserved.}

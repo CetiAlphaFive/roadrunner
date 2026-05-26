@@ -19,7 +19,7 @@ plda(x, ...)
   nfold = 5L,
   lambda_grid = NULL,
   maxit = 100L,
-  tol = 1e-06,
+  tol = 0.000001,
   nthreads = 0L,
   ...
 )
