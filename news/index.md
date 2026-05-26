@@ -1,5 +1,73 @@
 # Changelog
 
+## roadrunner 0.0.0.9059
+
+### `bgam()` — component-wise P-spline gradient boosting
+
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+fits a smooth, strictly additive model via component-wise functional
+gradient boosting (Bühlmann & Yu 2003; Schmid & Hothorn 2008). At each
+of `mstop` iterations the algorithm selects the single penalised
+B-spline base-learner — one per predictor — that most reduces the
+current loss, adds a shrinkage-scaled ridge update for that component
+only, and repeats. The result is a smooth GAM with built-in variable
+selection: predictors that are never selected retain a zero coefficient
+vector and their selection frequency (`$selection_frequency`) serves as
+a natural importance metric.
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+fills the smooth-additive-model-with-variable-selection gap in the
+roadrunner lineup that neither
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
+(piecewise-linear, interaction-capable) nor
+[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+(global kernel, no variable selection) covers natively. It scales as O(n
+· p · K) per iteration and is particularly effective at n = 1000+, p
+moderately large, smooth signal settings.
+
+**Supported families:** `"gaussian"` (squared-error loss) and
+`"binomial"` (logistic / binomial deviance, binary response).
+
+**Key arguments:** `mstop` (boosting iterations), `nu` (shrinkage,
+default `0.1`), `nknots` (interior knots per predictor, default `20`),
+`degree` (B-spline degree, default `3`), `dpen` (penalty order, default
+`2`), `df_target` (target effective df per base-learner, default `4`),
+`unpenalized` (predictors entered as linear instead of spline),
+`weights` (per-observation weights), `n.boot` (bagging replicates),
+`autotune` (k-fold CV mstop selection, default `TRUE`).
+
+**[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
+integration:** `bgam` is an opt-in learner; activate via
+`meep(X, y, treatment = D, learners = c("ares", "krls", "bgam"))`. Pass
+extra arguments through `bgam_args = list(...)`. `bgam` is
+family-agnostic: gaussian path for continuous nuisances, logistic path
+for propensity scores. Hyperparameters frozen by `tune = "once"`:
+`mstop`, `nu`, `nknots`, `degree`, `dpen`.
+
+**Parity oracle:**
+[`mboost::gamboost()`](https://rdrr.io/pkg/mboost/man/gamboost.html)
+(Hofner et al. 2014). `mboost` is listed under `Suggests` and is never a
+hard dependency; parity tests guard with
+`skip_if_not_installed("mboost")`. Loss trajectories agree to
+`cor > 0.99` at matched mstop and nu; eta-scale predictions agree to
+`cor > 0.85` for gaussian and `cor > 0.80` for binomial (implementations
+diverge on knot placement and lambda calibration — see test-spec for
+rationale).
+
+**Trimmed simulation** (`inst/sims/results/bgam-trimmed-0.0.0.9059.md`):
+4-cell × 50-rep Gaussian DGP (`y = sin(2πx1) + 0.5·x2² + N(0, 0.5²)`)
+shows bgam tracks ares within Monte Carlo SE on the small-n / high-p
+cell where the additive smooth signal is best exploited, and both
+learners reduce misspecified OLS RMSE by 30–60%. Full 16-cell × 200-rep
+run (with heteroskedastic and binomial DGPs) is deferred to a follow-up.
+
+#### Documentation
+
+New man pages added: `bgam.Rd`, `predict.bgam.Rd`, `print.bgam.Rd`,
+`summary.bgam.Rd`, `plot.bgam.Rd`.
+
+A dedicated `vignettes/bgam.Rmd` is deferred; the plan is to add it
+alongside the full simulation study in the follow-up release.
+
 ## roadrunner 0.0.0.9058
 
 ### `meep()` krls learner: curve-fitter defaults

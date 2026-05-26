@@ -27,7 +27,7 @@
 
     <a class="navbar-brand me-2" href="index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9058</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9059</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -58,7 +58,7 @@
 <!-- badges: start -->
 
 <p>Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications.</p>
-<p><code>roadrunner</code> ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Five core fitters today:</p>
+<p><code>roadrunner</code> ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Six core fitters today:</p>
 <ul>
 <li>
 <strong><code><a href="reference/ares.html">ares()</a></code></strong> – Multivariate Adaptive Regression Splines (MARS).</li>
@@ -70,8 +70,10 @@
 <strong><code><a href="reference/ols.html">ols()</a></code></strong> – Ordinary and weighted least squares with HC robust SEs.</li>
 <li>
 <strong><code><a href="reference/logreg.html">logreg()</a></code></strong> – Binary logistic regression by IRLS with HC robust SEs.</li>
+<li>
+<strong><code><a href="reference/bgam.html">bgam()</a></code></strong> – Component-wise P-spline gradient boosting; smooth additive model with built-in variable selection via boosting early stopping. Gaussian and binomial families.</li>
 </ul>
-<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of <code><a href="reference/ares.html">ares()</a></code> and <code><a href="reference/krls.html">krls()</a></code>, built for Double Machine Learning and causal-forest nuisance estimation.</p>
+<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of <code><a href="reference/ares.html">ares()</a></code>, <code><a href="reference/krls.html">krls()</a></code>, <code><a href="reference/ols.html">ols()</a></code>, <code><a href="reference/logreg.html">logreg()</a></code>, and opt-in <code><a href="reference/bgam.html">bgam()</a></code>, built for Double Machine Learning and causal-forest nuisance estimation.</p>
 <div class="section level2">
 <h2 id="package-design">Package design<a class="anchor" aria-label="anchor" href="#package-design"></a>
 </h2>
@@ -203,6 +205,9 @@
 <li>Friedman, J. H. (1991). Multivariate Adaptive Regression Splines. <em>Annals of Statistics</em>, 19(1):1-67.</li>
 <li>Hainmueller, J. and Hazlett, C. (2014). Kernel Regularized Least Squares: Reducing Misspecification Bias with a Flexible and Interpretable Machine Learning Approach. <em>Political Analysis</em>, 22(2):143-168.</li>
 <li>Witten, D. M. and Tibshirani, R. (2011). Penalized classification using Fisher’s linear discriminant. <em>Journal of the Royal Statistical Society, Series B</em>, 73(5):753-772.</li>
+<li>Buehlmann, P. and Yu, B. (2003). Boosting with the L2 loss: Regression and classification. <em>Journal of the American Statistical Association</em>, 98(462):324-339.</li>
+<li>Eilers, P. H. C. and Marx, B. D. (1996). Flexible smoothing with B-splines and penalties. <em>Statistical Science</em>, 11(2):89-121.</li>
+<li>Hofner, B., Mayr, A., Robinzonov, N. and Schmid, M. (2014). Model-based boosting in R: A hands-on tutorial using the R package mboost. <em>Computational Statistics</em>, 29(1-2):3-35.</li>
 </ul>
 </div>
 <div class="section level2">

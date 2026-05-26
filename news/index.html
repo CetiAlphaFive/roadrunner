@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9058</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9059</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,24 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9059" id="roadrunner-0009059">roadrunner 0.0.0.9059<a class="anchor" aria-label="anchor" href="#roadrunner-0009059"></a></h2>
+<div class="section level3">
+<h3 id="bgam--component-wise-p-spline-gradient-boosting-0-0-0-9059">
+<code>bgam()</code> — component-wise P-spline gradient boosting<a class="anchor" aria-label="anchor" href="#bgam--component-wise-p-spline-gradient-boosting-0-0-0-9059"></a></h3>
+<p><code><a href="../reference/bgam.html">bgam()</a></code> fits a smooth, strictly additive model via component-wise functional gradient boosting (Bühlmann &amp; Yu 2003; Schmid &amp; Hothorn 2008). At each of <code>mstop</code> iterations the algorithm selects the single penalised B-spline base-learner — one per predictor — that most reduces the current loss, adds a shrinkage-scaled ridge update for that component only, and repeats. The result is a smooth GAM with built-in variable selection: predictors that are never selected retain a zero coefficient vector and their selection frequency (<code>$selection_frequency</code>) serves as a natural importance metric. <code><a href="../reference/bgam.html">bgam()</a></code> fills the smooth-additive-model-with-variable-selection gap in the roadrunner lineup that neither <code><a href="../reference/ares.html">ares()</a></code> (piecewise-linear, interaction-capable) nor <code><a href="../reference/krls.html">krls()</a></code> (global kernel, no variable selection) covers natively. It scales as O(n · p · K) per iteration and is particularly effective at n = 1000+, p moderately large, smooth signal settings.</p>
+<p><strong>Supported families:</strong> <code>"gaussian"</code> (squared-error loss) and <code>"binomial"</code> (logistic / binomial deviance, binary response).</p>
+<p><strong>Key arguments:</strong> <code>mstop</code> (boosting iterations), <code>nu</code> (shrinkage, default <code>0.1</code>), <code>nknots</code> (interior knots per predictor, default <code>20</code>), <code>degree</code> (B-spline degree, default <code>3</code>), <code>dpen</code> (penalty order, default <code>2</code>), <code>df_target</code> (target effective df per base-learner, default <code>4</code>), <code>unpenalized</code> (predictors entered as linear instead of spline), <code>weights</code> (per-observation weights), <code>n.boot</code> (bagging replicates), <code>autotune</code> (k-fold CV mstop selection, default <code>TRUE</code>).</p>
+<p><strong><code><a href="../reference/meep.html">meep()</a></code> integration:</strong> <code>bgam</code> is an opt-in learner; activate via <code>meep(X, y, treatment = D, learners = c("ares", "krls", "bgam"))</code>. Pass extra arguments through <code>bgam_args = list(...)</code>. <code>bgam</code> is family-agnostic: gaussian path for continuous nuisances, logistic path for propensity scores. Hyperparameters frozen by <code>tune = "once"</code>: <code>mstop</code>, <code>nu</code>, <code>nknots</code>, <code>degree</code>, <code>dpen</code>.</p>
+<p><strong>Parity oracle:</strong> <code><a href="https://rdrr.io/pkg/mboost/man/gamboost.html" class="external-link">mboost::gamboost()</a></code> (Hofner et al. 2014). <code>mboost</code> is listed under <code>Suggests</code> and is never a hard dependency; parity tests guard with <code>skip_if_not_installed("mboost")</code>. Loss trajectories agree to <code>cor &gt; 0.99</code> at matched mstop and nu; eta-scale predictions agree to <code>cor &gt; 0.85</code> for gaussian and <code>cor &gt; 0.80</code> for binomial (implementations diverge on knot placement and lambda calibration — see test-spec for rationale).</p>
+<p><strong>Trimmed simulation</strong> (<code>inst/sims/results/bgam-trimmed-0.0.0.9059.md</code>): 4-cell × 50-rep Gaussian DGP (<code>y = sin(2πx1) + 0.5·x2² + N(0, 0.5²)</code>) shows bgam tracks ares within Monte Carlo SE on the small-n / high-p cell where the additive smooth signal is best exploited, and both learners reduce misspecified OLS RMSE by 30–60%. Full 16-cell × 200-rep run (with heteroskedastic and binomial DGPs) is deferred to a follow-up.</p>
+<div class="section level4">
+<h4 id="documentation-0-0-0-9059">Documentation<a class="anchor" aria-label="anchor" href="#documentation-0-0-0-9059"></a></h4>
+<p>New man pages added: <code>bgam.Rd</code>, <code>predict.bgam.Rd</code>, <code>print.bgam.Rd</code>, <code>summary.bgam.Rd</code>, <code>plot.bgam.Rd</code>.</p>
+<p>A dedicated <code>vignettes/bgam.Rmd</code> is deferred; the plan is to add it alongside the full simulation study in the follow-up release.</p>
+</div>
+</div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9058" id="roadrunner-0009058">roadrunner 0.0.0.9058<a class="anchor" aria-label="anchor" href="#roadrunner-0009058"></a></h2>
 <div class="section level3">

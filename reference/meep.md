@@ -32,6 +32,7 @@ meep(
   krls_args = list(),
   ols_args = list(),
   logreg_args = list(),
+  bgam_args = list(),
   verbose = FALSE,
   ...
 )
@@ -135,6 +136,12 @@ meep(
   A named list of extra arguments spliced into every
   [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)
   call (only relevant when `"logreg"` is among `learners`).
+
+- bgam_args:
+
+  A named list of extra arguments spliced into every
+  [`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+  call (only relevant when `"bgam"` is among `learners`).
 
 - verbose:
 

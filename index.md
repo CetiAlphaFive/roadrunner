@@ -4,7 +4,7 @@ Fast, low-dependency machine learning algorithms in R. Useful for causal
 plug-ins (e.g., nuisance fits in DML) or simple predictive applications.
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Five core fitters today:
+with thin, base-R-style interfaces. Six core fitters today:
 
 - **[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)**
   – Multivariate Adaptive Regression Splines (MARS).
@@ -16,13 +16,20 @@ with thin, base-R-style interfaces. Five core fitters today:
   – Ordinary and weighted least squares with HC robust SEs.
 - **[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)**
   – Binary logistic regression by IRLS with HC robust SEs.
+- **[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)**
+  – Component-wise P-spline gradient boosting; smooth additive model
+  with built-in variable selection via boosting early stopping. Gaussian
+  and binomial families.
 
 Plus
 **[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)**
 – a cross-fitted ensemble of
-[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-and
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md),
 [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md),
+[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
+[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
+and opt-in
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md),
 built for Double Machine Learning and causal-forest nuisance estimation.
 
 ## Package design
@@ -192,6 +199,14 @@ as opt-in learners (`learners = c("ols", "logreg")`).
 - Witten, D. M. and Tibshirani, R. (2011). Penalized classification
   using Fisher’s linear discriminant. *Journal of the Royal Statistical
   Society, Series B*, 73(5):753-772.
+- Buehlmann, P. and Yu, B. (2003). Boosting with the L2 loss: Regression
+  and classification. *Journal of the American Statistical Association*,
+  98(462):324-339.
+- Eilers, P. H. C. and Marx, B. D. (1996). Flexible smoothing with
+  B-splines and penalties. *Statistical Science*, 11(2):89-121.
+- Hofner, B., Mayr, A., Robinzonov, N. and Schmid, M. (2014).
+  Model-based boosting in R: A hands-on tutorial using the R package
+  mboost. *Computational Statistics*, 29(1-2):3-35.
 
 ## License
 

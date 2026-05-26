@@ -128,6 +128,35 @@ standard errors, bagging, and prediction intervals.
 
   Diagnostic plots for an `ols` fit
 
+## Boosted GAM: bgam()
+
+Component-wise P-spline gradient boosting (gamboost-style) with weights,
+bagging, and CV mstop autotune. Gaussian and binomial families.
+
+- [`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+  : Component-wise P-spline gradient boosting
+
+- [`predict(`*`<bgam>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.bgam.md)
+  :
+
+  Predictions from a `bgam` fit
+
+- [`print(`*`<bgam>`*`)`](https://cetialphafive.github.io/roadrunner/reference/print.bgam.md)
+  :
+
+  Print a `bgam` fit
+
+- [`summary(`*`<bgam>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.bgam.md)
+  [`print(`*`<summary.bgam>`*`)`](https://cetialphafive.github.io/roadrunner/reference/summary.bgam.md)
+  :
+
+  Summarise a `bgam` fit
+
+- [`plot(`*`<bgam>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.bgam.md)
+  :
+
+  Plot a `bgam` fit
+
 ## Logistic regression: logreg()
 
 Binary logistic regression by IRLS with classical and HC robust standard
