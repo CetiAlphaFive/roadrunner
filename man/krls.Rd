@@ -45,7 +45,7 @@ krls(X, ...)
   landmarks = NULL,
   landmark_method = c("random", "kmeans"),
   landmark_seed = NULL,
-  nystrom_eps = 0.000000001,
+  nystrom_eps = 1e-09,
   ard = c("none", "cheap"),
   ard.alpha = 1,
   ard.cap = 100,

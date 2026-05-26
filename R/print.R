@@ -987,3 +987,243 @@ plot.logreg <- function(x, which = 1:4, id.n = 3L, ...) {
   }
   invisible(x)
 }
+
+# ============================================================================
+#  S3 print / summary / plot methods for the `bgam` class
+# ============================================================================
+
+#' Print a `bgam` fit
+#'
+#' Prints a compact summary of a fitted component-wise P-spline boosting
+#' model: the call, family, sample size, number of base-learners, boosting
+#' parameters (`mstop`, `nu`, `nknots`, `degree`, `dpen`, `df_target`),
+#' CV-selected `mstop_opt` (when `autotune = TRUE`), bagging info (when
+#' `n.boot > 0`), the top-5 predictors ranked by selection frequency, and
+#' the residual sigma for gaussian fits.
+#'
+#' @param x An object of class `"bgam"`, as returned by [bgam()].
+#' @param digits Number of significant digits for numeric output.  Default
+#'   `max(3L, getOption("digits") - 3L)`.
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @seealso [bgam()], [summary.bgam()], [plot.bgam()]
+#' @examples
+#' set.seed(1)
+#' n <- 200
+#' x <- matrix(rnorm(n * 4), n, 4)
+#' y <- sin(x[, 1]) + 0.5 * x[, 2]^2 + rnorm(n, sd = 0.5)
+#' fit <- bgam(x, y, mstop = 50, autotune = FALSE)
+#' print(fit)
+#' @export
+print.bgam <- function(x, digits = max(3L, getOption("digits") - 3L), ...) {
+  cat("Call:\n")
+  print(x$call)
+  cat("\nbgam fit:  family =", x$family, "\n")
+  cat("  n =", x$n, "  p (predictors) =", x$p, "\n")
+  cat("  mstop =", x$mstop, "  nu =", format(x$nu, digits = digits), "\n")
+  cat("  nknots =", x$nknots, "  degree =", x$degree,
+      "  dpen =", x$dpen, "  df_target =", x$df_target, "\n")
+  if (!is.null(x$cv))
+    cat("  Autotune: mstop_opt =", x$cv$mstop_opt, "\n")
+  if (!is.null(x$boot))
+    cat("  Bagging: n.boot =", x$boot$n.boot, "replicate(s)\n")
+
+  sf <- sort(x$selection_frequency, decreasing = TRUE)
+  top5 <- head(sf, 5L)
+  cat("\nTop-5 predictors by selection frequency:\n")
+  for (nm in names(top5))
+    cat("  ", format(nm, width = 12), ":",
+        format(top5[nm], digits = digits), "\n")
+
+  if (identical(x$family, "gaussian") && !is.null(x$sigma2))
+    cat("\nResidual sigma:", format(sqrt(x$sigma2), digits = digits), "\n")
+
+  invisible(x)
+}
+
+#' Summarise a `bgam` fit
+#'
+#' Returns a `summary.bgam` S3 object containing the call, family,
+#' sample and predictor dimensions, boosting parameters (`mstop`, `nu`,
+#' `df_target`), CV-selected `mstop_opt` (when `autotune = TRUE`), bagging
+#' info (when `n.boot > 0`), training loss at `mstop`, residual sigma for
+#' gaussian fits, and a full predictor selection-frequency table sorted
+#' in descending order.  The selection frequency is the fraction of
+#' boosting iterations in which each predictor was the active base-learner.
+#'
+#' @param object An object of class `"bgam"`, as returned by [bgam()].
+#' @param ... Currently ignored.
+#' @return An object of class `"summary.bgam"`.  Print it with
+#'   [print.summary.bgam()].
+#' @seealso [bgam()], [print.bgam()], [plot.bgam()]
+#' @examples
+#' set.seed(1)
+#' n <- 200
+#' x <- matrix(rnorm(n * 4), n, 4)
+#' y <- sin(x[, 1]) + 0.5 * x[, 2]^2 + rnorm(n, sd = 0.5)
+#' fit <- bgam(x, y, mstop = 50, autotune = FALSE)
+#' summary(fit)
+#' @export
+summary.bgam <- function(object, ...) {
+  sf <- sort(object$selection_frequency, decreasing = TRUE)
+  sel_tab <- data.frame(
+    predictor      = names(sf),
+    sel_frequency  = unname(sf),
+    stringsAsFactors = FALSE
+  )
+  out <- list(
+    call          = object$call,
+    family        = object$family,
+    n             = object$n,
+    p             = object$p,
+    mstop         = object$mstop,
+    nu            = object$nu,
+    df_target     = object$df_target,
+    sel_tab       = sel_tab,
+    loss_at_mstop = tail(object$loss_path, 1L),
+    sigma2        = object$sigma2,
+    cv            = object$cv,
+    boot          = object$boot
+  )
+  class(out) <- "summary.bgam"
+  out
+}
+
+#' @rdname summary.bgam
+#' @param x A `summary.bgam` object returned by [summary.bgam()].
+#' @param digits Number of significant digits for numeric output.  Default
+#'   `max(3L, getOption("digits") - 3L)`.
+#' @return Invisibly returns `x`.
+#' @export
+print.summary.bgam <- function(x,
+                                digits = max(3L, getOption("digits") - 3L),
+                                ...) {
+  cat("Call:\n"); print(x$call)
+  cat("\nbgam summary:  family =", x$family, "\n")
+  cat("  n =", x$n, "  p =", x$p, "\n")
+  cat("  mstop =", x$mstop, "  nu =", format(x$nu, digits = digits),
+      "  df_target =", x$df_target, "\n")
+  if (!is.null(x$cv))
+    cat("  CV mstop_opt =", x$cv$mstop_opt, "\n")
+  if (!is.null(x$boot))
+    cat("  Bagging: n.boot =", x$boot$n.boot, "\n")
+  metric <- if (identical(x$family, "binomial")) "deviance" else "mse"
+  cat("  Training", metric, "at mstop:",
+      format(x$loss_at_mstop, digits = digits), "\n")
+  if (!is.null(x$sigma2))
+    cat("  Residual sigma:", format(sqrt(x$sigma2), digits = digits), "\n")
+
+  cat("\nPredictor selection frequencies (sorted):\n")
+  print(x$sel_tab, digits = digits, row.names = FALSE)
+  invisible(x)
+}
+
+#' Plot a `bgam` fit
+#'
+#' Produces a 4-panel diagnostic display for a fitted component-wise P-spline
+#' boosting model:
+#'
+#' \enumerate{
+#'   \item Partial effect curve \eqn{\hat{f}_{j^*}(x_{j^*})}{f-hat_j*(x_j*)}
+#'     for the top predictor by selection frequency, plotted over a fine grid
+#'     covering the training range.
+#'   \item Selection-frequency bar chart for all predictors (capped at 20
+#'     bars), sorted descending.  Use this panel to identify which predictors
+#'     drive the model.
+#'   \item Training loss path (MSE for gaussian, mean deviance per observation
+#'     for binomial) vs boosting iteration.  A red dashed vertical line marks
+#'     `mstop_opt` when `autotune = TRUE`.
+#'   \item Fitted vs Observed (gaussian) or fitted-probability box plots by
+#'     class (binomial).
+#' }
+#'
+#' The function works in headless (non-interactive) mode without error.
+#'
+#' @param x An object of class `"bgam"`, as returned by [bgam()].
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @seealso [bgam()], [print.bgam()], [summary.bgam()]
+#' @references
+#' Buehlmann, P. and Yu, B. (2003). Boosting with the L2 loss: Regression and
+#' classification. *Journal of the American Statistical Association*,
+#' 98(462):324--339. \doi{10.1198/016214503000125}
+#'
+#' Hofner, B., Mayr, A., Robinzonov, N. and Schmid, M. (2014). Model-based
+#' boosting in R: A hands-on tutorial using the R package mboost.
+#' *Computational Statistics*, 29(1--2):3--35.
+#' \doi{10.1007/s00180-012-0382-5}
+#' @examples
+#' \donttest{
+#' set.seed(1)
+#' n <- 200
+#' x <- matrix(rnorm(n * 4), n, 4)
+#' y <- sin(x[, 1]) + 0.5 * x[, 2]^2 + rnorm(n, sd = 0.5)
+#' fit <- bgam(x, y, mstop = 50, autotune = FALSE)
+#' plot(fit)
+#' }
+#' @export
+plot.bgam <- function(x, ...) {
+  old_par <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(old_par), add = TRUE)
+  graphics::par(mfrow = c(2L, 2L))
+
+  sf <- sort(x$selection_frequency, decreasing = TRUE)
+  top_n <- min(4L, x$p)
+  top_preds <- names(sf)[seq_len(top_n)]
+
+  # Panel 1: Partial effect curve for top predictor (or first one)
+  if (length(top_preds) >= 1L) {
+    j_nm <- top_preds[1L]
+    bl  <- x$base_learners[[j_nm]]
+    bv  <- as.numeric(x$coefficients[[j_nm]])
+    xgrid <- seq(bl$range[1L], bl$range[2L], length.out = 100L)
+    if (length(bl$knots) == 2L && bl$K == 1L) {
+      B_grid <- matrix(xgrid - mean(xgrid), ncol = 1L)
+    } else {
+      B_grid <- bgam_bspline_basis_cpp(xgrid, bl$knots, bl$degree)$B
+    }
+    fj_grid <- as.numeric(B_grid %*% bv)
+    graphics::plot(xgrid, fj_grid, type = "l", col = "steelblue",
+                   xlab = j_nm, ylab = paste0("f(", j_nm, ")"),
+                   main = paste0("Partial effect: ", j_nm))
+    graphics::abline(h = 0, lty = 2, col = "gray")
+  }
+
+  # Panel 2: Selection frequency bar chart
+  bar_names <- names(sf)
+  bar_vals  <- unname(sf)
+  if (length(bar_names) > 20L) {
+    bar_names <- bar_names[seq_len(20L)]
+    bar_vals  <- bar_vals[seq_len(20L)]
+  }
+  graphics::barplot(bar_vals, names.arg = bar_names, las = 2L,
+                    col = "steelblue", ylab = "Selection frequency",
+                    main = "Predictor selection", cex.names = 0.7)
+
+  # Panel 3: Training loss path
+  iters  <- seq_along(x$loss_path)
+  metric <- if (identical(x$family, "binomial")) "Deviance/n" else "MSE"
+  graphics::plot(iters, x$loss_path, type = "l", col = "darkorange",
+                 xlab = "Boosting iteration", ylab = metric,
+                 main = "Training loss path")
+  if (!is.null(x$cv))
+    graphics::abline(v = x$cv$mstop_opt, lty = 2, col = "red")
+
+  # Panel 4: Fitted vs observed / fitted by class
+  if (identical(x$family, "gaussian")) {
+    obs <- x$fitted.values + x$residuals
+    graphics::plot(x$fitted.values, obs,
+                   xlab = "Fitted", ylab = "Observed",
+                   main = "Fitted vs Observed", pch = 20L, col = "gray40")
+    graphics::abline(0, 1, lty = 2, col = "red")
+  } else {
+    # Recover response class from deviance residuals (sign gives class)
+    ytr <- as.integer(x$residuals >= 0)
+    graphics::boxplot(x$fitted.values ~ ytr,
+                      xlab = "Observed class", ylab = "Fitted probability",
+                      main = "Fitted prob. by class",
+                      col = c("salmon", "steelblue"))
+  }
+
+  invisible(x)
+}

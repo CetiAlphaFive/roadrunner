@@ -22,6 +22,7 @@ meep(
   krls_args = list(),
   ols_args = list(),
   logreg_args = list(),
+  bgam_args = list(),
   verbose = FALSE,
   ...
 )

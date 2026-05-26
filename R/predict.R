@@ -925,3 +925,282 @@ predict.logreg <- function(object, newdata = NULL,
   dimnames(v) <- dimnames(object$vcov)
   v
 }
+
+# ============================================================================
+#  predict.bgam -- predictions from a fitted bgam object
+# ============================================================================
+
+#' Predictions from a `bgam` fit
+#'
+#' Returns predictions from a fitted component-wise P-spline boosting model.
+#' New B-spline bases are constructed for `newdata` using the stored knot
+#' sequences; values outside the training range are extrapolated by the
+#' natural boundary behaviour of the de Boor recursion (polynomial
+#' extrapolation).  For bagged fits (`n.boot > 0`), the bag mean across all
+#' surviving replicates is returned.
+#'
+#' @param object An object of class `"bgam"`, as returned by [bgam()].
+#' @param newdata A numeric matrix or data frame of new predictor values with
+#'   the same columns (in any order) as the training data.  `NULL` (default)
+#'   returns stored training predictions: `$fitted.values` for non-bagged
+#'   fits, bag mean for bagged fits.  Out-of-vocabulary factor levels in
+#'   `newdata` cause an informative error.
+#' @param type Prediction scale:
+#'   \describe{
+#'     \item{`"response"`}{(default) Fitted probabilities for
+#'       `family = "binomial"`; fitted values (identical to link scale) for
+#'       `family = "gaussian"`.}
+#'     \item{`"link"`}{The linear predictor (additive predictor on the link
+#'       scale).  Identical to `"response"` for gaussian.}
+#'     \item{`"terms"`}{An `nrow(newdata)` x `p` numeric matrix of per-
+#'       predictor component contributions.  Column `j` holds
+#'       `B_new_j %*% beta_j`.  Column names match `object$predictor_names`.
+#'       Row sums of all columns plus `object$intercept_value` equal the
+#'       link-scale prediction.}
+#'   }
+#' @param se.fit If `TRUE`, returns a list with elements `$fit` (predictions
+#'   as described above) and `$se.fit` (plug-in standard errors summed
+#'   across active base-learners).  For predictor j active at observation i,
+#'   the component variance is `diag(B_j[i,,drop=FALSE] %*% solve(A_j) %*%
+#'   t(B_j[i,,drop=FALSE])) * sigma2` where `A_j = B_j'B_j + lambda_j *
+#'   D_j'D_j`.  For binomial, delta-method SE on the response scale is
+#'   applied: `se_mu = se_eta * mu_hat * (1 - mu_hat)`.
+#'   Default `FALSE`.
+#' @param level Unused; reserved for a future prediction-interval interface.
+#'   Default `0.95`.
+#' @param ... Currently unused.
+#'
+#' @return
+#'   \describe{
+#'     \item{`se.fit = FALSE`}{A numeric vector of length `nrow(newdata)`, or
+#'       a numeric matrix of dimension `nrow(newdata)` x `p` when
+#'       `type = "terms"`.}
+#'     \item{`se.fit = TRUE`}{A list with elements `$fit` (as above) and
+#'       `$se.fit` (numeric vector of per-observation standard errors).}
+#'   }
+#'   For bagged fits the bag mean is returned (se.fit is not available for
+#'   bagged fits).
+#'
+#' @examples
+#' set.seed(1)
+#' n <- 200
+#' x <- matrix(rnorm(n * 3), n, 3)
+#' y <- sin(x[, 1]) + 0.5 * x[, 2] + rnorm(n, sd = 0.5)
+#' fit <- bgam(x, y, mstop = 50, autotune = FALSE)
+#' predict(fit, x[1:5, ])
+#'
+#' # Per-component contributions
+#' terms_mat <- predict(fit, x, type = "terms")
+#' head(terms_mat)
+#'
+#' # Plug-in standard errors
+#' p_se <- predict(fit, x[1:5, ], se.fit = TRUE)
+#' p_se$se.fit
+#' @export
+predict.bgam <- function(object, newdata = NULL,
+                         type   = c("response", "link", "terms"),
+                         se.fit = FALSE,
+                         level  = 0.95,
+                         ...) {
+  type <- match.arg(type)
+
+  # ---- NULL newdata: return stored or bag-mean -----------------------------
+  if (is.null(newdata)) {
+    if (!is.null(object$boot) && length(object$boot$fits) > 0L) {
+      # Bagged: route through the training-x path so all boot fits are
+      # evaluated at the same n x p training matrix (matches newdata=X path).
+      if (!is.null(object$x)) {
+        return(Recall(object, newdata = object$x, type = type,
+                      se.fit = se.fit, level = level))
+      }
+      # Fallback if $x was not stored: average fitted.values directly.
+      all_fits <- c(list(object), object$boot$fits)
+      fv_mat <- do.call(cbind, lapply(all_fits, `[[`, "fitted.values"))
+      yhat <- rowMeans(fv_mat, na.rm = TRUE)
+      if (isTRUE(se.fit)) {
+        se <- .bgam_se_fit(object, newdata_B_list = NULL)
+        return(list(fit = yhat, se.fit = se))
+      }
+      return(yhat)
+    }
+    # Non-bagged: dispatch on type
+    if (identical(type, "terms")) {
+      # Build terms matrix from stored training B matrices.
+      p <- object$p
+      n_obs <- object$n
+      terms_mat <- matrix(0, nrow = n_obs, ncol = p,
+                          dimnames = list(NULL, object$predictor_names))
+      for (j in seq_len(p)) {
+        bv <- as.numeric(object$coefficients[[j]])
+        if (any(bv != 0)) {
+          Bj <- object$base_learners[[j]]$B_train
+          if (!is.null(Bj))
+            terms_mat[, j] <- as.numeric(Bj %*% bv)
+        }
+      }
+      return(terms_mat)
+    }
+    yhat <- if (identical(type, "link")) {
+      object$linear.predictors
+    } else {
+      object$fitted.values
+    }
+    if (isTRUE(se.fit)) {
+      se <- .bgam_se_fit(object, newdata_B_list = NULL)
+      return(list(fit = yhat, se.fit = se))
+    }
+    return(yhat)
+  }
+
+  # ---- Coerce newdata to matrix -------------------------------------------
+  if (is.data.frame(newdata)) {
+    if (!is.null(object$terms)) {
+      # Formula path: reconstruct model matrix respecting factor levels
+      tt <- stats::delete.response(object$terms)
+      if (!is.null(object$xlevels)) {
+        for (vn in names(object$xlevels)) {
+          if (vn %in% names(newdata)) {
+            tr_lev <- object$xlevels[[vn]]
+            nd_lev <- unique(as.character(newdata[[vn]]))
+            bad <- setdiff(nd_lev, c(tr_lev, NA_character_))
+            if (length(bad))
+              stop("bgam: newdata has factor level(s) not seen in training: ",
+                   paste(bad, collapse = ", "), call. = FALSE)
+          }
+        }
+      }
+      mf <- stats::model.frame(tt, newdata,
+                                xlev = object$xlevels %||% list())
+      mm <- stats::model.matrix(tt, mf)
+      if ("(Intercept)" %in% colnames(mm))
+        mm <- mm[, colnames(mm) != "(Intercept)", drop = FALSE]
+      newdata <- mm
+    } else {
+      # Default path: need columns matching predictor_names
+      pn <- object$predictor_names
+      if (!all(pn %in% colnames(newdata)))
+        stop("bgam: newdata is missing columns: ",
+             paste(setdiff(pn, colnames(newdata)), collapse = ", "),
+             call. = FALSE)
+      newdata <- as.matrix(newdata[, pn, drop = FALSE])
+    }
+  }
+  if (!is.matrix(newdata) || !is.numeric(newdata))
+    stop("bgam: newdata must be a numeric matrix or data frame.",
+         call. = FALSE)
+  storage.mode(newdata) <- "double"
+
+  m_new <- nrow(newdata)
+  p <- object$p
+
+  if (ncol(newdata) != p)
+    stop("bgam: newdata has ", ncol(newdata), " columns; expected ", p,
+         ".", call. = FALSE)
+
+  # ---- Bagged prediction (newdata supplied) --------------------------------
+  if (!is.null(object$boot) && !is.null(object$boot$fits)) {
+    all_fits <- c(list(object),
+                  Filter(Negate(is.null), object$boot$fits))
+    preds <- lapply(all_fits, function(f) {
+      tryCatch(
+        predict.bgam(f, newdata = newdata, type = type, se.fit = FALSE),
+        error = function(e) rep(NA_real_, m_new))
+    })
+    pred_mat <- do.call(cbind, preds)
+    return(rowMeans(pred_mat, na.rm = TRUE))
+  }
+
+  # ---- Build new B-spline bases for each predictor ------------------------
+  B_new_list <- vector("list", p)
+  for (j in seq_len(p)) {
+    bl <- object$base_learners[[j]]
+    xj_new <- newdata[, j]
+    if (length(bl$knots) == 2L && bl$K == 1L) {
+      # Linear base-learner (near-constant or unpenalized)
+      B_new_list[[j]] <- matrix(xj_new - mean(xj_new), ncol = 1L)
+    } else {
+      res <- bgam_bspline_basis_cpp(xj_new, bl$knots, bl$degree)
+      B_new_list[[j]] <- res$B
+    }
+  }
+
+  # ---- Link-scale prediction ----------------------------------------------
+  eta_new <- bgam_predict_cpp(B_new_list, object$coefficients,
+                               object$intercept_value)
+
+  # ---- Terms: per-component matrix ----------------------------------------
+  if (identical(type, "terms")) {
+    terms_mat <- matrix(0, nrow = m_new, ncol = p,
+                        dimnames = list(NULL, object$predictor_names))
+    for (j in seq_len(p)) {
+      bv <- as.numeric(object$coefficients[[j]])
+      if (any(bv != 0))
+        terms_mat[, j] <- as.numeric(B_new_list[[j]] %*% bv)
+    }
+    return(terms_mat)
+  }
+
+  # ---- Response scale ------------------------------------------------------
+  if (identical(type, "link")) {
+    yhat <- as.numeric(eta_new)
+  } else {
+    yhat <- if (identical(object$family, "binomial")) {
+      as.numeric(1 / (1 + exp(-eta_new)))
+    } else {
+      as.numeric(eta_new)
+    }
+  }
+
+  # ---- se.fit (plug-in) ---------------------------------------------------
+  if (isTRUE(se.fit)) {
+    se <- .bgam_se_fit(object, newdata_B_list = B_new_list)
+    if (identical(object$family, "binomial") && !identical(type, "link")) {
+      mu_hat <- 1 / (1 + exp(-as.numeric(eta_new)))
+      se <- se * mu_hat * (1 - mu_hat)
+    }
+    return(list(fit = yhat, se.fit = se))
+  }
+
+  yhat
+}
+
+# Internal: compute plug-in SE for bgam predictions.
+# Formula: SE_i = sqrt( sum_{j active} diag(B_j[i,] A_j^{-1} B_j[i,]') * sigma2 )
+# where A_j = B_j'B_j + lambda_j P_j and L_j = chol(A_j, "lower").
+# Equiv: sum rowSums( (B_j %*% t(solve(L_j)))^2 ) * sigma2
+.bgam_se_fit <- function(object, newdata_B_list = NULL) {
+  p <- object$p
+  sigma2 <- object$sigma2
+  if (is.null(sigma2)) sigma2 <- 1  # binomial: SE on link scale
+
+  # Determine per-predictor B matrices to use.
+  if (is.null(newdata_B_list)) {
+    # Use stored training B matrices for per-observation SE on training data.
+    B_use <- lapply(object$base_learners, `[[`, "B_train")
+  } else {
+    B_use <- newdata_B_list
+  }
+  n_out <- nrow(B_use[[1L]])
+
+  var_total <- numeric(n_out)
+  for (j in seq_len(p)) {
+    bv <- as.numeric(object$coefficients[[j]])
+    if (!any(bv != 0)) next
+    bl <- object$base_learners[[j]]
+    L_j <- bl$chol  # K_j x K_j lower Cholesky of A_j = B_j'B_j + lambda_j P_j
+    Bj  <- B_use[[j]]
+    # solve(t(L_j), I) = L_j^{-T}: backsolve on upper-triangular t(L_j)
+    Li_inv <- backsolve(t(L_j), diag(ncol(L_j)))  # upper.tri=TRUE (default)
+    # (B_j L_j^{-T}) so rowSums(.^2) = diag(B_j A_j^{-1} B_j')
+    Bj_Linv <- Bj %*% t(Li_inv)
+    var_j   <- rowSums(Bj_Linv^2) * sigma2
+    var_total <- var_total + var_j
+  }
+  sqrt(pmax(var_total, 0))
+}
+
+# R-level lower-triangular Cholesky solve helper.
+.bgam_chol_solve_r <- function(L, b) {
+  y <- forwardsolve(L, b)
+  backsolve(t(L), y)
+}

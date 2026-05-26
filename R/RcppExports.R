@@ -13,6 +13,26 @@ mars_backward_only_cpp <- function(x_in, y_in, dirs_in, cuts_in, penalty, nprune
     .Call(`_roadrunner_mars_backward_only_cpp`, x_in, y_in, dirs_in, cuts_in, penalty, nprune, nthreads, force_size, return_path, weights_in, R_in, Qty_in)
 }
 
+bgam_bspline_basis_cpp <- function(x, knots, degree) {
+    .Call(`_roadrunner_bgam_bspline_basis_cpp`, x, knots, degree)
+}
+
+bgam_diff_penalty_cpp <- function(K, dpen) {
+    .Call(`_roadrunner_bgam_diff_penalty_cpp`, K, dpen)
+}
+
+bgam_prefactor_cpp <- function(B, DtD, lambda, w = NULL) {
+    .Call(`_roadrunner_bgam_prefactor_cpp`, B, DtD, lambda, w)
+}
+
+bgam_boost_cpp <- function(y, F0, B_list, Bt_list, chol_list, DtD_list, lambda_vec, nu, mstop, family, nthreads, w_prior = NULL) {
+    .Call(`_roadrunner_bgam_boost_cpp`, y, F0, B_list, Bt_list, chol_list, DtD_list, lambda_vec, nu, mstop, family, nthreads, w_prior)
+}
+
+bgam_predict_cpp <- function(B_new_list, beta_list, F0_scalar) {
+    .Call(`_roadrunner_bgam_predict_cpp`, B_new_list, beta_list, F0_scalar)
+}
+
 krls_kernel_cpp <- function(X, sigma_vec, kernel_type = 0L, kernel_c = 1.0) {
     .Call(`_roadrunner_krls_kernel_cpp`, X, sigma_vec, kernel_type, kernel_c)
 }
