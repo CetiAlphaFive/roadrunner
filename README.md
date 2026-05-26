@@ -9,16 +9,20 @@
 Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Five core fitters today:
+with thin, base-R-style interfaces. Six core fitters today:
 
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
 - **`plda()`** -- Penalized Linear Discriminant Analysis (L1 / fused-lasso).
 - **`ols()`** -- Ordinary and weighted least squares with HC robust SEs.
 - **`logreg()`** -- Binary logistic regression by IRLS with HC robust SEs.
+- **`bgam()`** -- Component-wise P-spline gradient boosting; smooth additive
+  model with built-in variable selection via boosting early stopping.
+  Gaussian and binomial families.
 
-Plus **`meep()`** -- a cross-fitted ensemble of `ares()` and `krls()`, built for
-Double Machine Learning and causal-forest nuisance estimation.
+Plus **`meep()`** -- a cross-fitted ensemble of `ares()`, `krls()`, `ols()`,
+`logreg()`, and opt-in `bgam()`, built for Double Machine Learning and
+causal-forest nuisance estimation.
 
 ## Package design
 
@@ -170,6 +174,14 @@ Both also slot into `meep()` as opt-in learners (`learners = c("ols",
 - Witten, D. M. and Tibshirani, R. (2011). Penalized classification using
   Fisher's linear discriminant. *Journal of the Royal Statistical Society,
   Series B*, 73(5):753-772.
+- Buehlmann, P. and Yu, B. (2003). Boosting with the L2 loss: Regression
+  and classification. *Journal of the American Statistical Association*,
+  98(462):324-339.
+- Eilers, P. H. C. and Marx, B. D. (1996). Flexible smoothing with
+  B-splines and penalties. *Statistical Science*, 11(2):89-121.
+- Hofner, B., Mayr, A., Robinzonov, N. and Schmid, M. (2014). Model-based
+  boosting in R: A hands-on tutorial using the R package mboost.
+  *Computational Statistics*, 29(1-2):3-35.
 
 ## License
 

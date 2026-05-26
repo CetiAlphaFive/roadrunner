@@ -8,6 +8,7 @@ inst/doc/
 inst/sims/results/sim_raw.csv
 inst/sims/results/sim_summary.csv
 roadrunner.Rcheck/
+*.Rcheck/
 roadrunner_*.tar.gz
 /doc/
 /Meta/

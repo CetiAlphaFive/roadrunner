@@ -178,7 +178,8 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 # no-op for them -- every fold is a plain refit. `ols` is the gaussian
 # learner; `logreg` is the binomial learner (binary outcome / propensity).
 .meep_learner_specs <- function(ares_args = list(), krls_args = list(),
-                                ols_args = list(), logreg_args = list()) {
+                                ols_args = list(), logreg_args = list(),
+                                bgam_args = list()) {
   list(
     ares = list(
       fit = function(X, y, family, weights, hp) {
@@ -246,6 +247,23 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
                   if (!is.null(weights)) list(weights = weights),
                   logreg_args)
         do.call(logreg, args)
+      },
+      predict = function(model, newX, family) {
+        as.numeric(predict(model, newdata = newX, type = "response"))
+      }
+    ),
+    bgam = list(
+      # Family-agnostic P-spline gradient boosting learner.
+      # Hyperparameters frozen by tune="once": mstop, nu, nknots, degree, dpen.
+      fit = function(X, y, family, weights, hp) {
+        base_args <- c(
+          list(x = X, y = y, family = family, autotune = FALSE),
+          if (!is.null(weights)) list(weights = weights)
+        )
+        # Dedupe: bgam_args keys already set by base_args are silently dropped.
+        extra <- bgam_args[setdiff(names(bgam_args), names(base_args))]
+        args <- c(base_args, extra, hp)
+        do.call(bgam, args)
       },
       predict = function(model, newX, family) {
         as.numeric(predict(model, newdata = newX, type = "response"))
@@ -453,6 +471,8 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @param logreg_args A named list of extra arguments spliced into every
 #'   [logreg()] call (only relevant when `"logreg"` is among
 #'   `learners`).
+#' @param bgam_args A named list of extra arguments spliced into every
+#'   [bgam()] call (only relevant when `"bgam"` is among `learners`).
 #' @param verbose Logical; if `TRUE`, print progress per nuisance / fold.
 #' @param ... Currently unused; reserved.
 #'
@@ -495,6 +515,7 @@ meep <- function(X, y, treatment = NULL,
                  krls_args = list(),
                  ols_args = list(),
                  logreg_args = list(),
+                 bgam_args = list(),
                  verbose = FALSE, ...) {
   cl <- match.call()
   ensemble   <- match.arg(ensemble)
@@ -548,11 +569,11 @@ meep <- function(X, y, treatment = NULL,
     if (is.null(learner_names) || any(!nzchar(learner_names)))
       stop("meep: a list of `learners` must be fully named.", call. = FALSE)
   } else {
-    learners <- match.arg(learners, c("ares", "krls", "ols", "logreg"),
+    learners <- match.arg(learners, c("ares", "krls", "ols", "logreg", "bgam"),
                           several.ok = TRUE)
     learners <- unique(learners)
     all_specs <- .meep_learner_specs(ares_args, krls_args,
-                                     ols_args, logreg_args)
+                                     ols_args, logreg_args, bgam_args)
     learner_specs <- all_specs[learners]
     learner_names <- learners
   }
@@ -648,7 +669,7 @@ meep <- function(X, y, treatment = NULL,
   if (identical(tune, "once")) {
     frozen <- .meep_freeze_hyperparams(X, y_model, family, weights,
                                        learner_names, ares_args, krls_args,
-                                       verbose)
+                                       verbose, bgam_args = bgam_args)
   }
 
   # ---- assemble the nuisance task list ----------------------------------
@@ -847,6 +868,7 @@ meep <- function(X, y, treatment = NULL,
   # stash data needed for full-data refits
   out$.train <- list(X = X, y = y_model, d = d_model,
                       ares_args = ares_args, krls_args = krls_args,
+                      bgam_args = bgam_args,
                       learner_specs = learner_specs)
   class(out) <- "meep"
   out
@@ -859,7 +881,8 @@ meep <- function(X, y, treatment = NULL,
 # Autotune each learner once on the full data and capture the winning
 # hyperparameters as a per-learner list of argument lists.
 .meep_freeze_hyperparams <- function(X, y, family, weights, learner_names,
-                                     ares_args, krls_args, verbose) {
+                                     ares_args, krls_args, verbose,
+                                     bgam_args = list()) {
   frozen <- list()
   for (lname in learner_names) {
     if (identical(lname, "ares")) {
@@ -885,6 +908,24 @@ meep <- function(X, y, treatment = NULL,
       } else {
         sig <- fit$sigma_vec %||% fit$sigma
         frozen[[lname]] <- list(sigma = sig, lambda = fit$lambda)
+      }
+    } else if (identical(lname, "bgam")) {
+      # Autotune bgam on full data; freeze mstop, nu, nknots, degree, dpen.
+      base_bgam <- c(list(x = X, y = y, family = family, autotune = TRUE),
+                     if (!is.null(weights)) list(weights = weights))
+      extra_bgam <- bgam_args[setdiff(names(bgam_args), names(base_bgam))]
+      args <- c(base_bgam, extra_bgam)
+      fit <- tryCatch(do.call(bgam, args), error = function(e) e)
+      if (inherits(fit, "error")) {
+        frozen[[lname]] <- list()
+      } else {
+        frozen[[lname]] <- list(
+          mstop  = fit$mstop,
+          nu     = fit$nu,
+          nknots = fit$nknots,
+          degree = fit$degree,
+          dpen   = fit$dpen
+        )
       }
     } else {
       # ols / logreg (no hyperparameters) and any unknown learner --
@@ -914,6 +955,9 @@ meep <- function(X, y, treatment = NULL,
     return(list(autotune = TRUE))
   }
   if (identical(lname, "krls")) {
+    return(list(autotune = TRUE))
+  }
+  if (identical(lname, "bgam")) {
     return(list(autotune = TRUE))
   }
   list()

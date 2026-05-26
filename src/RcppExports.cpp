@@ -77,6 +77,80 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// bgam_bspline_basis_cpp
+Rcpp::List bgam_bspline_basis_cpp(const arma::vec& x, const arma::vec& knots, int degree);
+RcppExport SEXP _roadrunner_bgam_bspline_basis_cpp(SEXP xSEXP, SEXP knotsSEXP, SEXP degreeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type x(xSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type knots(knotsSEXP);
+    Rcpp::traits::input_parameter< int >::type degree(degreeSEXP);
+    rcpp_result_gen = Rcpp::wrap(bgam_bspline_basis_cpp(x, knots, degree));
+    return rcpp_result_gen;
+END_RCPP
+}
+// bgam_diff_penalty_cpp
+arma::mat bgam_diff_penalty_cpp(int K, int dpen);
+RcppExport SEXP _roadrunner_bgam_diff_penalty_cpp(SEXP KSEXP, SEXP dpenSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type K(KSEXP);
+    Rcpp::traits::input_parameter< int >::type dpen(dpenSEXP);
+    rcpp_result_gen = Rcpp::wrap(bgam_diff_penalty_cpp(K, dpen));
+    return rcpp_result_gen;
+END_RCPP
+}
+// bgam_prefactor_cpp
+Rcpp::List bgam_prefactor_cpp(const arma::mat& B, const arma::mat& DtD, double lambda, Rcpp::Nullable<Rcpp::NumericVector> w);
+RcppExport SEXP _roadrunner_bgam_prefactor_cpp(SEXP BSEXP, SEXP DtDSEXP, SEXP lambdaSEXP, SEXP wSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type B(BSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type DtD(DtDSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type w(wSEXP);
+    rcpp_result_gen = Rcpp::wrap(bgam_prefactor_cpp(B, DtD, lambda, w));
+    return rcpp_result_gen;
+END_RCPP
+}
+// bgam_boost_cpp
+Rcpp::List bgam_boost_cpp(const arma::vec& y, const arma::vec& F0, const Rcpp::List& B_list, const Rcpp::List& Bt_list, const Rcpp::List& chol_list, const Rcpp::List& DtD_list, const arma::vec& lambda_vec, double nu, int mstop, int family, int nthreads, Rcpp::Nullable<Rcpp::NumericVector> w_prior);
+RcppExport SEXP _roadrunner_bgam_boost_cpp(SEXP ySEXP, SEXP F0SEXP, SEXP B_listSEXP, SEXP Bt_listSEXP, SEXP chol_listSEXP, SEXP DtD_listSEXP, SEXP lambda_vecSEXP, SEXP nuSEXP, SEXP mstopSEXP, SEXP familySEXP, SEXP nthreadsSEXP, SEXP w_priorSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type F0(F0SEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type B_list(B_listSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type Bt_list(Bt_listSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type chol_list(chol_listSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type DtD_list(DtD_listSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type lambda_vec(lambda_vecSEXP);
+    Rcpp::traits::input_parameter< double >::type nu(nuSEXP);
+    Rcpp::traits::input_parameter< int >::type mstop(mstopSEXP);
+    Rcpp::traits::input_parameter< int >::type family(familySEXP);
+    Rcpp::traits::input_parameter< int >::type nthreads(nthreadsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type w_prior(w_priorSEXP);
+    rcpp_result_gen = Rcpp::wrap(bgam_boost_cpp(y, F0, B_list, Bt_list, chol_list, DtD_list, lambda_vec, nu, mstop, family, nthreads, w_prior));
+    return rcpp_result_gen;
+END_RCPP
+}
+// bgam_predict_cpp
+arma::vec bgam_predict_cpp(const Rcpp::List& B_new_list, const Rcpp::List& beta_list, double F0_scalar);
+RcppExport SEXP _roadrunner_bgam_predict_cpp(SEXP B_new_listSEXP, SEXP beta_listSEXP, SEXP F0_scalarSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type B_new_list(B_new_listSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type beta_list(beta_listSEXP);
+    Rcpp::traits::input_parameter< double >::type F0_scalar(F0_scalarSEXP);
+    rcpp_result_gen = Rcpp::wrap(bgam_predict_cpp(B_new_list, beta_list, F0_scalar));
+    return rcpp_result_gen;
+END_RCPP
+}
 // krls_kernel_cpp
 NumericMatrix krls_kernel_cpp(const NumericMatrix& X, const NumericVector& sigma_vec, int kernel_type, double kernel_c);
 RcppExport SEXP _roadrunner_krls_kernel_cpp(SEXP XSEXP, SEXP sigma_vecSEXP, SEXP kernel_typeSEXP, SEXP kernel_cSEXP) {
@@ -498,6 +572,11 @@ static const R_CallMethodDef CallEntries[] = {
     {"_roadrunner_mars_fit_cpp", (DL_FUNC) &_roadrunner_mars_fit_cpp, 20},
     {"_roadrunner_mars_basis_cpp", (DL_FUNC) &_roadrunner_mars_basis_cpp, 4},
     {"_roadrunner_mars_backward_only_cpp", (DL_FUNC) &_roadrunner_mars_backward_only_cpp, 12},
+    {"_roadrunner_bgam_bspline_basis_cpp", (DL_FUNC) &_roadrunner_bgam_bspline_basis_cpp, 3},
+    {"_roadrunner_bgam_diff_penalty_cpp", (DL_FUNC) &_roadrunner_bgam_diff_penalty_cpp, 2},
+    {"_roadrunner_bgam_prefactor_cpp", (DL_FUNC) &_roadrunner_bgam_prefactor_cpp, 4},
+    {"_roadrunner_bgam_boost_cpp", (DL_FUNC) &_roadrunner_bgam_boost_cpp, 12},
+    {"_roadrunner_bgam_predict_cpp", (DL_FUNC) &_roadrunner_bgam_predict_cpp, 3},
     {"_roadrunner_krls_kernel_cpp", (DL_FUNC) &_roadrunner_krls_kernel_cpp, 4},
     {"_roadrunner_krls_kernel_pred_cpp", (DL_FUNC) &_roadrunner_krls_kernel_pred_cpp, 5},
     {"_roadrunner_krls_eig_cpp", (DL_FUNC) &_roadrunner_krls_eig_cpp, 1},

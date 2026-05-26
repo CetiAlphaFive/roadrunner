@@ -41,6 +41,14 @@ reference:
   - print.ols
   - summary.ols
   - plot.ols
+- title: "Boosted GAM: bgam()"
+  desc: "Component-wise P-spline gradient boosting (gamboost-style) with weights, bagging, and CV mstop autotune. Gaussian and binomial families."
+  contents:
+  - bgam
+  - predict.bgam
+  - print.bgam
+  - summary.bgam
+  - plot.bgam
 - title: "Logistic regression: logreg()"
   desc: "Binary logistic regression by IRLS with classical and HC robust standard errors and bagging."
   contents:
