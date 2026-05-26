@@ -200,6 +200,27 @@ arma::mat bgam_diff_penalty_cpp(int K, int dpen) {
   return D.t() * D;
 }
 
+
+// ============================================================================
+// bgam_chol_with_jitter
+//
+// Wrap arma::chol with adaptive ridge retry. Some LAPACK builds (notably
+// macOS Accelerate) are stricter on near-singular matrices than Linux/Windows.
+// Retry up to 6 times with geometrically growing jitter on the diagonal.
+// Returns false only if all retries fail.
+// ============================================================================
+static inline bool bgam_chol_with_jitter(arma::mat& L, const arma::mat& A) {
+  if (arma::chol(L, A, "lower")) return true;
+  const arma::uword n = A.n_rows;
+  const double base = std::max(1e-12, arma::trace(A) / static_cast<double>(std::max<arma::uword>(1, n)));
+  double jitter = base * 1e-8;
+  arma::mat I = arma::eye<arma::mat>(n, n);
+  for (int k = 0; k < 6; ++k) {
+    if (arma::chol(L, A + jitter * I, "lower")) return true;
+    jitter *= 100.0;
+  }
+  return false;
+}
 // ============================================================================
 // bgam_prefactor_cpp
 //
@@ -234,7 +255,7 @@ Rcpp::List bgam_prefactor_cpp(
   arma::mat A = BtB + lambda * DtD;
 
   arma::mat L;
-  bool ok = arma::chol(L, A, "lower");
+  bool ok = bgam_chol_with_jitter(L, A);
   if (!ok)
     Rcpp::stop("bgam_prefactor_cpp: Cholesky failed (A_j not positive "
                "definite). Check that lambda > 0 and B_j has full column "
@@ -376,7 +397,7 @@ struct BinomialBoostWorker : public RcppParallel::Worker {
       arma::mat A_jw = Bw.t() * Bw + lambda_j * DtD_j;
 
       arma::mat L_jw;
-      bool ok = arma::chol(L_jw, A_jw, "lower");
+      bool ok = bgam_chol_with_jitter(L_jw, A_jw);
       if (!ok) {
         chol_failures.push_back((int)j);
         continue;
@@ -515,7 +536,7 @@ Rcpp::List bgam_boost_cpp(
           arma::mat Bw   = B_j.each_col() % sw;
           arma::mat A_jw = Bw.t() * Bw + lambda_j * DtD_j;
           arma::mat L_jw;
-          bool ok = arma::chol(L_jw, A_jw, "lower");
+          bool ok = bgam_chol_with_jitter(L_jw, A_jw);
           if (!ok) {
             Rcpp::warning("bgam: base-learner %d singular at iteration %d; "
                           "skipping.", j, m + 1);
