@@ -14,28 +14,21 @@ with thin, base-R-style interfaces. Six core fitters today:
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
 - **`plda()`** -- Penalized Linear Discriminant Analysis (L1 / fused-lasso).
-- **`ols()`** -- Ordinary and weighted least squares with HC robust SEs.
-- **`logreg()`** -- Binary logistic regression by IRLS with HC robust SEs.
-- **`bgam()`** -- Component-wise P-spline gradient boosting; smooth additive
-  model with built-in variable selection via boosting early stopping.
-  Gaussian and binomial families.
+- **`ols()`** -- Ordinary and weighted least squares.
+- **`logreg()`** -- Binary logistic regression by IRLS.
+- **`bgam()`** -- Component-wise P-spline gradient boosting.
 
-Plus **`meep()`** -- a cross-fitted ensemble of `ares()`, `krls()`, `ols()`,
-`logreg()`, and `plda()` (selected automatically by nuisance family), with
-opt-in `bgam()` and optional external learners (`ranger` random forests and
+Plus **`meep()`** -- a cross-fitted, stacked ensemble of these built-in algorithms and optionally external learners (`ranger` random forests and
 `dbarts` BART), built for Double Machine Learning and causal-forest nuisance
 estimation.
 
 ## Package design
 
-- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`
-  at runtime. 
+- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel` at runtime. 
 - **Fast.** C++ engines via `Rcpp` with multi-core scoring via
   `RcppParallel`.
-- **Deterministic.** Fits are bit-for-bit identical across thread
-  counts at a fixed seed.
-- **Familiar API.** Base-R style: formula and matrix interfaces and
-  standard S3 methods (`predict`, `print`, `summary`, `plot`).
+- **Deterministic.** Fits are bit-for-bit identical across thread counts at a fixed seed.
+- **Familiar API.** Base-R style: formula and matrix interfaces and standard S3 methods (`predict`, `print`, `summary`, `plot`).
 
 ## Install
 
