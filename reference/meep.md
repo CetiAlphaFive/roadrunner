@@ -1,4 +1,4 @@
-# Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)
+# Fast cross-fitted causal ensemble
 
 `meep()` produces honest, cross-fitted (out-of-fold) nuisance estimates
 for use in Double Machine Learning (DML) and causal-forest workflows.
@@ -9,9 +9,10 @@ cross-fits an ensemble of the package's base learners – by default
 [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
 (Kernel Regularized Least Squares),
 [`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
-and
 [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
-with
+and
+[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
+(penalized LDA), with
 [`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
 (P-spline boosting) available opt-in – and returns the out-of-fold
 predictions \\\hat E\[Y\mid X\]\\ and (when `treatment` is supplied)

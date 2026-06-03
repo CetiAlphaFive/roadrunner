@@ -202,9 +202,9 @@ data.frame(
 #>    E[D|X]      0.162       0.180
 ```
 
-Add gradient-boosted trees to the stack with `extra.learners` (the
-external packages stay optional – you install them yourself), and use
-[`plot()`](https://rdrr.io/r/graphics/plot.default.html) for a quick
+Add random-forest and BART learners to the stack with `extra.learners`
+(the external packages stay optional – you install them yourself), and
+use [`plot()`](https://rdrr.io/r/graphics/plot.default.html) for a quick
 read on each learner and the stack – ROC curves for binary nuisances,
 OOF R-squared and observed-vs-predicted for continuous ones:
 

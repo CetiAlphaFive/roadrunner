@@ -56,12 +56,11 @@ and marginal effects.
 
 ## Causal ensemble: meep()
 
-Cross-fitted ensemble of ares() and krls() for DML and causal-forest
-nuisance estimation.
+Cross-fitted, stacked ensemble of the package’s base learners (and
+optionally ranger/dbarts) for DML and causal-forest nuisance estimation.
 
 - [`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
-  : Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline
-  boosting)
+  : Fast cross-fitted causal ensemble
 
 - [`predict(`*`<meep>`*`)`](https://cetialphafive.github.io/roadrunner/reference/predict.meep.md)
   :

@@ -21,7 +21,7 @@ plda(
   nfold = 5L,
   lambda_grid = NULL,
   maxit = 100L,
-  tol = 0.000001,
+  tol = 1e-06,
   nthreads = 0L,
   ...
 )
