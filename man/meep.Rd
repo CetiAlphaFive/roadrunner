@@ -16,6 +16,8 @@ meep(
   family = NULL,
   treatment_family = NULL,
   tune = c("once", "per_fold", "none"),
+  calibrate = c("isotonic", "none"),
+  calibrate_bounds = c(0.001, 1 - 0.001),
   cluster = NULL,
   weights = NULL,
   seed = NULL,
@@ -92,6 +94,21 @@ auto-detects.}
 
 \item{tune}{One of \code{"once"}, \code{"per_fold"}, \code{"none"}. See \emph{Tuning}.}
 
+\item{calibrate}{One of \code{"isotonic"} (default) or \code{"none"}. \code{"isotonic"}
+post-processes each cross-fitted \emph{binomial} nuisance (the propensity
+\eqn{\hat E[D\mid X]} and any binary-outcome nuisance) through pooled
+isotonic calibration -- causal isotonic calibration of van der Laan,
+Carone, Luedtke and van der Laan (2023). This improves propensity
+calibration and the coverage of downstream DML / AIPW intervals at no
+extra fitting cost. The map is monotone, so it does \strong{not} change the
+ROC / AUC of the nuisance -- only the probability scale. \code{"none"}
+disables calibration. See \emph{Propensity calibration}.}
+
+\item{calibrate_bounds}{Numeric length-2; calibrated probabilities are
+truncated to this range (default \code{c(0.001, 0.999)}). Truncation is
+mandatory: isotonic regression emits exactly 0 / 1 in its end blocks,
+which would let an inverse-propensity weight blow up.}
+
 \item{cluster}{Optional length-n grouping vector. Folds are assigned at
 the cluster level so each cluster lands entirely within one fold.}
 
@@ -140,8 +157,10 @@ An object of S3 class \code{"meep"}: a list with \code{y_hat_oof},
 \code{d_hat_oof}, \code{mu0_hat_oof}, \code{mu1_hat_oof}, \code{y_resid}, \code{d_resid},
 \code{folds}, \code{oof_matrix} (per-nuisance n-by-L matrices), \code{ensemble_weights},
 \code{learner_cv_perf}, \code{learners}, \code{family}, \code{treatment_family}, \code{tune},
-\code{ensemble}, \code{n}, \code{p}, \code{frozen_hyperparams}, \code{fold_failures},
-\code{cluster}, \code{weights}, \code{seed}, and \code{call}.
+\code{calibrate}, \code{calibrate_bounds}, \code{calibrators} (a named list of stored
+isotonic calibrators, one per nuisance, \code{NULL} for nuisances that were
+not calibrated), \code{ensemble}, \code{n}, \code{p}, \code{frozen_hyperparams},
+\code{fold_failures}, \code{cluster}, \code{weights}, \code{seed}, and \code{call}.
 }
 \description{
 \code{meep()} produces honest, cross-fitted (out-of-fold) nuisance estimates
@@ -200,6 +219,25 @@ option; slower.
 default arguments (plus anything passed via \code{ares_args} / \code{krls_args}).
 No autotune is invoked at all.
 }
+}
+
+\section{Propensity calibration}{
+
+With \code{calibrate = "isotonic"} (the default), every cross-fitted \emph{binomial}
+nuisance -- the propensity score and any binary-outcome nuisance -- is
+recalibrated by a pooled isotonic regression of the response on the
+already-cross-fitted combined (stacked) prediction (causal isotonic
+calibration; van der Laan, Carone, Luedtke & van der Laan 2023). The
+calibration is \emph{pooled} on the out-of-fold predictions -- isotonic
+regression is low-complexity, so no extra cross-fitting layer is needed --
+and only the combined \verb{*_hat_oof} vector is calibrated; the per-learner
+\code{oof_matrix} columns stay on their raw scale. Because the calibration map
+is monotone non-decreasing, the ranking of the propensity (and hence its
+ROC / AUC) is preserved; only the probability scale changes. Calibrated
+probabilities are truncated to \code{calibrate_bounds} so that the 0 / 1 end
+blocks of the isotonic fit cannot produce exploding inverse-propensity
+weights. The recalibrated propensity flows automatically into \code{d_resid}
+(and the recalibrated outcome probability into \code{y_resid}).
 }
 
 \section{External learners}{

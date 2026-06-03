@@ -1,3 +1,26 @@
+# roadrunner 0.0.0.9063
+
+## `meep()` — isotonic propensity calibration (on by default)
+
+Cross-fitted binomial nuisances (the propensity score, and any binary-outcome
+nuisance) are now post-processed through pooled isotonic calibration (causal
+isotonic calibration; van der Laan, Carone, Luedtke & van der Laan 2023). The
+calibration map is monotone, so it leaves the learner's ranking — and hence
+ROC/AUC — unchanged while putting the probabilities on a properly calibrated
+scale, which improves the finite-sample coverage of downstream DML / AIPW
+estimators. Controlled by the new `calibrate` argument (`"isotonic"` default,
+`"none"` to disable) with truncation via `calibrate_bounds`. The fitted
+calibrators are stored and re-applied by `predict.meep()` on new data.
+
+## Other recent `meep()` additions
+
+- `plda()` is now a default learner for binomial nuisances; default learners
+  are selected automatically per nuisance family.
+- `extra.learners` adds optional external learners to the stack — `"forest"`
+  (ranger) and `"BART"` (dbarts) — kept in `Suggests`, not dependencies.
+- `plot.meep()` gives quick per-learner / stack diagnostics: ROC curves for
+  binary nuisances, OOF R² and observed-vs-predicted for continuous ones.
+
 # roadrunner 0.0.0.9059
 
 ## `bgam()` — component-wise P-spline gradient boosting

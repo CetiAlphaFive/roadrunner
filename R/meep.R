@@ -89,6 +89,37 @@
 }
 
 # ----------------------------------------------------------------------------
+#  Causal isotonic calibration helpers (van der Laan et al. 2023)
+# ----------------------------------------------------------------------------
+# Pooled isotonic regression of the binary response on the cross-fitted
+# predicted probability. Calibration is monotone (ranking, hence ROC/AUC,
+# unchanged) and recalibrates the probability scale, stabilizing downstream
+# AIPW / DML inference. Isotonic regression emits exactly 0/1 in its end
+# blocks, so calibrated probabilities are TRUNCATED to `bounds` to prevent
+# inverse-propensity-weight blow-ups. No RNG -- deterministic.
+
+# Fit a pooled isotonic calibrator: stats::isoreg on (p, y) sorted by p.
+# Returns the stored step function (x, yf) plus the truncation bounds.
+.meep_isotonic_calibrator <- function(p, y, bounds = c(1e-3, 1 - 1e-3)) {
+  ok <- is.finite(p) & is.finite(y)
+  p <- p[ok]; y <- y[ok]
+  o  <- order(p)
+  ir <- stats::isoreg(p[o], y[o])
+  list(x = ir$x, yf = ir$yf, bounds = bounds)
+}
+
+# Apply a stored calibrator to new predicted probabilities. Uses a constant
+# (right-continuous step) interpolation with rule = 2 (flat extrapolation at
+# the ends), then truncates to the stored bounds.
+.meep_apply_calibrator <- function(cal, newp) {
+  g <- stats::approxfun(cal$x, cal$yf, method = "constant",
+                        rule = 2, ties = "ordered")
+  out <- g(newp)
+  out[!is.finite(out)] <- NA_real_
+  pmin(pmax(out, cal$bounds[1]), cal$bounds[2])
+}
+
+# ----------------------------------------------------------------------------
 #  build_folds() -- K-fold assignment, cluster-aware, seeded
 # ----------------------------------------------------------------------------
 
@@ -536,6 +567,23 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   default arguments (plus anything passed via `ares_args` / `krls_args`).
 #'   No autotune is invoked at all.
 #'
+#' @section Propensity calibration:
+#' With `calibrate = "isotonic"` (the default), every cross-fitted *binomial*
+#' nuisance -- the propensity score and any binary-outcome nuisance -- is
+#' recalibrated by a pooled isotonic regression of the response on the
+#' already-cross-fitted combined (stacked) prediction (causal isotonic
+#' calibration; van der Laan, Carone, Luedtke & van der Laan 2023). The
+#' calibration is *pooled* on the out-of-fold predictions -- isotonic
+#' regression is low-complexity, so no extra cross-fitting layer is needed --
+#' and only the combined `*_hat_oof` vector is calibrated; the per-learner
+#' `oof_matrix` columns stay on their raw scale. Because the calibration map
+#' is monotone non-decreasing, the ranking of the propensity (and hence its
+#' ROC / AUC) is preserved; only the probability scale changes. Calibrated
+#' probabilities are truncated to `calibrate_bounds` so that the 0 / 1 end
+#' blocks of the isotonic fit cannot produce exploding inverse-propensity
+#' weights. The recalibrated propensity flows automatically into `d_resid`
+#' (and the recalibrated outcome probability into `y_resid`).
+#'
 #' @section External learners:
 #' `extra.learners` opts external-package models into the stack without making
 #' those packages dependencies of \pkg{roadrunner}. `"forest"` uses
@@ -611,6 +659,19 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @param treatment_family Treatment family, `"gaussian"` or `"binomial"`.
 #'   `NULL` auto-detects.
 #' @param tune One of `"once"`, `"per_fold"`, `"none"`. See *Tuning*.
+#' @param calibrate One of `"isotonic"` (default) or `"none"`. `"isotonic"`
+#'   post-processes each cross-fitted *binomial* nuisance (the propensity
+#'   \eqn{\hat E[D\mid X]} and any binary-outcome nuisance) through pooled
+#'   isotonic calibration -- causal isotonic calibration of van der Laan,
+#'   Carone, Luedtke and van der Laan (2023). This improves propensity
+#'   calibration and the coverage of downstream DML / AIPW intervals at no
+#'   extra fitting cost. The map is monotone, so it does **not** change the
+#'   ROC / AUC of the nuisance -- only the probability scale. `"none"`
+#'   disables calibration. See *Propensity calibration*.
+#' @param calibrate_bounds Numeric length-2; calibrated probabilities are
+#'   truncated to this range (default `c(0.001, 0.999)`). Truncation is
+#'   mandatory: isotonic regression emits exactly 0 / 1 in its end blocks,
+#'   which would let an inverse-propensity weight blow up.
 #' @param cluster Optional length-n grouping vector. Folds are assigned at
 #'   the cluster level so each cluster lands entirely within one fold.
 #' @param weights Optional length-n case weights, forwarded to every base
@@ -646,8 +707,10 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   `d_hat_oof`, `mu0_hat_oof`, `mu1_hat_oof`, `y_resid`, `d_resid`,
 #'   `folds`, `oof_matrix` (per-nuisance n-by-L matrices), `ensemble_weights`,
 #'   `learner_cv_perf`, `learners`, `family`, `treatment_family`, `tune`,
-#'   `ensemble`, `n`, `p`, `frozen_hyperparams`, `fold_failures`,
-#'   `cluster`, `weights`, `seed`, and `call`.
+#'   `calibrate`, `calibrate_bounds`, `calibrators` (a named list of stored
+#'   isotonic calibrators, one per nuisance, `NULL` for nuisances that were
+#'   not calibrated), `ensemble`, `n`, `p`, `frozen_hyperparams`,
+#'   `fold_failures`, `cluster`, `weights`, `seed`, and `call`.
 #'
 #' @examples
 #' \donttest{
@@ -675,6 +738,8 @@ meep <- function(X, y, treatment = NULL,
                  family = NULL,
                  treatment_family = NULL,
                  tune = c("once", "per_fold", "none"),
+                 calibrate = c("isotonic", "none"),
+                 calibrate_bounds = c(1e-3, 1 - 1e-3),
                  cluster = NULL,
                  weights = NULL,
                  seed = NULL,
@@ -691,6 +756,12 @@ meep <- function(X, y, treatment = NULL,
   ensemble   <- match.arg(ensemble)
   arm_models <- match.arg(arm_models)
   tune       <- match.arg(tune)
+  calibrate  <- match.arg(calibrate)
+  if (!is.numeric(calibrate_bounds) || length(calibrate_bounds) != 2L ||
+      anyNA(calibrate_bounds) || calibrate_bounds[1] >= calibrate_bounds[2] ||
+      calibrate_bounds[1] < 0 || calibrate_bounds[2] > 1)
+    stop("meep: `calibrate_bounds` must be a length-2 numeric with ",
+         "0 <= lower < upper <= 1.", call. = FALSE)
 
   # ---- input validation --------------------------------------------------
   if (is.data.frame(X)) {
@@ -894,6 +965,7 @@ meep <- function(X, y, treatment = NULL,
   oof_pred         <- list()
   fold_failures    <- list()
   cv_perf_rows     <- list()
+  calibrators      <- list()
 
   for (nm in names(nuisances)) {
     N <- nuisances[[nm]]
@@ -1016,9 +1088,31 @@ meep <- function(X, y, treatment = NULL,
     wts <- .meep_combine(OOF_score, resp_score, ensemble, w_score, perf)
     pred <- .meep_apply_weights(OOF, wts)
 
+    # Causal isotonic calibration of binomial nuisances (ON by default).
+    # Pooled isotonic regression of the response on the cross-fitted combined
+    # probability, then truncate to `calibrate_bounds`. Only the combined
+    # (stacked) prediction is calibrated -- the per-learner `oof_matrix`
+    # columns stay raw (plot.meep / learner_cv_perf use them). Monotone, so
+    # ROC/AUC of the calibrated propensity is unchanged.
+    cal <- NULL
+    if (identical(calibrate, "isotonic") && identical(fam, "binomial")) {
+      cal_rows  <- if (is.null(arm_rows)) seq_len(n) else arm_rows
+      resp_cal  <- resp[cal_rows]
+      pred_cal  <- pred[cal_rows]
+      keep      <- is.finite(resp_cal) & is.finite(pred_cal)
+      n_finite  <- sum(keep)
+      two_resp  <- length(unique(resp_cal[keep])) == 2L
+      if (n_finite >= 10L && two_resp) {
+        cal  <- .meep_isotonic_calibrator(pred_cal, resp_cal, calibrate_bounds)
+        # apply to ALL rows so the full OOF vector is on the calibrated scale
+        pred <- .meep_apply_calibrator(cal, pred)
+      }
+    }
+
     oof_matrix[[nm]]       <- OOF
     ensemble_weights[[nm]] <- wts
     oof_pred[[nm]]         <- pred
+    calibrators[[nm]]      <- cal
   }
 
   learner_cv_perf <- if (length(cv_perf_rows))
@@ -1052,6 +1146,9 @@ meep <- function(X, y, treatment = NULL,
     family           = family,
     treatment_family = treatment_family,
     tune             = tune,
+    calibrate        = calibrate,
+    calibrate_bounds = calibrate_bounds,
+    calibrators      = calibrators,
     ensemble         = ensemble,
     arm_models       = arm_models,
     n                = n,
@@ -1293,7 +1390,13 @@ predict.meep <- function(object, newdata,
     if (inherits(pr, "error")) next
     P[, li] <- as.numeric(pr)
   }
-  .meep_apply_weights(P, wts)
+  combined <- .meep_apply_weights(P, wts)
+  # apply the stored isotonic calibrator so new-data predictions land on the
+  # same calibrated probability scale as the training OOF predictions.
+  cal <- object$calibrators[[nuisance]]
+  if (!is.null(cal))
+    combined <- .meep_apply_calibrator(cal, combined)
+  combined
 }
 
 # ----------------------------------------------------------------------------

@@ -136,7 +136,9 @@ predictions designed to drop into Double Machine Learning (`DoubleML`) or
 causal forest (`grf`) implementations. The default learners are `ares()`,
 `krls()`, `ols()`, `logreg()`, and `plda()`, chosen automatically per
 nuisance by family: regression nuisances use `ares`/`krls`/`ols`,
-classification nuisances use `ares`/`krls`/`logreg`/`plda`.
+classification nuisances use `ares`/`krls`/`logreg`/`plda`. By default the
+cross-fitted propensity is isotonically calibrated (van der Laan et al. 2023)
+for more reliable DML/AIPW inference; disable with `calibrate = "none"`.
 
 ```r
 set.seed(1995)
