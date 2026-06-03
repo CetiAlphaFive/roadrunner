@@ -1227,3 +1227,221 @@ plot.bgam <- function(x, ...) {
 
   invisible(x)
 }
+
+# ----------------------------------------------------------------------------
+#  plot.meep() helpers
+# ----------------------------------------------------------------------------
+
+# Out-of-fold R^2 over the rows where both response and prediction are finite.
+# Returns NA when fewer than two usable rows or the response has zero variance.
+.meep_r2 <- function(y, pred) {
+  ok <- is.finite(y) & is.finite(pred)
+  if (sum(ok) < 2L) return(NA_real_)
+  yy <- y[ok]; pp <- pred[ok]
+  ss_tot <- sum((yy - mean(yy))^2)
+  if (ss_tot <= 0) return(NA_real_)
+  1 - sum((yy - pp)^2) / ss_tot
+}
+
+# Tie-safe ROC curve + AUC for a 0/1 label vector scored by `score`.
+# Returns list(fpr, tpr, auc); auc is NA (and the curve is degenerate) when
+# either class is absent among the finite rows.
+.meep_roc <- function(score, label) {
+  ok <- is.finite(score) & is.finite(label)
+  score <- score[ok]; label <- label[ok]
+  n1 <- sum(label == 1)
+  n0 <- sum(label == 0)
+  if (n1 == 0L || n0 == 0L)
+    return(list(fpr = c(0, 1), tpr = c(0, 1), auc = NA_real_))
+  ord <- order(score, decreasing = TRUE)
+  s <- label[ord]
+  tpr <- cumsum(s) / sum(s)
+  fpr <- cumsum(1 - s) / sum(1 - s)
+  r <- rank(score)
+  auc <- (sum(r[label == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+  list(fpr = c(0, fpr), tpr = c(0, tpr), auc = auc)
+}
+
+# Fixed palette recycled across learners (stack is always drawn in black).
+.meep_palette <- function(n) {
+  base <- c("#D55E00", "#0072B2", "#009E73", "#CC79A7",
+            "#E69F00", "#56B4E9", "#F0E442", "#999999")
+  rep(base, length.out = max(1L, n))
+}
+
+# Names of learners "present" for a nuisance: columns with any finite entry.
+.meep_present_learners <- function(mat) {
+  if (is.null(mat) || !is.matrix(mat)) return(character(0))
+  keep <- apply(mat, 2L, function(col) any(is.finite(col)))
+  colnames(mat)[keep]
+}
+
+# Recover the response + stack prediction for one nuisance from a meep fit.
+# Returns NULL when the nuisance is not present on the object.
+.meep_nuisance_data <- function(x, nm) {
+  if (identical(nm, "outcome")) {
+    if (is.null(x$y_hat_oof)) return(NULL)
+    resp <- x$y_resid + x$y_hat_oof
+    return(list(resp = resp, stack = x$y_hat_oof,
+                family = x$family, mat = x$oof_matrix$outcome))
+  }
+  if (identical(nm, "treatment")) {
+    if (is.null(x$d_hat_oof) || is.null(x$treatment_family)) return(NULL)
+    resp <- x$d_resid + x$d_hat_oof
+    return(list(resp = resp, stack = x$d_hat_oof,
+                family = x$treatment_family, mat = x$oof_matrix$treatment))
+  }
+  if (identical(nm, "mu0") || identical(nm, "mu1")) {
+    stack <- if (identical(nm, "mu0")) x$mu0_hat_oof else x$mu1_hat_oof
+    if (is.null(stack)) return(NULL)
+    # mu0 / mu1 responses are the outcome response on the arm rows.
+    resp <- x$y_resid + x$y_hat_oof
+    return(list(resp = resp, stack = stack,
+                family = x$family, mat = x$oof_matrix[[nm]]))
+  }
+  NULL
+}
+
+# Draw an empty panel carrying an explanatory message.
+.meep_empty_panel <- function(main, msg) {
+  graphics::plot(0, 0, type = "n", axes = FALSE, xlab = "", ylab = "",
+                 main = main)
+  graphics::text(0, 0, msg, col = "gray40")
+}
+
+# Draw the ROC panel for a binomial nuisance.
+.meep_roc_panel <- function(nd, nm) {
+  resp <- nd$resp; stack <- nd$stack
+  present <- .meep_present_learners(nd$mat)
+  stack_roc <- .meep_roc(stack, resp)
+  curves <- lapply(present, function(l) .meep_roc(nd$mat[, l], resp))
+  drawable <- vapply(curves, function(r) !is.na(r$auc), logical(1))
+  if (is.na(stack_roc$auc) && !any(drawable)) {
+    .meep_empty_panel(paste0("ROC: ", nm),
+                      "ROC undefined (single-class response)")
+    return(invisible())
+  }
+  graphics::plot(c(0, 1), c(0, 1), type = "n",
+                 xlab = "False positive rate", ylab = "True positive rate",
+                 main = paste0("ROC: ", nm))
+  graphics::abline(0, 1, lty = 3, col = "gray60")
+  cols <- .meep_palette(length(present))
+  leg_txt <- character(0); leg_col <- character(0); leg_lwd <- numeric(0)
+  for (i in seq_along(present)) {
+    r <- curves[[i]]
+    if (is.na(r$auc)) next
+    graphics::lines(r$fpr, r$tpr, col = cols[i], lwd = 1)
+    leg_txt <- c(leg_txt, sprintf("%s (%.2f)", present[i], r$auc))
+    leg_col <- c(leg_col, cols[i]); leg_lwd <- c(leg_lwd, 1)
+  }
+  if (!is.na(stack_roc$auc)) {
+    graphics::lines(stack_roc$fpr, stack_roc$tpr, col = "black", lwd = 2.5)
+    leg_txt <- c(leg_txt, sprintf("stack (%.2f)", stack_roc$auc))
+    leg_col <- c(leg_col, "black"); leg_lwd <- c(leg_lwd, 2.5)
+  }
+  if (length(leg_txt))
+    graphics::legend("bottomright", legend = leg_txt, col = leg_col,
+                     lwd = leg_lwd, bty = "n", cex = 0.8)
+  invisible()
+}
+
+# Draw the two gaussian panels (R^2 barplot + observed-vs-fitted scatter).
+.meep_gaussian_panels <- function(nd, nm) {
+  resp <- nd$resp; stack <- nd$stack
+  present <- .meep_present_learners(nd$mat)
+  # Panel 1: OOF R^2 barplot (per learner + stack).
+  r2_learner <- vapply(present, function(l) .meep_r2(resp, nd$mat[, l]),
+                       numeric(1))
+  r2_stack <- .meep_r2(resp, stack)
+  heights <- c(r2_learner, stack = r2_stack)
+  heights[!is.finite(heights)] <- 0
+  cols <- c(.meep_palette(length(present)), "black")
+  graphics::barplot(heights, names.arg = names(heights), las = 2L,
+                    col = cols, ylab = "OOF R^2", cex.names = 0.8,
+                    main = paste0("OOF R^2: ", nm))
+  graphics::abline(h = 0, col = "gray70", lwd = 1)
+  # Panel 2: observed vs OOF stack prediction.
+  ok <- is.finite(resp) & is.finite(stack)
+  if (!any(ok)) {
+    .meep_empty_panel(paste0("Observed vs OOF fit: ", nm),
+                      "no finite rows")
+    return(invisible())
+  }
+  graphics::plot(stack[ok], resp[ok], pch = 20L, col = "gray40",
+                 xlab = "OOF prediction", ylab = "Response",
+                 main = paste0("Observed vs OOF fit: ", nm))
+  graphics::abline(0, 1, lty = 2, col = "red")
+  if (is.finite(r2_stack))
+    graphics::legend("topleft", legend = sprintf("stack R^2 = %.2f", r2_stack),
+                     bty = "n", cex = 0.85)
+  invisible()
+}
+
+#' Diagnostic plots for a `meep` cross-fitted ensemble
+#'
+#' Visualises out-of-fold (OOF) ensemble performance per nuisance.  For each
+#' selected nuisance the panel layout is keyed to that nuisance's family:
+#' \itemize{
+#'   \item \strong{binomial} -- one ROC panel overlaying each present learner's
+#'     OOF ROC curve (thin, coloured) plus the combined "stack" curve (thick,
+#'     black), with a 45-degree reference line and a legend reporting each
+#'     curve's AUC.
+#'   \item \strong{gaussian} -- two panels: an OOF \eqn{R^2} bar chart (one bar
+#'     per present learner plus a "stack" bar) and an observed-vs-OOF-prediction
+#'     scatter for the stack with a 45-degree line and the stack \eqn{R^2}
+#'     annotated.
+#' }
+#'
+#' Panels are laid out on a near-square grid sized to the total panel count
+#' (binomial contributes 1 panel, gaussian 2).  The function works in headless
+#' (non-interactive) mode without error; degenerate nuisances (single-class
+#' response, zero-variance outcome) are skipped gracefully rather than erroring.
+#'
+#' @param x An object of class `"meep"`, as returned by [meep()].
+#' @param which Character vector of nuisances to draw; any subset of
+#'   `c("outcome", "treatment", "mu0", "mu1")`.  Nuisances not present on the
+#'   object are silently dropped.  Defaults to `c("outcome", "treatment")`.
+#' @param ... Currently ignored.
+#' @return Invisibly returns `x`.
+#' @seealso [meep()]
+#' @export
+plot.meep <- function(x, which = c("outcome", "treatment"), ...) {
+  if (!inherits(x, "meep"))
+    stop("plot.meep: 'x' must be a 'meep' object.")
+  allowed <- c("outcome", "treatment", "mu0", "mu1")
+  which <- intersect(which, allowed)
+  if (length(which) == 0L)
+    stop("plot.meep: `which` must name at least one of ",
+         paste(allowed, collapse = ", "), ".")
+
+  # Resolve which selected nuisances are actually present.
+  nds <- list()
+  for (nm in which) {
+    nd <- .meep_nuisance_data(x, nm)
+    if (!is.null(nd)) nds[[nm]] <- nd
+  }
+  if (length(nds) == 0L)
+    stop("plot.meep: none of the requested nuisances (",
+         paste(which, collapse = ", "), ") are present on this fit.")
+
+  # Total panel count: binomial = 1, gaussian = 2.
+  n_panels <- sum(vapply(nds, function(nd)
+    if (identical(nd$family, "binomial")) 1L else 2L, integer(1)))
+  ncol <- ceiling(sqrt(n_panels))
+  nrow <- ceiling(n_panels / ncol)
+
+  old_par <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(old_par), add = TRUE)
+  graphics::par(mfrow = c(nrow, ncol), mar = c(4, 4, 2, 1))
+
+  for (nm in names(nds)) {
+    nd <- nds[[nm]]
+    if (identical(nd$family, "binomial")) {
+      .meep_roc_panel(nd, nm)
+    } else {
+      .meep_gaussian_panels(nd, nm)
+    }
+  }
+
+  invisible(x)
+}
