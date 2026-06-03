@@ -28,9 +28,13 @@ Plus
 [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md),
 [`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
 [`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
-and opt-in
-[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md),
-built for Double Machine Learning and causal-forest nuisance estimation.
+and
+[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
+(selected automatically by nuisance family), with opt-in
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+and optional external learners (`ranger` random forests and `dbarts`
+BART), built for Double Machine Learning and causal-forest nuisance
+estimation.
 
 ## Package design
 
@@ -106,51 +110,6 @@ mirrors [`KRLS::krls()`](https://rdrr.io/pkg/KRLS/man/krls.html)
 numerically (fits agree to ~1e-13 at matched `sigma` and `lambda`) and
 is 6-10x faster on benchmarks at `n >= 500`.
 
-### Causal ensembles via `meep()`
-
-[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
-cross-fits an ensemble of
-[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-and
-[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
-and returns out-of-fold predictions designed to drop into Double Machine
-Learning `DoubleML` or causal forest `grf` implementations.
-
-``` r
-
-set.seed(1)
-n <- 800
-X <- matrix(runif(n * 4, -2, 2), n, 4)
-D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 0.3)
-Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 0.3)
-
-m  <- meep(X, Y, treatment = D, folds = 5, seed = 42)
-m$y_hat_oof   # cross-fitted E[Y | X]
-m$d_hat_oof   # cross-fitted E[D | X]
-
-# hand the cross-fitted nuisances to a causal forest
-# grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)
-```
-
-On smooth, structured signal the spline + kernel ensemble fits the
-nuisances more tightly than `grf`’s built-in regression forests
-(out-of-bag vs out-of-fold R-squared on the toy above):
-
-``` r
-
-cf <- grf::causal_forest(X, Y, D, seed = 42)
-r2 <- function(p, a) 1 - sum((a - p)^2) / sum((a - mean(a))^2)
-
-data.frame(
-  nuisance    = c("E[Y|X]", "E[D|X]"),
-  grf_oob_r2  = c(r2(cf$Y.hat, Y),     r2(cf$W.hat, D)),
-  meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
-)
-#>  nuisance grf_oob_r2 meep_oof_r2
-#>    E[Y|X]      0.854       0.900
-#>    E[D|X]      0.865       0.916
-```
-
 ### Penalized LDA via `plda()`
 
 [`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
@@ -184,9 +143,84 @@ lr  <- logreg(am ~ wt + hp, data = df)
 predict(lr, df[1:3, ], type = "response")
 ```
 
-Both also slot into
+### Boosted additive models via `bgam()`
+
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+fits a smooth additive model by component-wise P-spline gradient
+boosting (Buehlmann & Yu 2003; Eilers & Marx 1996). The number of
+boosting iterations is tuned by cross-validation and doubles as built-in
+variable selection. Gaussian and binomial families.
+
+``` r
+
+fit <- bgam(mpg ~ ., data = mtcars)   # CV-tuned number of boosting steps
+predict(fit, head(mtcars))
+plot(fit)                             # smooth partial-effect curves
+```
+
+### Causal ensembles via `meep()`
+
 [`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)
-as opt-in learners (`learners = c("ols", "logreg")`).
+cross-fits an ensemble of base learners and returns out-of-fold
+predictions designed to drop into Double Machine Learning (`DoubleML`)
+or causal forest (`grf`) implementations. The default learners are
+[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md),
+[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md),
+[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
+[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
+and
+[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md),
+chosen automatically per nuisance by family: regression nuisances use
+`ares`/`krls`/`ols`, classification nuisances use
+`ares`/`krls`/`logreg`/`plda`.
+
+``` r
+
+set.seed(1)
+n <- 800
+X <- matrix(runif(n * 4, -2, 2), n, 4)
+D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 0.3)
+Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 0.3)
+
+m  <- meep(X, Y, treatment = D, folds = 5, seed = 42)
+m$y_hat_oof   # cross-fitted E[Y | X]
+m$d_hat_oof   # cross-fitted E[D | X]
+
+# hand the cross-fitted nuisances to a causal forest
+# grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)
+```
+
+On smooth, structured signal the ensemble fits the nuisances more
+tightly than `grf`’s built-in regression forests (out-of-bag vs
+out-of-fold R-squared on the toy above):
+
+``` r
+
+cf <- grf::causal_forest(X, Y, D, seed = 42)
+r2 <- function(p, a) 1 - sum((a - p)^2) / sum((a - mean(a))^2)
+
+data.frame(
+  nuisance    = c("E[Y|X]", "E[D|X]"),
+  grf_oob_r2  = c(r2(cf$Y.hat, Y),     r2(cf$W.hat, D)),
+  meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
+)
+#>  nuisance grf_oob_r2 meep_oof_r2
+#>    E[Y|X]      0.854       0.900
+#>    E[D|X]      0.865       0.916
+```
+
+Add gradient-boosted trees to the stack with `extra.learners` (the
+external packages stay optional – you install them yourself), and use
+[`plot()`](https://rdrr.io/r/graphics/plot.default.html) for a quick
+read on each learner and the stack – ROC curves for binary nuisances,
+OOF R-squared and observed-vs-predicted for continuous ones:
+
+``` r
+
+m2 <- meep(X, Y, treatment = D, folds = 5, seed = 42,
+           extra.learners = c("forest", "BART"))   # ranger + dbarts
+plot(m2)
+```
 
 ## References
 
