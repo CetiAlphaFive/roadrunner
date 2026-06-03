@@ -28,13 +28,12 @@ estimation.
 
 ## Package design
 
-- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`
-  at runtime.
+- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`.
 - **Fast.** C++ engines via `Rcpp` with multi-core scoring via
   `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread counts
   at a fixed seed.
-- **Familiar API.** Base-R style: formula and matrix interfaces and
+- **Simple API.** Base-R style: formula and matrix interfaces and
   standard S3 methods (`predict`, `print`, `summary`, `plot`).
 
 ## Install
