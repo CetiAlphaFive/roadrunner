@@ -62,7 +62,7 @@ predict(fitc)
 
 # Hands-free hyperparameter tuning
 fitt <- ares(mpg ~ ., data = mtcars, autotune = TRUE,
-             autotune.speed = "fast", seed.cv = 1L)
+             autotune.speed = "fast", seed.cv = 1995L)
 fitt$autotune$degree
 ```
 
@@ -76,7 +76,7 @@ Hazlett 2014) with closed-form leave-one-out selection of the ridge
 penalty and per-observation marginal effects.
 
 ```r
-set.seed(1)
+set.seed(1995)
 n <- 200
 X <- matrix(rnorm(n * 3), n, 3)
 y <- sin(X[, 1]) + 0.5 * X[, 2]^2 - 0.3 * X[, 3] + rnorm(n, sd = 0.2)
@@ -146,13 +146,13 @@ nuisance by family: regression nuisances use `ares`/`krls`/`ols`,
 classification nuisances use `ares`/`krls`/`logreg`/`plda`.
 
 ```r
-set.seed(1)
+set.seed(1995)
 n <- 800
 X <- matrix(runif(n * 4, -2, 2), n, 4)
-D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 0.3)
-Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 0.3)
+D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 1.5)
+Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 1.5)
 
-m  <- meep(X, Y, treatment = D, folds = 5, seed = 42)
+m  <- meep(X, Y, treatment = D, folds = 5, seed = 1995)
 m$y_hat_oof   # cross-fitted E[Y | X]
 m$d_hat_oof   # cross-fitted E[D | X]
 
@@ -165,7 +165,7 @@ than `grf`'s built-in regression forests (out-of-bag vs out-of-fold
 R-squared on the toy above):
 
 ```r
-cf <- grf::causal_forest(X, Y, D, seed = 42)
+cf <- grf::causal_forest(X, Y, D, seed = 1995)
 r2 <- function(p, a) 1 - sum((a - p)^2) / sum((a - mean(a))^2)
 
 data.frame(
@@ -174,8 +174,8 @@ data.frame(
   meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
 )
 #>  nuisance grf_oob_r2 meep_oof_r2
-#>    E[Y|X]      0.854       0.900
-#>    E[D|X]      0.865       0.916
+#>    E[Y|X]      0.207       0.210
+#>    E[D|X]      0.264       0.280
 ```
 
 Add gradient-boosted trees to the stack with `extra.learners` (the external
@@ -184,7 +184,7 @@ quick read on each learner and the stack -- ROC curves for binary nuisances,
 OOF R-squared and observed-vs-predicted for continuous ones:
 
 ```r
-m2 <- meep(X, Y, treatment = D, folds = 5, seed = 42,
+m2 <- meep(X, Y, treatment = D, folds = 5, seed = 1995,
            extra.learners = c("forest", "BART"))   # ranger + dbarts
 plot(m2)
 ```
