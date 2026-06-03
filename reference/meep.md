@@ -32,6 +32,8 @@ meep(
   family = NULL,
   treatment_family = NULL,
   tune = c("once", "per_fold", "none"),
+  calibrate = c("isotonic", "none"),
+  calibrate_bounds = c(0.001, 1 - 0.001),
   cluster = NULL,
   weights = NULL,
   seed = NULL,
@@ -130,6 +132,25 @@ meep(
 
   One of `"once"`, `"per_fold"`, `"none"`. See *Tuning*.
 
+- calibrate:
+
+  One of `"isotonic"` (default) or `"none"`. `"isotonic"` post-processes
+  each cross-fitted *binomial* nuisance (the propensity \\\hat E\[D\mid
+  X\]\\ and any binary-outcome nuisance) through pooled isotonic
+  calibration – causal isotonic calibration of van der Laan, Carone,
+  Luedtke and van der Laan (2023). This improves propensity calibration
+  and the coverage of downstream DML / AIPW intervals at no extra
+  fitting cost. The map is monotone, so it does **not** change the ROC /
+  AUC of the nuisance – only the probability scale. `"none"` disables
+  calibration. See *Propensity calibration*.
+
+- calibrate_bounds:
+
+  Numeric length-2; calibrated probabilities are truncated to this range
+  (default `c(0.001, 0.999)`). Truncation is mandatory: isotonic
+  regression emits exactly 0 / 1 in its end blocks, which would let an
+  inverse-propensity weight blow up.
+
 - cluster:
 
   Optional length-n grouping vector. Folds are assigned at the cluster
@@ -211,8 +232,10 @@ An object of S3 class `"meep"`: a list with `y_hat_oof`, `d_hat_oof`,
 `mu0_hat_oof`, `mu1_hat_oof`, `y_resid`, `d_resid`, `folds`,
 `oof_matrix` (per-nuisance n-by-L matrices), `ensemble_weights`,
 `learner_cv_perf`, `learners`, `family`, `treatment_family`, `tune`,
-`ensemble`, `n`, `p`, `frozen_hyperparams`, `fold_failures`, `cluster`,
-`weights`, `seed`, and `call`.
+`calibrate`, `calibrate_bounds`, `calibrators` (a named list of stored
+isotonic calibrators, one per nuisance, `NULL` for nuisances that were
+not calibrated), `ensemble`, `n`, `p`, `frozen_hyperparams`,
+`fold_failures`, `cluster`, `weights`, `seed`, and `call`.
 
 ## Details
 
@@ -263,6 +286,25 @@ fold failure.
   [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   with their own default arguments (plus anything passed via `ares_args`
   / `krls_args`). No autotune is invoked at all.
+
+## Propensity calibration
+
+With `calibrate = "isotonic"` (the default), every cross-fitted
+*binomial* nuisance – the propensity score and any binary-outcome
+nuisance – is recalibrated by a pooled isotonic regression of the
+response on the already-cross-fitted combined (stacked) prediction
+(causal isotonic calibration; van der Laan, Carone, Luedtke & van der
+Laan 2023). The calibration is *pooled* on the out-of-fold predictions –
+isotonic regression is low-complexity, so no extra cross-fitting layer
+is needed – and only the combined `*_hat_oof` vector is calibrated; the
+per-learner `oof_matrix` columns stay on their raw scale. Because the
+calibration map is monotone non-decreasing, the ranking of the
+propensity (and hence its ROC / AUC) is preserved; only the probability
+scale changes. Calibrated probabilities are truncated to
+`calibrate_bounds` so that the 0 / 1 end blocks of the isotonic fit
+cannot produce exploding inverse-propensity weights. The recalibrated
+propensity flows automatically into `d_resid` (and the recalibrated
+outcome probability into `y_resid`).
 
 ## External learners
 

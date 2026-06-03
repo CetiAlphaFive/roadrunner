@@ -27,7 +27,7 @@
 
     <a class="navbar-brand me-2" href="index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9062</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9063</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -178,7 +178,7 @@
 <h3 id="causal-ensembles-via-meep">Causal ensembles via <code>meep()</code>
 <a class="anchor" aria-label="anchor" href="#causal-ensembles-via-meep"></a>
 </h3>
-<p><code><a href="reference/meep.html">meep()</a></code> cross-fits an ensemble of base learners and returns out-of-fold predictions designed to drop into Double Machine Learning (<code>DoubleML</code>) or causal forest (<code>grf</code>) implementations. The default learners are <code><a href="reference/ares.html">ares()</a></code>, <code><a href="reference/krls.html">krls()</a></code>, <code><a href="reference/ols.html">ols()</a></code>, <code><a href="reference/logreg.html">logreg()</a></code>, and <code><a href="reference/plda.html">plda()</a></code>, chosen automatically per nuisance by family: regression nuisances use <code>ares</code>/<code>krls</code>/<code>ols</code>, classification nuisances use <code>ares</code>/<code>krls</code>/<code>logreg</code>/<code>plda</code>.</p>
+<p><code><a href="reference/meep.html">meep()</a></code> cross-fits an ensemble of base learners and returns out-of-fold predictions designed to drop into Double Machine Learning (<code>DoubleML</code>) or causal forest (<code>grf</code>) implementations. The default learners are <code><a href="reference/ares.html">ares()</a></code>, <code><a href="reference/krls.html">krls()</a></code>, <code><a href="reference/ols.html">ols()</a></code>, <code><a href="reference/logreg.html">logreg()</a></code>, and <code><a href="reference/plda.html">plda()</a></code>, chosen automatically per nuisance by family: regression nuisances use <code>ares</code>/<code>krls</code>/<code>ols</code>, classification nuisances use <code>ares</code>/<code>krls</code>/<code>logreg</code>/<code>plda</code>. By default the cross-fitted propensity is isotonically calibrated (van der Laan et al. 2023) for more reliable DML/AIPW inference; disable with <code>calibrate = "none"</code>.</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/Random.html" class="external-link">set.seed</a></span><span class="op">(</span><span class="fl">1995</span><span class="op">)</span></span>
 <span><span class="va">n</span> <span class="op">&lt;-</span> <span class="fl">800</span></span>

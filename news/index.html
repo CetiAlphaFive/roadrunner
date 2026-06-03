@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9062</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9063</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -32,6 +32,23 @@
       <small>Source: <a href="https://github.com/CetiAlphaFive/roadrunner/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.0.0.9063" id="roadrunner-0009063">roadrunner 0.0.0.9063<a class="anchor" aria-label="anchor" href="#roadrunner-0009063"></a></h2>
+<div class="section level3">
+<h3 id="meep--isotonic-propensity-calibration-on-by-default-0-0-0-9063">
+<code>meep()</code> — isotonic propensity calibration (on by default)<a class="anchor" aria-label="anchor" href="#meep--isotonic-propensity-calibration-on-by-default-0-0-0-9063"></a></h3>
+<p>Cross-fitted binomial nuisances (the propensity score, and any binary-outcome nuisance) are now post-processed through pooled isotonic calibration (causal isotonic calibration; van der Laan, Carone, Luedtke &amp; van der Laan 2023). The calibration map is monotone, so it leaves the learner’s ranking — and hence ROC/AUC — unchanged while putting the probabilities on a properly calibrated scale, which improves the finite-sample coverage of downstream DML / AIPW estimators. Controlled by the new <code>calibrate</code> argument (<code>"isotonic"</code> default, <code>"none"</code> to disable) with truncation via <code>calibrate_bounds</code>. The fitted calibrators are stored and re-applied by <code><a href="../reference/predict.meep.html">predict.meep()</a></code> on new data.</p>
+</div>
+<div class="section level3">
+<h3 id="other-recent-meep-additions-0-0-0-9063">Other recent <code>meep()</code> additions<a class="anchor" aria-label="anchor" href="#other-recent-meep-additions-0-0-0-9063"></a></h3>
+<ul><li>
+<code><a href="../reference/plda.html">plda()</a></code> is now a default learner for binomial nuisances; default learners are selected automatically per nuisance family.</li>
+<li>
+<code>extra.learners</code> adds optional external learners to the stack — <code>"forest"</code> (ranger) and <code>"BART"</code> (dbarts) — kept in <code>Suggests</code>, not dependencies.</li>
+<li>
+<code><a href="../reference/plot.meep.html">plot.meep()</a></code> gives quick per-learner / stack diagnostics: ROC curves for binary nuisances, OOF R² and observed-vs-predicted for continuous ones.</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.0.0.9059" id="roadrunner-0009059">roadrunner 0.0.0.9059<a class="anchor" aria-label="anchor" href="#roadrunner-0009059"></a></h2>
 <div class="section level3">
