@@ -2,14 +2,14 @@
 % Please edit documentation in R/meep.R
 \name{meep}
 \alias{meep}
-\title{Cross-fitted causal ensemble of \code{ares()} and \code{krls()}}
+\title{Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)}
 \usage{
 meep(
   X,
   y,
   treatment = NULL,
   folds = 5L,
-  learners = c("ares", "krls", "ols", "logreg"),
+  learners = c("ares", "krls", "ols", "logreg", "plda"),
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -23,6 +23,7 @@ meep(
   ols_args = list(),
   logreg_args = list(),
   bgam_args = list(),
+  plda_args = list(),
   verbose = FALSE,
   ...
 )
@@ -39,18 +40,25 @@ gives an outcome-only fit (no \code{d_hat_oof}, no arm models).}
 \item{folds}{Either a single integer \code{K} (number of folds), or a
 length-n integer vector of fold ids that is honored verbatim.}
 
-\item{learners}{Character subset of \code{c("ares", "krls", "ols", "logreg")}, or a named list of adapter closures (extensibility
-hook). The default is all four: \code{c("ares", "krls", "ols", "logreg")}. \code{ares} and \code{krls} are family-agnostic and apply to
-every nuisance. \code{"ols"} and \code{"logreg"} are unregularized linear
-learners with no hyperparameters (so \code{tune} is a no-op for them --
-a plain refit per fold); they are applied \emph{per nuisance by family},
-\code{ols} for gaussian (continuous) targets and \code{logreg} for binomial
-(binary) ones. A learner that does not apply to a nuisance is
-skipped, leaving an all-\code{NA} OOF column that the ensemble excludes;
-it is not counted as a fold failure. Narrowing \code{learners} to names
-that are all family-incompatible with a nuisance (for example
-\code{learners = "ols"} with a binary outcome) is an error. Custom
-list-learners are never family-filtered.}
+\item{learners}{Character subset of \code{c("ares", "krls", "ols", "logreg", "plda", "bgam")}, or a named list of adapter closures
+(extensibility hook). The default is
+\code{c("ares", "krls", "ols", "logreg", "plda")}; \code{"bgam"} is opt-in.
+\code{ares} and \code{krls} are family-agnostic and apply to every nuisance.
+\code{"ols"}, \code{"logreg"}, and \code{"plda"} are applied \emph{per nuisance by
+family}: gaussian (continuous) targets get \code{ols}, binomial (binary)
+targets get \code{logreg} and \code{plda}. So gaussian nuisances draw on
+\verb{\{ares, krls, ols\}} and binomial nuisances on
+\verb{\{ares, krls, logreg, plda\}}. \code{ols}/\code{logreg} are unregularized linear
+learners with no hyperparameters (so \code{tune} is a no-op for them -- a
+plain refit per fold); \code{plda} is the penalized-LDA classifier and is
+classification-only. \code{plda} has no observation-weight support: passing
+\code{weights} while \code{"plda"} is among the (built-in) \code{learners} is an
+error. A learner that does not apply to a nuisance is skipped, leaving
+an all-\code{NA} OOF column that the ensemble excludes; it is not counted as
+a fold failure. Narrowing \code{learners} to names that are all
+family-incompatible with a nuisance (for example \code{learners = "ols"}
+with a binary outcome) is an error. Custom list-learners are never
+family-filtered.}
 
 \item{ensemble}{How to combine learners: \code{"stack"} (non-negative least
 squares on the OOF matrix), \code{"average"} (equal weights), or \code{"best"}
@@ -92,6 +100,10 @@ fit and into the NNLS stacking objective.}
 \item{bgam_args}{A named list of extra arguments spliced into every
 \code{\link[=bgam]{bgam()}} call (only relevant when \code{"bgam"} is among \code{learners}).}
 
+\item{plda_args}{A named list of extra arguments spliced into every
+\code{\link[=plda]{plda()}} call (only relevant when \code{"plda"} is among \code{learners}; plda
+is binomial-only).}
+
 \item{verbose}{Logical; if \code{TRUE}, print progress per nuisance / fold.}
 
 \item{...}{Currently unused; reserved.}
@@ -108,8 +120,10 @@ An object of S3 class \code{"meep"}: a list with \code{y_hat_oof},
 \code{meep()} produces honest, cross-fitted (out-of-fold) nuisance estimates
 for use in Double Machine Learning (DML) and causal-forest workflows.
 For an outcome \code{y}, an optional \code{treatment}, and covariates \code{X}, it
-cross-fits an ensemble of the package's \code{\link[=ares]{ares()}} (MARS) and \code{\link[=krls]{krls()}}
-(Kernel Regularized Least Squares) learners and returns the
+cross-fits an ensemble of the package's base learners -- by default
+\code{\link[=ares]{ares()}} (MARS), \code{\link[=krls]{krls()}} (Kernel Regularized Least Squares), \code{\link[=ols]{ols()}},
+and \code{\link[=logreg]{logreg()}}, with \code{\link[=bgam]{bgam()}} (P-spline boosting) available opt-in --
+and returns the
 out-of-fold predictions \eqn{\hat E[Y\mid X]} and (when \code{treatment} is
 supplied) \eqn{\hat E[D\mid X]}, plus the residuals \eqn{Y-\hat Y} and
 \eqn{D-\hat D}.
@@ -135,13 +149,14 @@ regression. A treatment with three or more distinct values is rejected
 
 The family also governs which default learners are fitted for each
 nuisance. \code{ares} and \code{krls} are family-agnostic and always apply.
-\code{ols} is fitted only for gaussian (continuous) nuisances and \code{logreg}
-only for binomial (binary) nuisances. Because the Y-model and the
-D-model can differ in family, applicability is resolved \emph{per nuisance}:
-a gaussian outcome with a binary treatment fits \code{ols} for
-\code{outcome}/\code{mu0}/\code{mu1} and \code{logreg} for \code{treatment}. A learner that
-does not apply to a nuisance is simply skipped -- its OOF column stays
-all-\code{NA} and it is \emph{not} recorded as a fold failure.
+\code{ols} is fitted only for gaussian (continuous) nuisances; \code{logreg} and
+\code{plda} are classification learners fitted only for binomial (binary)
+nuisances. Because the Y-model and the D-model can differ in family,
+applicability is resolved \emph{per nuisance}: a gaussian outcome with a
+binary treatment fits \code{ols} for \code{outcome}/\code{mu0}/\code{mu1} and
+\code{logreg}/\code{plda} for \code{treatment}. A learner that does not apply to a
+nuisance is simply skipped -- its OOF column stays all-\code{NA} and it is
+\emph{not} recorded as a fold failure.
 }
 
 \section{Tuning (\code{tune})}{
@@ -193,5 +208,5 @@ fit
 
 }
 \seealso{
-\code{\link[=ares]{ares()}}, \code{\link[=krls]{krls()}}
+\code{\link[=ares]{ares()}}, \code{\link[=krls]{krls()}}, \code{\link[=ols]{ols()}}, \code{\link[=logreg]{logreg()}}, \code{\link[=plda]{plda()}}, \code{\link[=bgam]{bgam()}}
 }

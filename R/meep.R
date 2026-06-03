@@ -44,12 +44,13 @@
 # Is learner `name` applicable to a nuisance of family `fam`?
 #
 # `ares` and `krls` are family-agnostic (always apply). `ols` is a gaussian
-# learner only; `logreg` is a binomial learner only. Any other name is a
-# custom list-learner -- not filtered (the user is responsible for matching
-# it to the nuisance families).
+# learner only; `logreg` and `plda` are binomial (classification) learners
+# only. Any other name is a custom list-learner -- not filtered (the user is
+# responsible for matching it to the nuisance families).
 .meep_learner_family_ok <- function(name, fam) {
   if (identical(name, "ols"))    return(identical(fam, "gaussian"))
   if (identical(name, "logreg")) return(identical(fam, "binomial"))
+  if (identical(name, "plda"))   return(identical(fam, "binomial"))
   # ares, krls, and any custom list-learner: applicable to both families.
   TRUE
 }
@@ -173,13 +174,13 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #                                       probabilities for binomial)
 
 #
-# `ols` and `logreg` are opt-in (not in the default `learners`): they are
-# unregularized linear fitters with NO hyperparameters, so `tune` is a
+# `ols` and `logreg` are in the default `learners`; `bgam` is opt-in. They
+# are unregularized linear fitters with NO hyperparameters, so `tune` is a
 # no-op for them -- every fold is a plain refit. `ols` is the gaussian
 # learner; `logreg` is the binomial learner (binary outcome / propensity).
 .meep_learner_specs <- function(ares_args = list(), krls_args = list(),
                                 ols_args = list(), logreg_args = list(),
-                                bgam_args = list()) {
+                                bgam_args = list(), plda_args = list()) {
   list(
     ares = list(
       fit = function(X, y, family, weights, hp) {
@@ -250,6 +251,27 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
       },
       predict = function(model, newX, family) {
         as.numeric(predict(model, newdata = newX, type = "response"))
+      }
+    ),
+    plda = list(
+      # Penalized-LDA classifier. Binomial-only; no `weights` support.
+      # Hyperparameters frozen by tune="once": lambda, K, penalty, lambda2.
+      fit = function(X, y, family, weights, hp) {
+        if (!identical(family, "binomial"))
+          stop("meep: learner 'plda' only fits binomial nuisances; ",
+               "use 'ols' for a continuous outcome/treatment.",
+               call. = FALSE)
+        yf <- factor(y, levels = sort(unique(y)))
+        base_args <- list(x = X, y = yf)
+        # plda has no `family` or `weights` argument; never pass them.
+        extra <- plda_args[setdiff(names(plda_args), names(base_args))]
+        args <- c(base_args, extra, hp)
+        do.call(plda, args)
+      },
+      predict = function(model, newX, family) {
+        p <- predict(model, newdata = newX, type = "posterior")
+        # last column = P(success) (columns sorted by class label; "1" last).
+        as.numeric(p[, ncol(p)])
       }
     ),
     bgam = list(
@@ -363,13 +385,15 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #  meep() -- main entry point
 # ----------------------------------------------------------------------------
 
-#' Cross-fitted causal ensemble of `ares()` and `krls()`
+#' Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)
 #'
 #' `meep()` produces honest, cross-fitted (out-of-fold) nuisance estimates
 #' for use in Double Machine Learning (DML) and causal-forest workflows.
 #' For an outcome `y`, an optional `treatment`, and covariates `X`, it
-#' cross-fits an ensemble of the package's [ares()] (MARS) and [krls()]
-#' (Kernel Regularized Least Squares) learners and returns the
+#' cross-fits an ensemble of the package's base learners -- by default
+#' [ares()] (MARS), [krls()] (Kernel Regularized Least Squares), [ols()],
+#' and [logreg()], with [bgam()] (P-spline boosting) available opt-in --
+#' and returns the
 #' out-of-fold predictions \eqn{\hat E[Y\mid X]} and (when `treatment` is
 #' supplied) \eqn{\hat E[D\mid X]}, plus the residuals \eqn{Y-\hat Y} and
 #' \eqn{D-\hat D}.
@@ -393,13 +417,14 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'
 #' The family also governs which default learners are fitted for each
 #' nuisance. `ares` and `krls` are family-agnostic and always apply.
-#' `ols` is fitted only for gaussian (continuous) nuisances and `logreg`
-#' only for binomial (binary) nuisances. Because the Y-model and the
-#' D-model can differ in family, applicability is resolved *per nuisance*:
-#' a gaussian outcome with a binary treatment fits `ols` for
-#' `outcome`/`mu0`/`mu1` and `logreg` for `treatment`. A learner that
-#' does not apply to a nuisance is simply skipped -- its OOF column stays
-#' all-`NA` and it is *not* recorded as a fold failure.
+#' `ols` is fitted only for gaussian (continuous) nuisances; `logreg` and
+#' `plda` are classification learners fitted only for binomial (binary)
+#' nuisances. Because the Y-model and the D-model can differ in family,
+#' applicability is resolved *per nuisance*: a gaussian outcome with a
+#' binary treatment fits `ols` for `outcome`/`mu0`/`mu1` and
+#' `logreg`/`plda` for `treatment`. A learner that does not apply to a
+#' nuisance is simply skipped -- its OOF column stays all-`NA` and it is
+#' *not* recorded as a fold failure.
 #'
 #' @section Tuning (`tune`):
 #' * `"once"` (default) -- autotune each learner on the full data, freeze
@@ -433,19 +458,25 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @param folds Either a single integer `K` (number of folds), or a
 #'   length-n integer vector of fold ids that is honored verbatim.
 #' @param learners Character subset of `c("ares", "krls", "ols",
-#'   "logreg")`, or a named list of adapter closures (extensibility
-#'   hook). The default is all four: `c("ares", "krls", "ols",
-#'   "logreg")`. `ares` and `krls` are family-agnostic and apply to
-#'   every nuisance. `"ols"` and `"logreg"` are unregularized linear
-#'   learners with no hyperparameters (so `tune` is a no-op for them --
-#'   a plain refit per fold); they are applied *per nuisance by family*,
-#'   `ols` for gaussian (continuous) targets and `logreg` for binomial
-#'   (binary) ones. A learner that does not apply to a nuisance is
-#'   skipped, leaving an all-`NA` OOF column that the ensemble excludes;
-#'   it is not counted as a fold failure. Narrowing `learners` to names
-#'   that are all family-incompatible with a nuisance (for example
-#'   `learners = "ols"` with a binary outcome) is an error. Custom
-#'   list-learners are never family-filtered.
+#'   "logreg", "plda", "bgam")`, or a named list of adapter closures
+#'   (extensibility hook). The default is
+#'   `c("ares", "krls", "ols", "logreg", "plda")`; `"bgam"` is opt-in.
+#'   `ares` and `krls` are family-agnostic and apply to every nuisance.
+#'   `"ols"`, `"logreg"`, and `"plda"` are applied *per nuisance by
+#'   family*: gaussian (continuous) targets get `ols`, binomial (binary)
+#'   targets get `logreg` and `plda`. So gaussian nuisances draw on
+#'   `{ares, krls, ols}` and binomial nuisances on
+#'   `{ares, krls, logreg, plda}`. `ols`/`logreg` are unregularized linear
+#'   learners with no hyperparameters (so `tune` is a no-op for them -- a
+#'   plain refit per fold); `plda` is the penalized-LDA classifier and is
+#'   classification-only. `plda` has no observation-weight support: passing
+#'   `weights` while `"plda"` is among the (built-in) `learners` is an
+#'   error. A learner that does not apply to a nuisance is skipped, leaving
+#'   an all-`NA` OOF column that the ensemble excludes; it is not counted as
+#'   a fold failure. Narrowing `learners` to names that are all
+#'   family-incompatible with a nuisance (for example `learners = "ols"`
+#'   with a binary outcome) is an error. Custom list-learners are never
+#'   family-filtered.
 #' @param ensemble How to combine learners: `"stack"` (non-negative least
 #'   squares on the OOF matrix), `"average"` (equal weights), or `"best"`
 #'   (pick the single lowest-OOF-loss learner).
@@ -473,6 +504,9 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   `learners`).
 #' @param bgam_args A named list of extra arguments spliced into every
 #'   [bgam()] call (only relevant when `"bgam"` is among `learners`).
+#' @param plda_args A named list of extra arguments spliced into every
+#'   [plda()] call (only relevant when `"plda"` is among `learners`; plda
+#'   is binomial-only).
 #' @param verbose Logical; if `TRUE`, print progress per nuisance / fold.
 #' @param ... Currently unused; reserved.
 #'
@@ -498,11 +532,11 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' # grf::causal_forest(X, Y, D, Y.hat = fit$y_hat_oof, W.hat = fit$d_hat_oof)
 #' }
 #'
-#' @seealso [ares()], [krls()]
+#' @seealso [ares()], [krls()], [ols()], [logreg()], [plda()], [bgam()]
 #' @export
 meep <- function(X, y, treatment = NULL,
                  folds = 5L,
-                 learners = c("ares", "krls", "ols", "logreg"),
+                 learners = c("ares", "krls", "ols", "logreg", "plda"),
                  ensemble = c("stack", "average", "best"),
                  arm_models = c("auto", "always", "never"),
                  family = NULL,
@@ -516,6 +550,7 @@ meep <- function(X, y, treatment = NULL,
                  ols_args = list(),
                  logreg_args = list(),
                  bgam_args = list(),
+                 plda_args = list(),
                  verbose = FALSE, ...) {
   cl <- match.call()
   ensemble   <- match.arg(ensemble)
@@ -563,23 +598,35 @@ meep <- function(X, y, treatment = NULL,
   }
 
   # ---- resolve learner specs --------------------------------------------
+  learners_is_builtin <- !is.list(learners)
   if (is.list(learners)) {
     learner_specs <- learners
     learner_names <- names(learner_specs)
     if (is.null(learner_names) || any(!nzchar(learner_names)))
       stop("meep: a list of `learners` must be fully named.", call. = FALSE)
   } else {
-    learners <- match.arg(learners, c("ares", "krls", "ols", "logreg", "bgam"),
-                          several.ok = TRUE)
+    learners <- match.arg(
+      learners,
+      c("ares", "krls", "ols", "logreg", "bgam", "plda"),
+      several.ok = TRUE)
     learners <- unique(learners)
     all_specs <- .meep_learner_specs(ares_args, krls_args,
-                                     ols_args, logreg_args, bgam_args)
+                                     ols_args, logreg_args, bgam_args,
+                                     plda_args)
     learner_specs <- all_specs[learners]
     learner_names <- learners
   }
   L <- length(learner_specs)
   if (L < 1L)
     stop("meep: at least one learner is required.", call. = FALSE)
+
+  # plda has no `weights` argument; reject the combination upfront (built-in
+  # path only -- a custom list-learner named "plda" is the user's contract).
+  if (!is.null(weights) && learners_is_builtin &&
+      "plda" %in% learner_names)
+    stop("meep: learner 'plda' does not support observation weights; ",
+         "drop 'plda' from `learners` or call meep() without `weights`.",
+         call. = FALSE)
 
   # ---- resolve outcome family -------------------------------------------
   if (is.null(family)) {
@@ -669,7 +716,8 @@ meep <- function(X, y, treatment = NULL,
   if (identical(tune, "once")) {
     frozen <- .meep_freeze_hyperparams(X, y_model, family, weights,
                                        learner_names, ares_args, krls_args,
-                                       verbose, bgam_args = bgam_args)
+                                       verbose, bgam_args = bgam_args,
+                                       plda_args = plda_args)
   }
 
   # ---- assemble the nuisance task list ----------------------------------
@@ -882,7 +930,7 @@ meep <- function(X, y, treatment = NULL,
 # hyperparameters as a per-learner list of argument lists.
 .meep_freeze_hyperparams <- function(X, y, family, weights, learner_names,
                                      ares_args, krls_args, verbose,
-                                     bgam_args = list()) {
+                                     bgam_args = list(), plda_args = list()) {
   frozen <- list()
   for (lname in learner_names) {
     if (identical(lname, "ares")) {
@@ -927,6 +975,32 @@ meep <- function(X, y, treatment = NULL,
           dpen   = fit$dpen
         )
       }
+    } else if (identical(lname, "plda")) {
+      # Autotune plda on full data; freeze lambda, K, penalty, lambda2 and
+      # turn autotune off for the per-fold refits. plda is binomial-only;
+      # for a gaussian outcome it is family-filtered out, so freezing is a
+      # cheap no-op (stored hp is never consumed). Skip the autotune call
+      # entirely in that case.
+      if (!identical(family, "binomial")) {
+        frozen[[lname]] <- list()
+      } else {
+        yf <- factor(y, levels = sort(unique(y)))
+        base_plda <- list(x = X, y = yf, autotune = TRUE)
+        extra_plda <- plda_args[setdiff(names(plda_args), names(base_plda))]
+        args <- c(base_plda, extra_plda)
+        fit <- tryCatch(do.call(plda, args), error = function(e) e)
+        if (inherits(fit, "error")) {
+          frozen[[lname]] <- list()
+        } else {
+          frozen[[lname]] <- list(
+            lambda   = fit$lambda,
+            K        = fit$K,
+            penalty  = fit$penalty,
+            lambda2  = fit$lambda2,
+            autotune = FALSE
+          )
+        }
+      }
     } else {
       # ols / logreg (no hyperparameters) and any unknown learner --
       # nothing to freeze; the per-fold call is a plain refit.
@@ -958,6 +1032,9 @@ meep <- function(X, y, treatment = NULL,
     return(list(autotune = TRUE))
   }
   if (identical(lname, "bgam")) {
+    return(list(autotune = TRUE))
+  }
+  if (identical(lname, "plda")) {
     return(list(autotune = TRUE))
   }
   list()

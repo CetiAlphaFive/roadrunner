@@ -60,10 +60,11 @@ test_that("meep registers ols/logreg as learners and produces OOF predictions", 
 #  Test 2 -- default learners include ols/logreg (family-aware)
 # ----------------------------------------------------------------------------
 
-test_that("default learners are c('ares','krls','ols','logreg')", {
+test_that("default learners are c('ares','krls','ols','logreg','plda')", {
   d <- .meep_lin_dgp(n = 200, p = 3, seed = 102)
   fit <- meep(d$X, d$y, folds = 4L, tune = "none", seed = 102)
-  expect_identical(fit$learners, c("ares", "krls", "ols", "logreg"))
+  expect_identical(fit$learners,
+                   c("ares", "krls", "ols", "logreg", "plda"))
 })
 
 # ----------------------------------------------------------------------------
@@ -260,15 +261,16 @@ test_that("default learners: gaussian outcome fits ols, skips logreg cleanly", {
   fit <- meep(d$X, d$y, folds = 4L, tune = "none", seed = 201)
 
   expect_identical(fit$learners,
-                   c("ares", "krls", "ols", "logreg"))
+                   c("ares", "krls", "ols", "logreg", "plda"))
 
   oof <- fit$oof_matrix$outcome
   expect_identical(colnames(oof),
-                   c("ares", "krls", "ols", "logreg"))
+                   c("ares", "krls", "ols", "logreg", "plda"))
   # ols applies to a gaussian nuisance -> its OOF column is populated.
   expect_true(all(is.finite(oof[, "ols"])))
-  # logreg does NOT apply to a gaussian nuisance -> all-NA column.
+  # logreg/plda do NOT apply to a gaussian nuisance -> all-NA columns.
   expect_true(all(is.na(oof[, "logreg"])))
+  expect_true(all(is.na(oof[, "plda"])))
 
   # an inapplicable learner is skipped, not failed: no fold_failures entry
   # naming logreg, and logreg is absent from learner_cv_perf.
