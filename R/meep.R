@@ -514,15 +514,15 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #  meep() -- main entry point
 # ----------------------------------------------------------------------------
 
-#' Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)
+#' Fast cross-fitted causal ensemble
 #'
 #' `meep()` produces honest, cross-fitted (out-of-fold) nuisance estimates
 #' for use in Double Machine Learning (DML) and causal-forest workflows.
 #' For an outcome `y`, an optional `treatment`, and covariates `X`, it
 #' cross-fits an ensemble of the package's base learners -- by default
 #' [ares()] (MARS), [krls()] (Kernel Regularized Least Squares), [ols()],
-#' and [logreg()], with [bgam()] (P-spline boosting) available opt-in --
-#' and returns the
+#' [logreg()], and [plda()] (penalized LDA), with [bgam()] (P-spline
+#' boosting) available opt-in -- and returns the
 #' out-of-fold predictions \eqn{\hat E[Y\mid X]} and (when `treatment` is
 #' supplied) \eqn{\hat E[D\mid X]}, plus the residuals \eqn{Y-\hat Y} and
 #' \eqn{D-\hat D}.

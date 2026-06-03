@@ -155,7 +155,7 @@ data.frame(
 #>    E[D|X]      0.162       0.180
 ```
 
-Add gradient-boosted trees to the stack with `extra.learners` (the external packages stay optional -- you install them yourself), and use `plot()` for a quick read on each learner and the stack -- ROC curves for binary nuisances, OOF R-squared and observed-vs-predicted for continuous ones:
+Add random-forest and BART learners to the stack with `extra.learners` (the external packages stay optional -- you install them yourself), and use `plot()` for a quick read on each learner and the stack -- ROC curves for binary nuisances, OOF R-squared and observed-vs-predicted for continuous ones:
 
 ```r
 m2 <- meep(X, Y, treatment = D, folds = 5, seed = 1995,

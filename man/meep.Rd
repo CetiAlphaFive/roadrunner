@@ -2,7 +2,7 @@
 % Please edit documentation in R/meep.R
 \name{meep}
 \alias{meep}
-\title{Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)}
+\title{Fast cross-fitted causal ensemble}
 \usage{
 meep(
   X,
@@ -168,8 +168,8 @@ for use in Double Machine Learning (DML) and causal-forest workflows.
 For an outcome \code{y}, an optional \code{treatment}, and covariates \code{X}, it
 cross-fits an ensemble of the package's base learners -- by default
 \code{\link[=ares]{ares()}} (MARS), \code{\link[=krls]{krls()}} (Kernel Regularized Least Squares), \code{\link[=ols]{ols()}},
-and \code{\link[=logreg]{logreg()}}, with \code{\link[=bgam]{bgam()}} (P-spline boosting) available opt-in --
-and returns the
+\code{\link[=logreg]{logreg()}}, and \code{\link[=plda]{plda()}} (penalized LDA), with \code{\link[=bgam]{bgam()}} (P-spline
+boosting) available opt-in -- and returns the
 out-of-fold predictions \eqn{\hat E[Y\mid X]} and (when \code{treatment} is
 supplied) \eqn{\hat E[D\mid X]}, plus the residuals \eqn{Y-\hat Y} and
 \eqn{D-\hat D}.
