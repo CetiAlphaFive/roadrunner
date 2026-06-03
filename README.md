@@ -189,6 +189,8 @@ m2 <- meep(X, Y, treatment = D, folds = 5, seed = 42,
 plot(m2)
 ```
 
+![meep() diagnostics: per-learner and stacked out-of-fold fit for each nuisance.](man/figures/meep-plot.png)
+
 ## References
 
 - Friedman, J. H. (1991). Multivariate Adaptive Regression Splines.
