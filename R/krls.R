@@ -4413,7 +4413,7 @@ plot.krls_rr <- function(x,
 #'   state for `predict()` to run.
 #' @return A `krls_rr` object with heavy fields removed and
 #'   `$slimmed = TRUE`.
-#' @export
+#' @keywords internal
 slim_krls <- function(fit, keep_predict = TRUE) {
   if (!inherits(fit, "krls_rr")) {
     stop("slim_krls: `fit` must be a `krls_rr` object.", call. = FALSE)
@@ -4473,7 +4473,7 @@ slim_krls <- function(fit, keep_predict = TRUE) {
 #'   `slim_krls()`.
 #' @return `fit`, unchanged. Refit `krls()` with the original
 #'   call to rebuild the dropped fields.
-#' @export
+#' @keywords internal
 unslim_krls <- function(fit) {
   if (!inherits(fit, "krls_rr")) {
     stop("unslim_krls: `fit` must be a `krls_rr` object.", call. = FALSE)

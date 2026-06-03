@@ -23,3 +23,4 @@ is \emph{not} attempted; it simply returns the input unchanged and
 release where re-construction from cached state may become
 available.
 }
+\keyword{internal}

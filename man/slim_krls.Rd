@@ -39,3 +39,4 @@ The returned object carries the flag \verb{$slimmed = TRUE}.
 \code{unslim_krls()} is a no-op (heavy intermediates can only be
 rebuilt by refitting).
 }
+\keyword{internal}

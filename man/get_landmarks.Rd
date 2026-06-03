@@ -20,3 +20,4 @@ with \code{approx = "nystrom"}. Internally landmarks live in standardized
 X-space; the default \code{scale = "original"} undoes the standardization
 using the training X's centers and SDs.
 }
+\keyword{internal}

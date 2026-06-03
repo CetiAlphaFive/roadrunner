@@ -139,7 +139,7 @@
 #' @param fit A `krls_rr` fit built with `approx = "nystrom"`.
 #' @param scale Either `"original"` (default) or `"standardized"`.
 #' @return Numeric matrix of dimension `nystrom_m` x `ncol(X_train)`.
-#' @export
+#' @keywords internal
 get_landmarks <- function(fit, scale = c("original", "standardized")) {
   if (!inherits(fit, "krls_rr")) {
     stop("fit is not of class 'krls_rr'")
