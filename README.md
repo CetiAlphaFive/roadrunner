@@ -6,10 +6,9 @@
 [![Codecov test coverage](https://codecov.io/gh/CetiAlphaFive/roadrunner/graph/badge.svg)](https://app.codecov.io/gh/CetiAlphaFive/roadrunner)
 <!-- badges: end -->
 
-Fast, low-dependency machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
+Fast, low-dependency, underutilized machine learning algorithms in R. Useful for causal plug-ins (e.g., nuisance fits in DML) or simple predictive applications. 
 
-`roadrunner` ships C++ backed implementations of classical ML algorithms
-with thin, base-R-style interfaces. Six core fitters today:
+`roadrunner` ships C++ backed implementations of classical ML algorithms with thin, base-R-style interfaces. Six core fitters today:
 
 - **`ares()`** -- Multivariate Adaptive Regression Splines (MARS).
 - **`krls()`** -- Kernel Regularized Least Squares (KRLS).
@@ -18,9 +17,7 @@ with thin, base-R-style interfaces. Six core fitters today:
 - **`logreg()`** -- Binary logistic regression by IRLS.
 - **`bgam()`** -- Component-wise P-spline gradient boosting.
 
-Plus **`meep()`** -- a cross-fitted, stacked ensemble of these built-in algorithms and optionally external learners (`ranger` random forests and
-`dbarts` BART), built for Double Machine Learning and causal-forest nuisance
-estimation.
+Plus **`meep()`** -- a cross-fitted, stacked ensemble of these built-in algorithms and optionally external learners (`ranger` random forests and `dbarts` BART), built for Double Machine Learning and causal-forest nuisance estimation.
 
 ## Package design
 
