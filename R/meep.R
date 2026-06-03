@@ -51,8 +51,41 @@
   if (identical(name, "ols"))    return(identical(fam, "gaussian"))
   if (identical(name, "logreg")) return(identical(fam, "binomial"))
   if (identical(name, "plda"))   return(identical(fam, "binomial"))
+  # External opt-in learners are family-agnostic (gaussian + binomial), the
+  # same as ares/krls. Listed explicitly for clarity even though the default
+  # branch below would already return TRUE for them.
+  if (identical(name, "forest")) return(TRUE)
+  if (identical(name, "bart"))   return(TRUE)
   # ares, krls, and any custom list-learner: applicable to both families.
   TRUE
+}
+
+# Normalize the user-facing `extra.learners` argument to a canonical, deduped
+# character vector of internal learner names. NULL / empty -> character(0).
+# Accepts a character vector; canonicalizes case-insensitively
+# ("forest" -> "forest", "BART"/"bart" -> "bart"). Unknown tokens error with a
+# clear listing of valid values. The availability check (requireNamespace) is
+# done separately by the caller after normalization.
+.meep_normalize_extra_learners <- function(extra) {
+  if (is.null(extra) || length(extra) == 0L)
+    return(character(0))
+  if (!is.character(extra))
+    stop("meep: `extra.learners` must be a character vector (a subset of ",
+         'c("forest", "BART")) or NULL.', call. = FALSE)
+  lc <- tolower(trimws(extra))
+  out <- character(length(lc))
+  for (i in seq_along(lc)) {
+    tok <- lc[i]
+    if (identical(tok, "forest")) {
+      out[i] <- "forest"
+    } else if (identical(tok, "bart")) {
+      out[i] <- "bart"
+    } else {
+      stop("meep: unknown extra.learner \"", extra[i],
+           "\"; valid values are \"forest\" and \"BART\".", call. = FALSE)
+    }
+  }
+  unique(out)
 }
 
 # ----------------------------------------------------------------------------
@@ -180,7 +213,8 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 # learner; `logreg` is the binomial learner (binary outcome / propensity).
 .meep_learner_specs <- function(ares_args = list(), krls_args = list(),
                                 ols_args = list(), logreg_args = list(),
-                                bgam_args = list(), plda_args = list()) {
+                                bgam_args = list(), plda_args = list(),
+                                forest_args = list(), bart_args = list()) {
   list(
     ares = list(
       fit = function(X, y, family, weights, hp) {
@@ -289,6 +323,70 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
       },
       predict = function(model, newX, family) {
         as.numeric(predict(model, newdata = newX, type = "response"))
+      }
+    ),
+    forest = list(
+      # External opt-in learner: random forest via the suggested {ranger}
+      # package. Family-agnostic (gaussian regression + binomial probability
+      # forest). No hyperparameters tuned by meep -- package defaults plus
+      # anything in `forest_args`; `tune` is a no-op (plain refit per fold).
+      fit = function(X, y, family, weights, hp) {
+        if (!requireNamespace("ranger", quietly = TRUE))
+          stop("meep: extra.learner \"forest\" requires the 'ranger' ",
+               "package; install it with install.packages(\"ranger\").",
+               call. = FALSE)
+        Xdf <- as.data.frame(X)
+        # ranger defaults to all available cores (num.threads = 0); the user
+        # can override via forest_args$num.threads.
+        nthr <- forest_args$num.threads %||% 0L
+        if (identical(family, "binomial")) {
+          yy <- factor(y, levels = sort(unique(y)))
+          base_args <- list(x = Xdf, y = yy, probability = TRUE,
+                            num.threads = nthr)
+        } else {
+          base_args <- list(x = Xdf, y = as.numeric(y), num.threads = nthr)
+        }
+        if (!is.null(weights)) base_args$case.weights <- weights
+        # Dedupe: forest_args keys already set by base_args win for the user.
+        extra <- forest_args[setdiff(names(forest_args), names(base_args))]
+        do.call(ranger::ranger, c(base_args, extra))
+      },
+      predict = function(model, newX, family) {
+        pr <- predict(model, data = as.data.frame(newX),
+                      num.threads = forest_args$num.threads %||% 0L)$predictions
+        if (identical(family, "binomial")) {
+          # n x 2 matrix with columns named by class ("0","1"); P(success) is
+          # the last column.
+          pr <- pr[, ncol(pr)]
+        }
+        as.numeric(pr)
+      }
+    ),
+    bart = list(
+      # External opt-in learner: Bayesian Additive Regression Trees via the
+      # suggested {dbarts} package. Family-agnostic (gaussian posterior mean +
+      # binary posterior probability). No hyperparameters tuned by meep --
+      # package defaults plus anything in `bart_args`; `tune` is a no-op.
+      fit = function(X, y, family, weights, hp) {
+        if (!requireNamespace("dbarts", quietly = TRUE))
+          stop("meep: extra.learner \"BART\" requires the 'dbarts' ",
+               "package; install it with install.packages(\"dbarts\").",
+               call. = FALSE)
+        Xdf <- as.data.frame(X)
+        # For binomial, y is already 0/1 (meep passes the 0/1-coded target);
+        # dbarts::bart treats a 0/1 y.train as binary probit and returns the
+        # posterior probability on predict.
+        base_args <- list(x.train = Xdf, y.train = as.numeric(y),
+                          keeptrees = TRUE, verbose = FALSE)
+        if (!is.null(weights)) base_args$weights <- weights
+        # Dedupe: bart_args keys already set by base_args win for the user.
+        extra <- bart_args[setdiff(names(bart_args), names(base_args))]
+        do.call(dbarts::bart, c(base_args, extra))
+      },
+      predict = function(model, newX, family) {
+        # colMeans over posterior draws -> posterior mean (gaussian) or
+        # posterior P(y=1) (binary, dbarts returns the probability scale).
+        as.numeric(colMeans(predict(model, as.data.frame(newX))))
       }
     )
   )
@@ -438,6 +536,19 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   default arguments (plus anything passed via `ares_args` / `krls_args`).
 #'   No autotune is invoked at all.
 #'
+#' @section External learners:
+#' `extra.learners` opts external-package models into the stack without making
+#' those packages dependencies of \pkg{roadrunner}. `"forest"` uses
+#' \pkg{ranger} and `"BART"` uses \pkg{dbarts}; both live in `Suggests`, so
+#' you must install them yourself (`install.packages("ranger")` /
+#' `install.packages("dbarts")`). Requesting an extra learner whose package is
+#' absent is a clear error, not a silent skip. The external learners are
+#' family-agnostic (they serve gaussian and binomial nuisances alike) and run
+#' with package defaults plus any `forest_args` / `bart_args`; `tune` does not
+#' apply to them (no autotune, no hyperparameter freezing -- a plain refit per
+#' fold). Their cross-fitted OOF columns join the same NNLS stacking / average
+#' / best ensemble as the built-in learners.
+#'
 #' @section Graceful degradation:
 #' If a learner errors on a fold (for example, a constant nuisance in a
 #' fold subset), its column for that fold becomes `NA`, the ensemble
@@ -477,6 +588,18 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #'   family-incompatible with a nuisance (for example `learners = "ols"`
 #'   with a binary outcome) is an error. Custom list-learners are never
 #'   family-filtered.
+#' @param extra.learners `NULL` (default, off). A character vector subset of
+#'   `c("forest", "BART")` adding external-package learners to the stack:
+#'   `"forest"` = random forest via the suggested \pkg{ranger} package,
+#'   `"BART"` = Bayesian Additive Regression Trees via the suggested
+#'   \pkg{dbarts} package. These packages are **not** dependencies of
+#'   \pkg{roadrunner}; if an extra learner is requested but its package is not
+#'   installed, `meep()` errors with an install hint. Both are family-agnostic
+#'   (gaussian + binomial) and use package defaults -- `tune` is a no-op for
+#'   them (a plain refit per fold, no autotune / freeze), exactly like
+#'   `ols`/`logreg`. Tokens are case-insensitive (`"BART"`, `"bart"` both
+#'   resolve to the same learner). Cannot be combined with a custom list of
+#'   `learners`.
 #' @param ensemble How to combine learners: `"stack"` (non-negative least
 #'   squares on the OOF matrix), `"average"` (equal weights), or `"best"`
 #'   (pick the single lowest-OOF-loss learner).
@@ -507,6 +630,15 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 #' @param plda_args A named list of extra arguments spliced into every
 #'   [plda()] call (only relevant when `"plda"` is among `learners`; plda
 #'   is binomial-only).
+#' @param forest_args A named list of extra arguments spliced into every
+#'   `ranger::ranger()` call (only relevant when `"forest"` is among
+#'   `extra.learners`). By default the forest uses all available cores
+#'   (`num.threads = 0`); override with `forest_args = list(num.threads = k)`.
+#'   The adapter-set `x`/`y`/`probability` arguments are not overridable.
+#' @param bart_args A named list of extra arguments spliced into every
+#'   `dbarts::bart()` call (only relevant when `"BART"` is among
+#'   `extra.learners`). A key the adapter also sets (e.g. `keeptrees`,
+#'   `verbose`) takes the user value.
 #' @param verbose Logical; if `TRUE`, print progress per nuisance / fold.
 #' @param ... Currently unused; reserved.
 #'
@@ -537,6 +669,7 @@ build_folds <- function(n, K, cluster = NULL, seed = NULL) {
 meep <- function(X, y, treatment = NULL,
                  folds = 5L,
                  learners = c("ares", "krls", "ols", "logreg", "plda"),
+                 extra.learners = NULL,
                  ensemble = c("stack", "average", "best"),
                  arm_models = c("auto", "always", "never"),
                  family = NULL,
@@ -551,6 +684,8 @@ meep <- function(X, y, treatment = NULL,
                  logreg_args = list(),
                  bgam_args = list(),
                  plda_args = list(),
+                 forest_args = list(),
+                 bart_args = list(),
                  verbose = FALSE, ...) {
   cl <- match.call()
   ensemble   <- match.arg(ensemble)
@@ -597,9 +732,25 @@ meep <- function(X, y, treatment = NULL,
     weights <- as.numeric(weights)
   }
 
+  # ---- normalize + availability-check the opt-in external learners ------
+  # NULL/empty -> none. Canonicalize case-insensitively; unknown tokens error.
+  extra_resolved <- .meep_normalize_extra_learners(extra.learners)
+  for (ex in extra_resolved) {
+    pkg <- if (identical(ex, "forest")) "ranger" else "dbarts"
+    disp <- if (identical(ex, "forest")) "forest" else "BART"
+    if (!requireNamespace(pkg, quietly = TRUE))
+      stop("meep: extra.learner \"", disp, "\" requires the '", pkg,
+           "' package; install it with install.packages(\"", pkg, "\").",
+           call. = FALSE)
+  }
+
   # ---- resolve learner specs --------------------------------------------
   learners_is_builtin <- !is.list(learners)
   if (is.list(learners)) {
+    if (length(extra_resolved))
+      stop("meep: `extra.learners` cannot be combined with a custom list of ",
+           "`learners`; add the external adapters to the list yourself.",
+           call. = FALSE)
     learner_specs <- learners
     learner_names <- names(learner_specs)
     if (is.null(learner_names) || any(!nzchar(learner_names)))
@@ -612,9 +763,10 @@ meep <- function(X, y, treatment = NULL,
     learners <- unique(learners)
     all_specs <- .meep_learner_specs(ares_args, krls_args,
                                      ols_args, logreg_args, bgam_args,
-                                     plda_args)
-    learner_specs <- all_specs[learners]
-    learner_names <- learners
+                                     plda_args, forest_args, bart_args)
+    # Append the opt-in external learners (deduped, extras after built-ins).
+    learner_names <- unique(c(learners, extra_resolved))
+    learner_specs <- all_specs[learner_names]
   }
   L <- length(learner_specs)
   if (L < 1L)

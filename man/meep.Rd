@@ -10,6 +10,7 @@ meep(
   treatment = NULL,
   folds = 5L,
   learners = c("ares", "krls", "ols", "logreg", "plda"),
+  extra.learners = NULL,
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -24,6 +25,8 @@ meep(
   logreg_args = list(),
   bgam_args = list(),
   plda_args = list(),
+  forest_args = list(),
+  bart_args = list(),
   verbose = FALSE,
   ...
 )
@@ -59,6 +62,19 @@ a fold failure. Narrowing \code{learners} to names that are all
 family-incompatible with a nuisance (for example \code{learners = "ols"}
 with a binary outcome) is an error. Custom list-learners are never
 family-filtered.}
+
+\item{extra.learners}{\code{NULL} (default, off). A character vector subset of
+\code{c("forest", "BART")} adding external-package learners to the stack:
+\code{"forest"} = random forest via the suggested \pkg{ranger} package,
+\code{"BART"} = Bayesian Additive Regression Trees via the suggested
+\pkg{dbarts} package. These packages are \strong{not} dependencies of
+\pkg{roadrunner}; if an extra learner is requested but its package is not
+installed, \code{meep()} errors with an install hint. Both are family-agnostic
+(gaussian + binomial) and use package defaults -- \code{tune} is a no-op for
+them (a plain refit per fold, no autotune / freeze), exactly like
+\code{ols}/\code{logreg}. Tokens are case-insensitive (\code{"BART"}, \code{"bart"} both
+resolve to the same learner). Cannot be combined with a custom list of
+\code{learners}.}
 
 \item{ensemble}{How to combine learners: \code{"stack"} (non-negative least
 squares on the OOF matrix), \code{"average"} (equal weights), or \code{"best"}
@@ -103,6 +119,17 @@ fit and into the NNLS stacking objective.}
 \item{plda_args}{A named list of extra arguments spliced into every
 \code{\link[=plda]{plda()}} call (only relevant when \code{"plda"} is among \code{learners}; plda
 is binomial-only).}
+
+\item{forest_args}{A named list of extra arguments spliced into every
+\code{ranger::ranger()} call (only relevant when \code{"forest"} is among
+\code{extra.learners}). By default the forest uses all available cores
+(\code{num.threads = 0}); override with \code{forest_args = list(num.threads = k)}.
+The adapter-set \code{x}/\code{y}/\code{probability} arguments are not overridable.}
+
+\item{bart_args}{A named list of extra arguments spliced into every
+\code{dbarts::bart()} call (only relevant when \code{"BART"} is among
+\code{extra.learners}). A key the adapter also sets (e.g. \code{keeptrees},
+\code{verbose}) takes the user value.}
 
 \item{verbose}{Logical; if \code{TRUE}, print progress per nuisance / fold.}
 
@@ -173,6 +200,21 @@ option; slower.
 default arguments (plus anything passed via \code{ares_args} / \code{krls_args}).
 No autotune is invoked at all.
 }
+}
+
+\section{External learners}{
+
+\code{extra.learners} opts external-package models into the stack without making
+those packages dependencies of \pkg{roadrunner}. \code{"forest"} uses
+\pkg{ranger} and \code{"BART"} uses \pkg{dbarts}; both live in \code{Suggests}, so
+you must install them yourself (\code{install.packages("ranger")} /
+\code{install.packages("dbarts")}). Requesting an extra learner whose package is
+absent is a clear error, not a silent skip. The external learners are
+family-agnostic (they serve gaussian and binomial nuisances alike) and run
+with package defaults plus any \code{forest_args} / \code{bart_args}; \code{tune} does not
+apply to them (no autotune, no hyperparameter freezing -- a plain refit per
+fold). Their cross-fitted OOF columns join the same NNLS stacking / average
+/ best ensemble as the built-in learners.
 }
 
 \section{Graceful degradation}{
