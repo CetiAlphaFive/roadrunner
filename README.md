@@ -24,11 +24,10 @@ estimation.
 
 ## Package design
 
-- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel` at runtime. 
-- **Fast.** C++ engines via `Rcpp` with multi-core scoring via
-  `RcppParallel`.
+- **Low dependency.** Only `Rcpp`, `RcppArmadillo`, and `RcppParallel`. 
+- **Fast.** C++ engines via `Rcpp` with multi-core scoring via `RcppParallel`.
 - **Deterministic.** Fits are bit-for-bit identical across thread counts at a fixed seed.
-- **Familiar API.** Base-R style: formula and matrix interfaces and standard S3 methods (`predict`, `print`, `summary`, `plot`).
+- **Simple API.** Base-R style: formula and matrix interfaces and standard S3 methods (`predict`, `print`, `summary`, `plot`).
 
 ## Install
 
@@ -59,14 +58,11 @@ fitt <- ares(mpg ~ ., data = mtcars, autotune = TRUE,
 fitt$autotune$degree
 ```
 
-See the `ares` vignette for autotune, classification, weights,
-bagging, and prediction-interval examples.
+See the `ares` vignette for autotune, classification, weights, bagging, and prediction-interval examples.
 
 ### KRLS via `krls()`
 
-`krls()` fits a Kernel Regularized Least Squares model (Hainmueller and
-Hazlett 2014) with closed-form leave-one-out selection of the ridge
-penalty and per-observation marginal effects.
+`krls()` fits a Kernel Regularized Least Squares model (Hainmueller and Hazlett 2014) with closed-form leave-one-out selection of the ridge penalty and per-observation marginal effects.
 
 ```r
 set.seed(1995)
@@ -84,15 +80,11 @@ pr <- predict(fit, Xnew, se.fit = TRUE)
 head(pr$fit); head(pr$se.fit)
 ```
 
-`krls()` mirrors `KRLS::krls()` numerically (fits agree to ~1e-13 at
-matched `sigma` and `lambda`) and is 6-10x faster on benchmarks at
-`n >= 500`.
+`krls()` mirrors `KRLS::krls()` numerically (fits agree to ~1e-13 at matched `sigma` and `lambda`) and is 6-10x faster on benchmarks at `n >= 500`.
 
 ### Penalized LDA via `plda()`
 
-`plda()` fits penalized Fisher's linear discriminant analysis (Witten &
-Tibshirani 2011) with L1 or fused-lasso penalties, multi-class support,
-and built-in cross-validation autotune.
+`plda()` fits penalized Fisher's linear discriminant analysis (Witten & Tibshirani 2011) with L1 or fused-lasso penalties, multi-class support, and built-in cross-validation autotune.
 
 ```r
 fit <- plda(Species ~ ., data = iris)
@@ -101,10 +93,7 @@ predict(fit, iris)        # factor of predicted Species
 
 ### Linear models via `ols()` and `logreg()`
 
-`ols()` fits ordinary and weighted least squares; `logreg()` fits binary
-logistic regression by IRLS. Both have C++ engines, classical and HC0-HC3
-robust standard errors, optional bagging, and the standard formula and
-matrix interfaces.
+`ols()` fits ordinary and weighted least squares; `logreg()` fits binary logistic regression by IRLS. Both have C++ engines, classical and HC0-HC3 robust standard errors, optional bagging, and the standard formula and matrix interfaces.
 
 ```r
 fit <- ols(mpg ~ wt + hp, data = mtcars)
@@ -118,10 +107,7 @@ predict(lr, df[1:3, ], type = "response")
 
 ### Boosted additive models via `bgam()`
 
-`bgam()` fits a smooth additive model by component-wise P-spline gradient
-boosting (Buehlmann & Yu 2003; Eilers & Marx 1996). The number of boosting
-iterations is tuned by cross-validation and doubles as built-in variable
-selection. Gaussian and binomial families.
+`bgam()` fits a smooth additive model by component-wise P-spline gradient boosting (Buehlmann & Yu 2003; Eilers & Marx 1996). The number of boosting iterations is tuned by cross-validation and doubles as built-in variable selection. Gaussian and binomial families.
 
 ```r
 fit <- bgam(mpg ~ ., data = mtcars)   # CV-tuned number of boosting steps
@@ -156,9 +142,7 @@ m$d_hat_oof   # cross-fitted E[D | X]
 # grf::causal_forest(X, Y, D, Y.hat = m$y_hat_oof, W.hat = m$d_hat_oof)
 ```
 
-On smooth, structured signal the ensemble fits the nuisances more tightly
-than `grf`'s built-in regression forests (out-of-bag vs out-of-fold
-R-squared on the toy above):
+On smooth, structured signal the ensemble fits the nuisances more tightly than `grf`'s built-in regression forests (out-of-bag vs out-of-fold R-squared on the toy above):
 
 ```r
 cf <- grf::causal_forest(X, Y, D, seed = 1995)
@@ -174,10 +158,7 @@ data.frame(
 #>    E[D|X]      0.162       0.180
 ```
 
-Add gradient-boosted trees to the stack with `extra.learners` (the external
-packages stay optional -- you install them yourself), and use `plot()` for a
-quick read on each learner and the stack -- ROC curves for binary nuisances,
-OOF R-squared and observed-vs-predicted for continuous ones:
+Add gradient-boosted trees to the stack with `extra.learners` (the external packages stay optional -- you install them yourself), and use `plot()` for a quick read on each learner and the stack -- ROC curves for binary nuisances, OOF R-squared and observed-vs-predicted for continuous ones:
 
 ```r
 m2 <- meep(X, Y, treatment = D, folds = 5, seed = 1995,
