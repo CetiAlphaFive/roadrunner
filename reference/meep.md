@@ -1,13 +1,19 @@
-# Cross-fitted causal ensemble of `ares()` and `krls()`
+# Cross-fitted causal ensemble (MARS, KRLS, OLS, logistic, P-spline boosting)
 
 `meep()` produces honest, cross-fitted (out-of-fold) nuisance estimates
 for use in Double Machine Learning (DML) and causal-forest workflows.
 For an outcome `y`, an optional `treatment`, and covariates `X`, it
-cross-fits an ensemble of the package's
+cross-fits an ensemble of the package's base learners – by default
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md)
-(MARS) and
+(MARS),
 [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
-(Kernel Regularized Least Squares) learners and returns the out-of-fold
+(Kernel Regularized Least Squares),
+[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
+and
+[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
+with
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
+(P-spline boosting) available opt-in – and returns the out-of-fold
 predictions \\\hat E\[Y\mid X\]\\ and (when `treatment` is supplied)
 \\\hat E\[D\mid X\]\\, plus the residuals \\Y-\hat Y\\ and \\D-\hat D\\.
 
@@ -19,7 +25,7 @@ meep(
   y,
   treatment = NULL,
   folds = 5L,
-  learners = c("ares", "krls", "ols", "logreg"),
+  learners = c("ares", "krls", "ols", "logreg", "plda"),
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -33,6 +39,7 @@ meep(
   ols_args = list(),
   logreg_args = list(),
   bgam_args = list(),
+  plda_args = list(),
   verbose = FALSE,
   ...
 )
@@ -61,19 +68,26 @@ meep(
 
 - learners:
 
-  Character subset of `c("ares", "krls", "ols", "logreg")`, or a named
-  list of adapter closures (extensibility hook). The default is all
-  four: `c("ares", "krls", "ols", "logreg")`. `ares` and `krls` are
-  family-agnostic and apply to every nuisance. `"ols"` and `"logreg"`
-  are unregularized linear learners with no hyperparameters (so `tune`
-  is a no-op for them – a plain refit per fold); they are applied *per
-  nuisance by family*, `ols` for gaussian (continuous) targets and
-  `logreg` for binomial (binary) ones. A learner that does not apply to
-  a nuisance is skipped, leaving an all-`NA` OOF column that the
-  ensemble excludes; it is not counted as a fold failure. Narrowing
-  `learners` to names that are all family-incompatible with a nuisance
-  (for example `learners = "ols"` with a binary outcome) is an error.
-  Custom list-learners are never family-filtered.
+  Character subset of
+  `c("ares", "krls", "ols", "logreg", "plda", "bgam")`, or a named list
+  of adapter closures (extensibility hook). The default is
+  `c("ares", "krls", "ols", "logreg", "plda")`; `"bgam"` is opt-in.
+  `ares` and `krls` are family-agnostic and apply to every nuisance.
+  `"ols"`, `"logreg"`, and `"plda"` are applied *per nuisance by
+  family*: gaussian (continuous) targets get `ols`, binomial (binary)
+  targets get `logreg` and `plda`. So gaussian nuisances draw on
+  `{ares, krls, ols}` and binomial nuisances on
+  `{ares, krls, logreg, plda}`. `ols`/`logreg` are unregularized linear
+  learners with no hyperparameters (so `tune` is a no-op for them – a
+  plain refit per fold); `plda` is the penalized-LDA classifier and is
+  classification-only. `plda` has no observation-weight support: passing
+  `weights` while `"plda"` is among the (built-in) `learners` is an
+  error. A learner that does not apply to a nuisance is skipped, leaving
+  an all-`NA` OOF column that the ensemble excludes; it is not counted
+  as a fold failure. Narrowing `learners` to names that are all
+  family-incompatible with a nuisance (for example `learners = "ols"`
+  with a binary outcome) is an error. Custom list-learners are never
+  family-filtered.
 
 - ensemble:
 
@@ -143,6 +157,13 @@ meep(
   [`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
   call (only relevant when `"bgam"` is among `learners`).
 
+- plda_args:
+
+  A named list of extra arguments spliced into every
+  [`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
+  call (only relevant when `"plda"` is among `learners`; plda is
+  binomial-only).
+
 - verbose:
 
   Logical; if `TRUE`, print progress per nuisance / fold.
@@ -183,13 +204,14 @@ A treatment with three or more distinct values is rejected (multi-valued
 
 The family also governs which default learners are fitted for each
 nuisance. `ares` and `krls` are family-agnostic and always apply. `ols`
-is fitted only for gaussian (continuous) nuisances and `logreg` only for
-binomial (binary) nuisances. Because the Y-model and the D-model can
-differ in family, applicability is resolved *per nuisance*: a gaussian
-outcome with a binary treatment fits `ols` for `outcome`/`mu0`/`mu1` and
-`logreg` for `treatment`. A learner that does not apply to a nuisance is
-simply skipped – its OOF column stays all-`NA` and it is *not* recorded
-as a fold failure.
+is fitted only for gaussian (continuous) nuisances; `logreg` and `plda`
+are classification learners fitted only for binomial (binary) nuisances.
+Because the Y-model and the D-model can differ in family, applicability
+is resolved *per nuisance*: a gaussian outcome with a binary treatment
+fits `ols` for `outcome`/`mu0`/`mu1` and `logreg`/`plda` for
+`treatment`. A learner that does not apply to a nuisance is simply
+skipped – its OOF column stays all-`NA` and it is *not* recorded as a
+fold failure.
 
 ## Tuning (`tune`)
 
@@ -226,7 +248,11 @@ sample split so the cross-fitting partition matches.
 ## See also
 
 [`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md),
-[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
+[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md),
+[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
+[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
+[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md),
+[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
 
 ## Examples
 
@@ -246,13 +272,13 @@ fit
 #> 
 #>   n = 800,  p = 5
 #>   folds: 5-fold cross-fitting
-#>   learners: ares, krls, ols, logreg
+#>   learners: ares, krls, ols, logreg, plda
 #>   outcome family: gaussian  |  treatment family: gaussian
 #>   ensemble: stack  |  tune: once
 #> 
 #> Ensemble weights:
-#>   outcome  : ares=0.213  krls=0.066  ols=0.720  logreg=0.000
-#>   treatment: ares=0.704  krls=0.296  ols=0.000  logreg=0.000
+#>   outcome  : ares=0.213  krls=0.066  ols=0.720  logreg=0.000  plda=0.000
+#>   treatment: ares=0.704  krls=0.296  ols=0.000  logreg=0.000  plda=0.000
 #> 
 #> OOF loss (per nuisance, ensemble):
 #>   outcome  : mse = 0.378
