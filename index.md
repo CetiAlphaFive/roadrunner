@@ -1,7 +1,8 @@
 # roadrunner [![roadrunner hex sticker](reference/figures/roadrunner_hex.png)](https://github.com/CetiAlphaFive/roadrunner/blob/main/man/figures/roadrunner_hex.png)
 
-Fast, low-dependency machine learning algorithms in R. Useful for causal
-plug-ins (e.g., nuisance fits in DML) or simple predictive applications.
+Fast, low-dependency, underutilized machine learning algorithms in R.
+Useful for causal plug-ins (e.g., nuisance fits in DML) or simple
+predictive applications.
 
 `roadrunner` ships C++ backed implementations of classical ML algorithms
 with thin, base-R-style interfaces. Six core fitters today:
