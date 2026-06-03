@@ -25,6 +25,7 @@ reference:
   contents:
   - meep
   - predict.meep
+  - plot.meep
 - title: "Penalized LDA: plda()"
   desc: "Penalized Fisher's linear discriminant (Witten & Tibshirani 2011) with L1 and fused-lasso penalties, multi-class, and CV autotune."
   contents:
