@@ -13,26 +13,16 @@ with thin, base-R-style interfaces. Six core fitters today:
 - **[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)**
   – Penalized Linear Discriminant Analysis (L1 / fused-lasso).
 - **[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md)**
-  – Ordinary and weighted least squares with HC robust SEs.
+  – Ordinary and weighted least squares.
 - **[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md)**
-  – Binary logistic regression by IRLS with HC robust SEs.
+  – Binary logistic regression by IRLS.
 - **[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)**
-  – Component-wise P-spline gradient boosting; smooth additive model
-  with built-in variable selection via boosting early stopping. Gaussian
-  and binomial families.
+  – Component-wise P-spline gradient boosting.
 
 Plus
 **[`meep()`](https://cetialphafive.github.io/roadrunner/reference/meep.md)**
-– a cross-fitted ensemble of
-[`ares()`](https://cetialphafive.github.io/roadrunner/reference/ares.md),
-[`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md),
-[`ols()`](https://cetialphafive.github.io/roadrunner/reference/ols.md),
-[`logreg()`](https://cetialphafive.github.io/roadrunner/reference/logreg.md),
-and
-[`plda()`](https://cetialphafive.github.io/roadrunner/reference/plda.md)
-(selected automatically by nuisance family), with opt-in
-[`bgam()`](https://cetialphafive.github.io/roadrunner/reference/bgam.md)
-and optional external learners (`ranger` random forests and `dbarts`
+– a cross-fitted, stacked ensemble of these built-in algorithms and
+optionally external learners (`ranger` random forests and `dbarts`
 BART), built for Double Machine Learning and causal-forest nuisance
 estimation.
 

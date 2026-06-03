@@ -67,13 +67,13 @@
 <li>
 <strong><code><a href="reference/plda.html">plda()</a></code></strong> – Penalized Linear Discriminant Analysis (L1 / fused-lasso).</li>
 <li>
-<strong><code><a href="reference/ols.html">ols()</a></code></strong> – Ordinary and weighted least squares with HC robust SEs.</li>
+<strong><code><a href="reference/ols.html">ols()</a></code></strong> – Ordinary and weighted least squares.</li>
 <li>
-<strong><code><a href="reference/logreg.html">logreg()</a></code></strong> – Binary logistic regression by IRLS with HC robust SEs.</li>
+<strong><code><a href="reference/logreg.html">logreg()</a></code></strong> – Binary logistic regression by IRLS.</li>
 <li>
-<strong><code><a href="reference/bgam.html">bgam()</a></code></strong> – Component-wise P-spline gradient boosting; smooth additive model with built-in variable selection via boosting early stopping. Gaussian and binomial families.</li>
+<strong><code><a href="reference/bgam.html">bgam()</a></code></strong> – Component-wise P-spline gradient boosting.</li>
 </ul>
-<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted ensemble of <code><a href="reference/ares.html">ares()</a></code>, <code><a href="reference/krls.html">krls()</a></code>, <code><a href="reference/ols.html">ols()</a></code>, <code><a href="reference/logreg.html">logreg()</a></code>, and <code><a href="reference/plda.html">plda()</a></code> (selected automatically by nuisance family), with opt-in <code><a href="reference/bgam.html">bgam()</a></code> and optional external learners (<code>ranger</code> random forests and <code>dbarts</code> BART), built for Double Machine Learning and causal-forest nuisance estimation.</p>
+<p>Plus <strong><code><a href="reference/meep.html">meep()</a></code></strong> – a cross-fitted, stacked ensemble of these built-in algorithms and optionally external learners (<code>ranger</code> random forests and <code>dbarts</code> BART), built for Double Machine Learning and causal-forest nuisance estimation.</p>
 <div class="section level2">
 <h2 id="package-design">Package design<a class="anchor" aria-label="anchor" href="#package-design"></a>
 </h2>
