@@ -282,6 +282,11 @@ nuisance estimation.
 
   Predict from a fitted `meep` object
 
+- [`plot(`*`<meep>`*`)`](https://cetialphafive.github.io/roadrunner/reference/plot.meep.md)
+  :
+
+  Diagnostic plots for a `meep` cross-fitted ensemble
+
 ## Penalized LDA: plda()
 
 Penalized Fisher’s linear discriminant (Witten & Tibshirani 2011) with

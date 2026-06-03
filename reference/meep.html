@@ -25,7 +25,7 @@ supplied) \(\hat E[D\mid X]\), plus the residuals \(Y-\hat Y\) and
 
     <a class="navbar-brand me-2" href="../index.html">roadrunner</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9060</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="">0.0.0.9062</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -72,6 +72,7 @@ supplied) \(\hat E[D\mid X]\), plus the residuals \(Y-\hat Y\) and
 <span>  treatment <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  folds <span class="op">=</span> <span class="fl">5L</span>,</span>
 <span>  learners <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"ares"</span>, <span class="st">"krls"</span>, <span class="st">"ols"</span>, <span class="st">"logreg"</span>, <span class="st">"plda"</span><span class="op">)</span>,</span>
+<span>  extra.learners <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  ensemble <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"stack"</span>, <span class="st">"average"</span>, <span class="st">"best"</span><span class="op">)</span>,</span>
 <span>  arm_models <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"auto"</span>, <span class="st">"always"</span>, <span class="st">"never"</span><span class="op">)</span>,</span>
 <span>  family <span class="op">=</span> <span class="cn">NULL</span>,</span>
@@ -86,6 +87,8 @@ supplied) \(\hat E[D\mid X]\), plus the residuals \(Y-\hat Y\) and
 <span>  logreg_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  bgam_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  plda_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  forest_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
+<span>  bart_args <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span><span class="op">)</span>,</span>
 <span>  verbose <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  <span class="va">...</span></span>
 <span><span class="op">)</span></span></code></pre></div>
@@ -134,6 +137,21 @@ a fold failure. Narrowing <code>learners</code> to names that are all
 family-incompatible with a nuisance (for example <code>learners = "ols"</code>
 with a binary outcome) is an error. Custom list-learners are never
 family-filtered.</p></dd>
+
+
+<dt id="arg-extra-learners">extra.learners<a class="anchor" aria-label="anchor" href="#arg-extra-learners"></a></dt>
+<dd><p><code>NULL</code> (default, off). A character vector subset of
+<code>c("forest", "BART")</code> adding external-package learners to the stack:
+<code>"forest"</code> = random forest via the suggested <span class="pkg">ranger</span> package,
+<code>"BART"</code> = Bayesian Additive Regression Trees via the suggested
+<span class="pkg">dbarts</span> package. These packages are <strong>not</strong> dependencies of
+<span class="pkg">roadrunner</span>; if an extra learner is requested but its package is not
+installed, <code>meep()</code> errors with an install hint. Both are family-agnostic
+(gaussian + binomial) and use package defaults – <code>tune</code> is a no-op for
+them (a plain refit per fold, no autotune / freeze), exactly like
+<code>ols</code>/<code>logreg</code>. Tokens are case-insensitive (<code>"BART"</code>, <code>"bart"</code> both
+resolve to the same learner). Cannot be combined with a custom list of
+<code>learners</code>.</p></dd>
 
 
 <dt id="arg-ensemble">ensemble<a class="anchor" aria-label="anchor" href="#arg-ensemble"></a></dt>
@@ -208,6 +226,21 @@ fit and into the NNLS stacking objective.</p></dd>
 is binomial-only).</p></dd>
 
 
+<dt id="arg-forest-args">forest_args<a class="anchor" aria-label="anchor" href="#arg-forest-args"></a></dt>
+<dd><p>A named list of extra arguments spliced into every
+<code><a href="http://imbs-hl.github.io/ranger/reference/ranger.html" class="external-link">ranger::ranger()</a></code> call (only relevant when <code>"forest"</code> is among
+<code>extra.learners</code>). By default the forest uses all available cores
+(<code>num.threads = 0</code>); override with <code>forest_args = list(num.threads = k)</code>.
+The adapter-set <code>x</code>/<code>y</code>/<code>probability</code> arguments are not overridable.</p></dd>
+
+
+<dt id="arg-bart-args">bart_args<a class="anchor" aria-label="anchor" href="#arg-bart-args"></a></dt>
+<dd><p>A named list of extra arguments spliced into every
+<code><a href="https://rdrr.io/pkg/dbarts/man/bart.html" class="external-link">dbarts::bart()</a></code> call (only relevant when <code>"BART"</code> is among
+<code>extra.learners</code>). A key the adapter also sets (e.g. <code>keeptrees</code>,
+<code>verbose</code>) takes the user value.</p></dd>
+
+
 <dt id="arg-verbose">verbose<a class="anchor" aria-label="anchor" href="#arg-verbose"></a></dt>
 <dd><p>Logical; if <code>TRUE</code>, print progress per nuisance / fold.</p></dd>
 
@@ -272,6 +305,22 @@ option; slower.</p></li>
 default arguments (plus anything passed via <code>ares_args</code> / <code>krls_args</code>).
 No autotune is invoked at all.</p></li>
 </ul></div>
+    <div class="section level2">
+    <h2 id="external-learners">External learners<a class="anchor" aria-label="anchor" href="#external-learners"></a></h2>
+
+
+<p><code>extra.learners</code> opts external-package models into the stack without making
+those packages dependencies of <span class="pkg">roadrunner</span>. <code>"forest"</code> uses
+<span class="pkg">ranger</span> and <code>"BART"</code> uses <span class="pkg">dbarts</span>; both live in <code>Suggests</code>, so
+you must install them yourself (<code>install.packages("ranger")</code> /
+<code>install.packages("dbarts")</code>). Requesting an extra learner whose package is
+absent is a clear error, not a silent skip. The external learners are
+family-agnostic (they serve gaussian and binomial nuisances alike) and run
+with package defaults plus any <code>forest_args</code> / <code>bart_args</code>; <code>tune</code> does not
+apply to them (no autotune, no hyperparameter freezing – a plain refit per
+fold). Their cross-fitted OOF columns join the same NNLS stacking / average
+/ best ensemble as the built-in learners.</p>
+    </div>
     <div class="section level2">
     <h2 id="graceful-degradation">Graceful degradation<a class="anchor" aria-label="anchor" href="#graceful-degradation"></a></h2>
 

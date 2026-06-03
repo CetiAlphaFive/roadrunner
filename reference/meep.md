@@ -26,6 +26,7 @@ meep(
   treatment = NULL,
   folds = 5L,
   learners = c("ares", "krls", "ols", "logreg", "plda"),
+  extra.learners = NULL,
   ensemble = c("stack", "average", "best"),
   arm_models = c("auto", "always", "never"),
   family = NULL,
@@ -40,6 +41,8 @@ meep(
   logreg_args = list(),
   bgam_args = list(),
   plda_args = list(),
+  forest_args = list(),
+  bart_args = list(),
   verbose = FALSE,
   ...
 )
@@ -88,6 +91,20 @@ meep(
   family-incompatible with a nuisance (for example `learners = "ols"`
   with a binary outcome) is an error. Custom list-learners are never
   family-filtered.
+
+- extra.learners:
+
+  `NULL` (default, off). A character vector subset of
+  `c("forest", "BART")` adding external-package learners to the stack:
+  `"forest"` = random forest via the suggested ranger package, `"BART"`
+  = Bayesian Additive Regression Trees via the suggested dbarts package.
+  These packages are **not** dependencies of roadrunner; if an extra
+  learner is requested but its package is not installed, `meep()` errors
+  with an install hint. Both are family-agnostic (gaussian + binomial)
+  and use package defaults – `tune` is a no-op for them (a plain refit
+  per fold, no autotune / freeze), exactly like `ols`/`logreg`. Tokens
+  are case-insensitive (`"BART"`, `"bart"` both resolve to the same
+  learner). Cannot be combined with a custom list of `learners`.
 
 - ensemble:
 
@@ -164,6 +181,22 @@ meep(
   call (only relevant when `"plda"` is among `learners`; plda is
   binomial-only).
 
+- forest_args:
+
+  A named list of extra arguments spliced into every
+  [`ranger::ranger()`](http://imbs-hl.github.io/ranger/reference/ranger.md)
+  call (only relevant when `"forest"` is among `extra.learners`). By
+  default the forest uses all available cores (`num.threads = 0`);
+  override with `forest_args = list(num.threads = k)`. The adapter-set
+  `x`/`y`/`probability` arguments are not overridable.
+
+- bart_args:
+
+  A named list of extra arguments spliced into every
+  [`dbarts::bart()`](https://rdrr.io/pkg/dbarts/man/bart.html) call
+  (only relevant when `"BART"` is among `extra.learners`). A key the
+  adapter also sets (e.g. `keeptrees`, `verbose`) takes the user value.
+
 - verbose:
 
   Logical; if `TRUE`, print progress per nuisance / fold.
@@ -230,6 +263,20 @@ fold failure.
   [`krls()`](https://cetialphafive.github.io/roadrunner/reference/krls.md)
   with their own default arguments (plus anything passed via `ares_args`
   / `krls_args`). No autotune is invoked at all.
+
+## External learners
+
+`extra.learners` opts external-package models into the stack without
+making those packages dependencies of roadrunner. `"forest"` uses ranger
+and `"BART"` uses dbarts; both live in `Suggests`, so you must install
+them yourself (`install.packages("ranger")` /
+`install.packages("dbarts")`). Requesting an extra learner whose package
+is absent is a clear error, not a silent skip. The external learners are
+family-agnostic (they serve gaussian and binomial nuisances alike) and
+run with package defaults plus any `forest_args` / `bart_args`; `tune`
+does not apply to them (no autotune, no hyperparameter freezing – a
+plain refit per fold). Their cross-fitted OOF columns join the same NNLS
+stacking / average / best ensemble as the built-in learners.
 
 ## Graceful degradation
 
