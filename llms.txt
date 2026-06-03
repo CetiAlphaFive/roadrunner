@@ -169,7 +169,8 @@ chosen automatically per nuisance by family: regression nuisances use
 set.seed(1995)
 n <- 800
 X <- matrix(runif(n * 4, -2, 2), n, 4)
-D <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 1.5)
+Dstar <- sin(X[, 1]) + 0.5 * X[, 2] + 0.3 * X[, 3]^2 + rnorm(n, sd = 1.5)
+D <- as.integer(Dstar > median(Dstar))   # binary treatment
 Y <- D + cos(X[, 1]) + 0.4 * X[, 2]^2 + 0.5 * X[, 3] + rnorm(n, sd = 1.5)
 
 m  <- meep(X, Y, treatment = D, folds = 5, seed = 1995)
@@ -195,8 +196,8 @@ data.frame(
   meep_oof_r2 = c(r2(m$y_hat_oof, Y),  r2(m$d_hat_oof, D))
 )
 #>  nuisance grf_oob_r2 meep_oof_r2
-#>    E[Y|X]      0.207       0.210
-#>    E[D|X]      0.264       0.280
+#>    E[Y|X]      0.179       0.198
+#>    E[D|X]      0.162       0.180
 ```
 
 Add gradient-boosted trees to the stack with `extra.learners` (the
